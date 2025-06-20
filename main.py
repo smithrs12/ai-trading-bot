@@ -23,6 +23,7 @@ import json
 import random
 import pytz
 import yfinance as yf
+import finnhub
 from ta.trend import SMAIndicator, MACD
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.volatility import AverageTrueRange, BollingerBands
@@ -41,6 +42,7 @@ NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
 REDDIT_SECRET = os.getenv("REDDIT_SECRET")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT")
+finnhub_client = finnhub.Client(api_key=os.getenv("FINNHUB_API_KEY"))
 
 if os.path.exists(".env"):
     os.chmod(".env", stat.S_IRUSR | stat.S_IWUSR)
@@ -138,17 +140,6 @@ def reward_function(price_change, action):
     # Reward based on direction and magnitude of change
     return price_change if action == 1 else -price_change
 
-def update_q_nn(state, action, reward, next_state):
-    state = np.reshape(state, [1, len(state)])
-    next_state = np.reshape(next_state, [1, len(next_state)])
-
-    target = q_model.predict(state)[0]
-    future = np.max(q_model.predict(next_state)[0])
-    target[action] = reward + 0.95 * future  # gamma = 0.95
-
-    q_model.fit(state, target.reshape(-1, 2), epochs=1, verbose=0)
-    q_model.save(Q_MODEL_PATH)
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -239,7 +230,30 @@ def get_sentiment_score(ticker):
         print(f"⚠️ Reddit sentiment error for {ticker}: {e}")
 
     return score / count if count > 0 else 0
-    
+
+def get_risk_events(ticker):
+    try:
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        events = []
+
+        # Earnings calendar
+        earnings = finnhub_client.earnings_calendar(_from=today, to=today)
+        for event in earnings.get("earningsCalendar", []):
+            if event.get("symbol") == ticker:
+                events.append("Earnings Today")
+
+        # Analyst ratings
+        ratings = finnhub_client.recommendation_trends(ticker)
+        if ratings:
+            latest = ratings[0]
+            if latest.get("sell", 0) > latest.get("buy", 0):
+                events.append("Bearish Analyst Rating")
+
+        return events
+    except Exception as e:
+        print(f"⚠️ Risk event check failed for {ticker}: {e}")
+        return []
+
 def is_high_risk_news_day():
     today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
@@ -255,7 +269,7 @@ if is_high_risk_news_day():
     print("⛔ High-risk economic event today. Suppressing trades.")
     send_discord_message("⛔ Trading paused due to high-impact economic events.")
     time.sleep(3600)  # sleep for an hour before re-checking
-    continue
+    return
 
 def is_market_open():
     return api.get_clock().is_open
@@ -387,40 +401,49 @@ def train_model(ticker, df):
     rf_model = RandomForestClassifier(n_estimators=100)
     model_scores = {"xgb": [], "log": [], "rf": []}
 
-        # Calculate average scores and assign weights
+    # Calculate average scores and assign weights
     avg_scores = {k: np.mean(v) for k, v in model_scores.items()}
     total = sum(avg_scores.values())
-    weights = [avg_scores["xgb"] / total, avg_scores["log"] / total, avg_scores["rf"] / total]
 
-    print(f"⚖️ Adaptive weights for {ticker}: XGB={weights[0]:.2f}, LOG={weights[1]:.2f}, RF={weights[2]:.2f}", flush=True)
+    # Regime-aware weight adjustment
+    regime = get_market_regime()
+    if regime == "bull":
+        weights = [0.5, 0.2, 0.3]  # favor XGB
+    elif regime == "bear":
+        weights = [0.2, 0.4, 0.4]  # favor RF and LOG
+    else:  # sideways
+        weights = [0.3, 0.3, 0.4]
+
+    print(f"⚖️ Adaptive weights for {ticker} ({regime}): XGB={weights[0]:.2f}, LOG={weights[1]:.2f}, RF={weights[2]:.2f}", flush=True)
 
     ensemble = VotingClassifier(
-        estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
-        voting='soft',
-        weights=weights
-    )
+    estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
+    voting='soft',
+    weights=weights
+)
 
     # Cross-validation performance tracking
     tscv = TimeSeriesSplit(n_splits=5)
     accs, precs, recs = [], [], []
 
-    for train_idx, test_idx in tscv.split(X):
-            xgb_model.fit(X.iloc[train_idx], y.iloc[train_idx])
-        log_model.fit(X.iloc[train_idx], y.iloc[train_idx])
-        rf_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+for train_idx, test_idx in tscv.split(X):
+    xgb_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+    log_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+    rf_model.fit(X.iloc[train_idx], y.iloc[train_idx])
 
-        preds_xgb = xgb_model.predict(X.iloc[test_idx])
-        preds_log = log_model.predict(X.iloc[test_idx])
-        preds_rf  = rf_model.predict(X.iloc[test_idx])
+    preds_xgb = xgb_model.predict(X.iloc[test_idx])
+    preds_log = log_model.predict(X.iloc[test_idx])
+    preds_rf  = rf_model.predict(X.iloc[test_idx])
 
-        model_scores["xgb"].append(accuracy_score(y.iloc[test_idx], preds_xgb))
-        model_scores["log"].append(accuracy_score(y.iloc[test_idx], preds_log))
-        model_scores["rf"].append(accuracy_score(y.iloc[test_idx], preds_rf))
+    model_scores["xgb"].append(accuracy_score(y.iloc[test_idx], preds_xgb))
+    model_scores["log"].append(accuracy_score(y.iloc[test_idx], preds_log))
+    model_scores["rf"].append(accuracy_score(y.iloc[test_idx], preds_rf))
 
-        accs.append(accuracy_score(y.iloc[test_idx], y_pred))
-        precs.append(precision_score(y.iloc[test_idx], y_pred,
-                                     zero_division=0))
-        recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
+    y_pred = preds_xgb  # ✅ ADD THIS LINE
+
+    accs.append(accuracy_score(y.iloc[test_idx], y_pred))
+    precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
+    recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
 
     print(
         f"📊 [{ticker}] Acc: {np.mean(accs):.4f} | Prec: {np.mean(precs):.4f} | Rec: {np.mean(recs):.4f}",
@@ -644,7 +667,7 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     return proba_short, proba_mid, df_short.iloc[-1]
 
 
-def execute_trade(ticker, prediction, proba, cooldown_cache):
+def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row):
     try:
         position = None
         try:
@@ -654,10 +677,16 @@ def execute_trade(ticker, prediction, proba, cooldown_cache):
 
         current_price = api.get_latest_bar(ticker).c
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if cooldown_cache.get(ticker) and (datetime.now() - datetime.strptime(
-                cooldown_cache[ticker], "%Y-%m-%d %H:%M:%S")).seconds < 600:
-            print(f"⏳ Cooldown active for {ticker}")
-            return
+
+        if ticker in cooldown_cache:
+            last_trade = cooldown_cache[ticker]
+            last_time = datetime.strptime(last_trade["timestamp"], "%Y-%m-%d %H:%M:%S")
+            last_conf = last_trade.get("confidence", 0.5)
+
+            cooldown_secs = int(600 + 600 * last_conf)
+            if (datetime.now() - last_time).seconds < cooldown_secs:
+                print(f"⏳ Adaptive cooldown active for {ticker} ({cooldown_secs//60} min)")
+                return
 
         equity = float(api.get_account().equity)
         max_dollars = equity * MAX_POSITION_PCT
@@ -676,30 +705,47 @@ def execute_trade(ticker, prediction, proba, cooldown_cache):
                 f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f} Sentiment: {sentiment:+.2f})"
             )
             log_trade(timestamp, ticker, "BUY", qty, current_price)
-            cooldown_cache[ticker] = timestamp
+            cooldown_cache[ticker] = {
+    "timestamp": timestamp,
+    "confidence": float(proba)
+}
             log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
             update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
-        elif prediction == 0 and position:
-            stop_loss_price = float(
-                position.avg_entry_price) * (1 - STOP_LOSS_THRESHOLD)
-            entry_price = float(position.avg_entry_price)
-            gain = (current_price - entry_price) / entry_price
-            if gain > 0.07 and proba < 0.6:
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
-                )
-                log_trade(timestamp, ticker, "SELL", int(position.qty),
-                          current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
-                
-# ---- Trailing Stop-Loss (ATR based) ----
+elif prediction == 0 and position:
+    entry_price = float(position.avg_entry_price)
+    regime = get_market_regime()
+
+    # Adaptive stop-loss and profit target
+    if regime == "bull":
+        stop_loss_pct = 0.03
+        profit_take_pct = 0.08
+    elif regime == "bear":
+        stop_loss_pct = 0.07
+        profit_take_pct = 0.04
+    else:  # sideways
+        stop_loss_pct = 0.05
+        profit_take_pct = 0.06
+
+    stop_loss_price = entry_price * (1 - stop_loss_pct)
+    profit_target_price = entry_price * (1 + profit_take_pct)
+    gain = (current_price - entry_price) / entry_price
+
+    # ✅ Profit-taking
+    if current_price >= profit_target_price and proba < 0.6:
+        api.submit_order(symbol=ticker,
+                         qty=int(position.qty),
+                         side="sell",
+                         type="market",
+                         time_in_force="gtc")
+        send_discord_message(
+            f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
+        )
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
+
+# ✅ Trailing Stop-Loss (ATR based)
 atr = latest_row.get("atr", 0.5)
 trailing_stop_price = current_price - (1.5 * atr)
 if current_price < trailing_stop_price:
@@ -710,21 +756,23 @@ if current_price < trailing_stop_price:
     update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
     return
 
-            if current_price <= stop_loss_price or proba < 0.4:
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
-                )
-                log_trade(timestamp, ticker, "SELL", int(position.qty),
-                          current_price)
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-    except Exception as e:
-        print(f"❌ Trade error for {ticker}: {e}", flush=True)
+# ✅ Hard stop-loss or confidence-based exit
+if current_price <= stop_loss_price or proba < 0.4:
+    api.submit_order(symbol=ticker,
+                     qty=int(position.qty),
+                     side="sell",
+                     type="market",
+                     time_in_force="gtc")
+    send_discord_message(
+        f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
+    )
+    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+    return
 
+except Exception as e:
+    print(f"❌ Trade error for {ticker}: {e}", flush=True)
 
 print("✅ Console is working and bot is starting...", flush=True)
 
@@ -831,45 +879,49 @@ try:
                 send_discord_message("🔔 Market close near. Liquidating positions.")
                 liquidate_positions()
                 send_end_of_day_summary()
-            else:
-                print("🔁 Trading cycle...", flush=True)
-                trade_count = 0
-                regime = get_market_regime()
-                used_sectors = set()
-                for ticker in TICKERS:
-                    df = get_data(ticker)
-                    if df is None:
-                        continue
-                        
-                    sector = SECTOR_MAP.get(ticker, None)
-                    if sector in used_sectors:
-                        print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
-                        continue
+else:
+    print("🔁 Trading cycle...", flush=True)
+    trade_count = 0
+    regime = get_market_regime()
+    used_sectors = set()
 
-                    model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+    for ticker in TICKERS:
+        df = get_data(ticker)
+        if df is None:
+            continue
 
-                    # Check if model needs retraining
-                    if is_model_stale(
-                            ticker) or not os.path.exists(model_path):
-                        print(f"🔁 Retraining model for {ticker}...")
-                        model, features = train_model(ticker, df)
-                        if model and features:
-                            try:
-                                joblib.dump(model, model_path)
-                            except Exception as e:
-                                print(
-                                    f"❌ Failed to save model for {ticker}: {e}"
-                                )
-                    else:
-                        try:
-                            model = joblib.load(model_path)
-                            features = df.columns.intersection([
-                                "sma", "rsi", "macd", "macd_diff", "stoch",
-                                "atr", "bb_bbm", "hour", "minute", "dayofweek"
-                            ]).tolist()
-                        except Exception as e:
-                            print(f"⚠️ Failed to load model for {ticker}: {e}")
-                            continue
+# ✅ Check for risk events
+risks = get_risk_events(ticker)
+if risks:
+    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+    continue
+
+sector = SECTOR_MAP.get(ticker, None)
+if sector in used_sectors:
+    print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
+    continue
+
+model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+
+# Check if model needs retraining
+if is_model_stale(ticker) or not os.path.exists(model_path):
+    print(f"🔁 Retraining model for {ticker}...")
+    model, features = train_model(ticker, df)
+    if model and features:
+        try:
+            joblib.dump(model, model_path)
+        except Exception as e:
+            print(f"❌ Failed to save model for {ticker}: {e}")
+else:
+    try:
+        model = joblib.load(model_path)
+        features = df.columns.intersection([
+            "sma", "rsi", "macd", "macd_diff", "stoch",
+            "atr", "bb_bbm", "hour", "minute", "dayofweek"
+        ]).tolist()
+    except Exception as e:
+        print(f"⚠️ Failed to load model for {ticker}: {e}")
+        continue
 
                     if model is None or features is None:
                         print(
@@ -884,8 +936,17 @@ try:
                         print(f"🔁 Retraining medium-term model for {ticker}...")
                         train_medium_model(ticker)
 
-                    # ---- Short-term Prediction ----
-                    prediction, latest_row, proba_short = predict(ticker, model, features)
+# ---- Short-term Prediction ----
+prediction, latest_row, proba_short = predict(ticker, model, features)
+
+# ✅ Optional: Confidence decay when skipping due to cooldown
+if cooldown.get(ticker):
+    seconds_elapsed = (datetime.now() - datetime.strptime(cooldown[ticker], "%Y-%m-%d %H:%M:%S")).total_seconds()
+    if seconds_elapsed < 600:
+        decay_factor = 1 - (seconds_elapsed / 600)  # Linearly decay confidence
+        proba_short *= decay_factor
+        proba_short = min(max(proba_short, 0), 1)  # Clamp between 0 and 1
+        print(f"🕓 Cooldown active for {ticker}. Adjusted confidence: {proba_short:.2f}")
 
                     # ---- Medium-term Prediction ----
                     proba_mid = predict_medium_term(ticker)
@@ -937,6 +998,14 @@ if proba_mid is None:
 
 blended_proba = 0.6 * proba_short + 0.4 * proba_mid
 
+# Adjust trading aggressiveness based on regime
+if regime == "bear" and proba_short < 0.8:
+    print(f"⚠️ Bear market detected. Skipping {ticker} due to low confidence ({proba_short:.2f}).")
+    continue
+elif regime == "sideways" and proba_short < 0.7:
+    print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
+    continue
+
 if blended_proba > 0.75:
     prediction = 1
 elif blended_proba < 0.4:
@@ -945,10 +1014,15 @@ else:
     print(f"⏸️ Blended signal too uncertain for {ticker}. Skipping.")
     continue
 
-                execute_trade(ticker, prediction, proba_short, cooldown)
-                trade_count += 1
-                if sector:
-                    used_sectors.add(sector)
+# ✅ Scoring for prioritization
+score = (
+    proba_short * 100 +
+    sentiment * 10 -
+    latest_row["atr"] * 5 +
+    (current_volume / recent_volume) * 2
+)
+
+trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
                 save_trade_cache(cooldown)
                 account = api.get_account()
@@ -969,6 +1043,19 @@ else:
                     send_discord_message(summary)
                 except Exception as e:
                     print(f"⚠️ Failed to send PnL summary: {e}")
+                    
+                    # ✅ Prioritize and execute top trades
+trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+
+for cand in trade_candidates[:5]:  # Top 5 trades
+    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+    execute_trade(ticker, prediction, proba_short, cooldown)
+    trade_count += 1
+    if sector:
+        used_sectors.add(sector)
+
+save_trade_cache(cooldown)
+
         time.sleep(300)
 except Exception as e:
     msg = f"🚨 Bot crashed: {e}"
