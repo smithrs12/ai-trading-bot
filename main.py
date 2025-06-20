@@ -965,44 +965,44 @@ def send_end_of_day_summary():
     send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
     return selected
 
-    profit = 0
-    wins = 0
-    losses = 0
-    trades = []
+profit = 0
+wins = 0
+losses = 0
+trades = []
 
-    for ticker in df_today["ticker"].unique():
-        buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
-        sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
+for ticker in df_today["ticker"].unique():
+    buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
+    sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
 
-            if not buys.empty and not sells.empty:
-                avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
-                avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
-                qty_sold = sells["qty"].sum()
-                pl = (avg_sell - avg_buy) * qty_sold
-                profit += pl
-                trades.append(f"{ticker}: ${pl:.2f}")
+    if not buys.empty and not sells.empty:
+        avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
+        avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
+        qty_sold = sells["qty"].sum()
+        pl = (avg_sell - avg_buy) * qty_sold
+        profit += pl
+        trades.append(f"{ticker}: ${pl:.2f}")
 
-                if pl > 0:
-                    wins += 1
-                else:
-                    losses += 1
+        if pl > 0:
+            wins += 1
+        else:
+            losses += 1
 
-        try:
-            account = api.get_account()
-            portfolio_value = float(account.portfolio_value)
-        except:
-            portfolio_value = "N/A"
+try:
+    account = api.get_account()
+    portfolio_value = float(account.portfolio_value)
+except:
+    portfolio_value = "N/A"
 
-        total_trades = wins + losses
-        win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+total_trades = wins + losses
+win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
 
-        summary = f"📊 End of Day Summary ({today}):\n"
-        summary += "\n".join(trades) + "\n"
-        summary += f"\n💰 Total P/L: ${profit:.2f}"
-        summary += f"\n📈 Portfolio Value: ${portfolio_value}"
-        summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
+summary = f"📊 End of Day Summary ({today}):\n"
+summary += "\n".join(trades) + "\n"
+summary += f"\n💰 Total P/L: ${profit:.2f}"
+summary += f"\n📈 Portfolio Value: ${portfolio_value}"
+summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
 
-        send_discord_message(summary)
+send_discord_message(summary)
 
 try:
     cooldown = load_trade_cache()
