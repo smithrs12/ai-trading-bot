@@ -965,14 +965,14 @@ def send_end_of_day_summary():
     send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
     return selected
 
-        profit = 0
-        wins = 0
-        losses = 0
-        trades = []
+    profit = 0
+    wins = 0
+    losses = 0
+    trades = []
 
-        for ticker in df_today["ticker"].unique():
-            buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
-            sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
+    for ticker in df_today["ticker"].unique():
+        buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
+        sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
 
             if not buys.empty and not sells.empty:
                 avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
