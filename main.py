@@ -847,7 +847,7 @@ try:
                 execute_trade(ticker, prediction, proba_short, cooldown)
                 trade_count += 1
                 if sector:
-                used_sectors.add(sector)
+                    used_sectors.add(sector)
 
                 save_trade_cache(cooldown)
                 account = api.get_account()
