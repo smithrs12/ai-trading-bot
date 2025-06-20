@@ -744,6 +744,7 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         atr = latest_row.get("atr", 0.5)
         qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
         sentiment = get_sentiment_score(ticker)
+        price_change = latest_row["Close"] - latest_row["Open"]
 
         # ---- BUY logic ----
         if prediction == 1 and qty > 0 and (not position or float(position.market_value) < max_dollars):
@@ -763,152 +764,136 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
             update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
 
+        # ---- ADDITIONAL BUY logic (Pyramiding) ----
+        pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
+
+        if (
+            prediction == 1 and 
+            position and 
+            float(position.market_value) < max_dollars and 
+            proba > 0.8 and 
+            proba_mid > 0.8 and 
+            price_change > 0 and 
+            pyramiding_count < 2
+        ):
+            additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
+            if additional_qty > 0:
+                api.submit_order(symbol=ticker,
+                                 qty=additional_qty,
+                                 side="buy",
+                                 type="market",
+                                 time_in_force="gtc")
+                send_discord_message(
+                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
+                )
+                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
+                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
+                cooldown_cache[ticker] = {
+                    "timestamp": timestamp,
+                    "confidence": float(min(proba + 0.1, 1.0)),
+                    "adds": pyramiding_count + 1
+                }
+                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
+                return
+
+        # ---- RL-driven HOLD logic ----
+        if position:
+            entry_price = float(position.avg_entry_price)
+            gain = (current_price - entry_price) / entry_price
+            state = q_state(ticker, 1).unsqueeze(0)
+            hold_value = q_net(state).item()
+            if hold_value > 0.3 and gain > 0 and proba > 0.55:
+                print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
+                return
+
+        # ---- SELL logic ----
+        if prediction == 0 and position:
+            entry_price = float(position.avg_entry_price)
+            regime = get_market_regime()
+            volatility = latest_row.get("atr", 0.5)
+            confidence_factor = proba
+
+            base_stop_loss = 1.2 * volatility / current_price
+            base_profit_target = 2.5 * volatility / current_price
+
+            if regime == "bull":
+                stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
+                profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
+            elif regime == "bear":
+                stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
+                profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
+            else:
+                stop_loss_pct = base_stop_loss
+                profit_take_pct = base_profit_target
+
+            stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
+            profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
+
+            stop_loss_price = entry_price * (1 - stop_loss_pct)
+            profit_target_price = entry_price * (1 + profit_take_pct)
+
+            gain = (current_price - entry_price) / entry_price
+
+            if current_price >= profit_target_price and proba < 0.6:
+                api.submit_order(symbol=ticker,
+                                 qty=int(position.qty),
+                                 side="sell",
+                                 type="market",
+                                 time_in_force="gtc")
+                send_discord_message(
+                    f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
+                )
+                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                return
+
+            trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+            trailing_stop_price = current_price - (atr * trailing_atr_factor)
+
+            if current_price < trailing_stop_price:
+                send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+                api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                return
+
+            time_held_minutes = 0
+            try:
+                time_held_minutes = (datetime.now() - datetime.strptime(position.asset_class, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
+            except:
+                pass
+
+            gain_pct = (current_price - entry_price) / entry_price
+            if 0 < gain_pct < 0.02 and time_held_minutes > 60:
+                send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
+                api.submit_order(symbol=ticker,
+                                 qty=int(position.qty),
+                                 side="sell",
+                                 type="market",
+                                 time_in_force="gtc")
+                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                return
+
+            if current_price <= stop_loss_price or proba < 0.4:
+                api.submit_order(symbol=ticker,
+                                 qty=int(position.qty),
+                                 side="sell",
+                                 type="market",
+                                 time_in_force="gtc")
+                send_discord_message(
+                    f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
+                )
+                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                return
+
     except Exception as e:
         print(f"⚠️ Trade execution failed for {ticker}: {e}")
-
-# ---- ADDITIONAL BUY logic (Pyramiding) ----
-pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
-
-if (
-    prediction == 1 and 
-    position and 
-    float(position.market_value) < max_dollars and 
-    proba > 0.8 and 
-    proba_mid > 0.8 and 
-    price_change > 0 and 
-    pyramiding_count < 2
-):
-    additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
-    if additional_qty > 0:
-        api.submit_order(symbol=ticker,
-                         qty=additional_qty,
-                         side="buy",
-                         type="market",
-                         time_in_force="gtc")
-        send_discord_message(
-            f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
-        )
-        log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
-        log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
-
-        # ✅ Enhanced cooldown logic and add tracking
-        cooldown_cache[ticker] = {
-            "timestamp": timestamp,
-            "confidence": float(min(proba + 0.1, 1.0)),
-            "adds": pyramiding_count + 1
-        }
-
-        # ✅ Stronger reward signal for successful pyramiding
-        update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
-        return
-        
-# ---- RL-driven HOLD logic ----
-gain = (current_price - entry_price) / entry_price if position else 0
-state = q_state(ticker, 1).unsqueeze(0)
-hold_value = q_net(state).item()
-if hold_value > 0.3 and gain > 0 and proba > 0.55:
-    print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
-    return
-
-    # ---- Pre-Sell Volume & Momentum Confirmation ----
-recent_volume = latest_row.get("Volume", 0)
-price_change = latest_row.get("Close", 0) - latest_row.get("Open", 0)
-
-avg_volume = df["Volume"].rolling(20).mean().iloc[-2] if "Volume" in df else 0
-
-# ✅ Only proceed to sell if volume is spiking OR price momentum is weak
-if avg_volume > 0 and recent_volume < 1.5 * avg_volume and price_change > 0:
-    print(f"⏸️ {ticker} sell skipped: Low volume and positive momentum (Vol: {recent_volume}, Δ: ${price_change:.2f})")
-    return
-
-# ---- SELL logic ----
-if prediction == 0 and position:
-    entry_price = float(position.avg_entry_price)
-    regime = get_market_regime()
-
-    # Dynamically optimized stop-loss and profit-taking
-    volatility = latest_row.get("atr", 0.5)
-    confidence_factor = proba
-    regime = get_market_regime()
-
-    base_stop_loss = 1.2 * volatility / current_price
-    base_profit_target = 2.5 * volatility / current_price
-
-    if regime == "bull":
-        stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-        profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-    elif regime == "bear":
-        stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-        profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-    else:  # sideways
-        stop_loss_pct = base_stop_loss
-        profit_take_pct = base_profit_target
-
-    stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-    profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
-
-    stop_loss_price = entry_price * (1 - stop_loss_pct)
-    profit_target_price = entry_price * (1 + profit_take_pct)
-    gain = (current_price - entry_price) / entry_price
-
-    if current_price >= profit_target_price and proba < 0.6:
-        api.submit_order(symbol=ticker,
-                         qty=int(position.qty),
-                         side="sell",
-                         type="market",
-                         time_in_force="gtc")
-        send_discord_message(
-            f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
-        )
-        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-        return
-
-    # Dynamic trailing stop
-    trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-    trailing_stop_price = current_price - (atr * trailing_atr_factor)
-
-    if current_price < trailing_stop_price:
-        send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-        api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-        return
-
-    # Profit decay logic
-    time_held_minutes = (datetime.now() - datetime.strptime(position.asset_class, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60 if hasattr(position, "asset_class") else 0
-    gain_pct = (current_price - entry_price) / entry_price
-
-    if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-        send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-        api.submit_order(symbol=ticker,
-                         qty=int(position.qty),
-                         side="sell",
-                         type="market",
-                         time_in_force="gtc")
-        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-        return
-
-    # Final fallback: hard stop-loss or confidence drop
-    if current_price <= stop_loss_price or proba < 0.4:
-        api.submit_order(symbol=ticker,
-                         qty=int(position.qty),
-                         side="sell",
-                         type="market",
-                         time_in_force="gtc")
-        send_discord_message(
-            f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
-        )
-        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-        return
-                
-print("✅ Console is working and bot is starting...", flush=True)
 
 def get_dynamic_watchlist(limit=8):
     tickers_to_scan = [
@@ -1006,6 +991,9 @@ send_discord_message(summary)
 
 try:
     cooldown = load_trade_cache()
+    
+    print("✅ Console is working and bot is starting...", flush=True)
+    
     while True:
         if is_market_open():
             TICKERS = get_dynamic_watchlist()
