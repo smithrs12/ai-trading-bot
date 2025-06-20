@@ -1007,102 +1007,107 @@ send_discord_message(summary)
 try:
     cooldown = load_trade_cache()
     while True:
-        
-if is_market_open():
-    TICKERS = get_dynamic_watchlist()
-    send_discord_message(f"🔄 New Top Tickers: {', '.join(TICKERS)}")
-    if close_to_market_close():
-    send_discord_message("🔔 Market close near. Liquidating positions.")
-    liquidate_positions()
-    send_end_of_day_summary()  # ✅ Fixed
-    continue
-else:
-    print("🔁 Trading cycle...", flush=True)
-    trade_count = 0
-    regime = get_market_regime()
-    used_sectors = set()
+        if is_market_open():
+            TICKERS = get_dynamic_watchlist()
+            send_discord_message(f"🔄 New Top Tickers: {', '.join(TICKERS)}")
 
-    for ticker in TICKERS:
-        df = get_data(ticker)
-        if df is None:
-            continue
+            if close_to_market_close():
+                send_discord_message("🔔 Market close near. Liquidating positions.")
+                liquidate_positions()
+                send_end_of_day_summary()
+                continue  # skip rest of loop and restart
 
-# ✅ Check for risk events
-risks = get_risk_events(ticker)
-if risks:
-    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
-    continue
+            print("🔁 Trading cycle...", flush=True)
+            trade_count = 0
+            regime = get_market_regime()
+            used_sectors = set()
 
-sector = SECTOR_MAP.get(ticker, None)
-if sector in used_sectors:
-    print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
-    continue
+            for ticker in TICKERS:
+                df = get_data(ticker)
+                if df is None:
+                    continue
 
-model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+                # ✅ Check for risk events
+                risks = get_risk_events(ticker)
+                if risks:
+                    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+                    continue
 
-# Check if model needs retraining
-if is_model_stale(ticker) or not os.path.exists(model_path):
-    print(f"🔁 Retraining model for {ticker}...")
-    model, features = train_model(ticker, df)
-    if model and features:
-        try:
-            joblib.dump(model, model_path)
-        except Exception as e:
-            print(f"❌ Failed to save model for {ticker}: {e}")
-else:
-    try:
-        model = joblib.load(model_path)
-        features = df.columns.intersection([
-            "sma", "rsi", "macd", "macd_diff", "stoch",
-            "atr", "bb_bbm", "hour", "minute", "dayofweek"
-        ]).tolist()
-    except Exception as e:
-        print(f"⚠️ Failed to load model for {ticker}: {e}")
-        continue
+                sector = SECTOR_MAP.get(ticker, None)
+                if sector in used_sectors:
+                    print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
+                    continue
 
-                    if model is None or features is None:
-                        print(
-                            f"⚠️ Skipping {ticker}: no trained model or features."
-                        )
+                model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+
+                # ✅ Load or retrain model
+                if is_model_stale(ticker) or not os.path.exists(model_path):
+                    print(f"🔁 Retraining model for {ticker}...")
+                    model, features = train_model(ticker, df)
+                    if model and features:
+                        try:
+                            joblib.dump(model, model_path)
+                        except Exception as e:
+                            print(f"❌ Failed to save model for {ticker}: {e}")
+                            continue
+                else:
+                    try:
+                        model = joblib.load(model_path)
+                        features = df.columns.intersection([
+                            "sma", "rsi", "macd", "macd_diff", "stoch",
+                            "atr", "bb_bbm", "hour", "minute", "dayofweek"
+                        ]).tolist()
+                    except Exception as e:
+                        print(f"⚠️ Failed to load model for {ticker}: {e}")
                         continue
 
-                    # Dual-horizon prediction
-                    
-                    # ✅ Retrain medium-term model if stale
-                    if is_medium_model_stale(ticker):
-                        print(f"🔁 Retraining medium-term model for {ticker}...")
-                        train_medium_model(ticker)
+                if model is None or features is None:
+                    print(f"⚠️ Skipping {ticker}: no trained model or features.")
+                    continue
 
-# ---- Short-term Prediction ----
-prediction, latest_row, proba_short = predict(ticker, model, features)
+                # ✅ Retrain medium-term model if needed
+                if is_medium_model_stale(ticker):
+                    print(f"🔁 Retraining medium-term model for {ticker}...")
+                    train_medium_model(ticker)
 
-# ✅ Optional: Confidence decay when skipping due to cooldown
-if cooldown.get(ticker):
-    seconds_elapsed = (datetime.now() - datetime.strptime(cooldown[ticker], "%Y-%m-%d %H:%M:%S")).total_seconds()
-    if seconds_elapsed < 600:
-        decay_factor = 1 - (seconds_elapsed / 600)  # Linearly decay confidence
-        proba_short *= decay_factor
-        proba_short = min(max(proba_short, 0), 1)  # Clamp between 0 and 1
-        print(f"🕓 Cooldown active for {ticker}. Adjusted confidence: {proba_short:.2f}")
+                # ---- Short-term Prediction ----
+                prediction, latest_row, proba_short = predict(ticker, model, features)
 
-                    # ---- Medium-term Prediction ----
-                    proba_mid = predict_medium_term(ticker)
+                # ✅ Cooldown confidence decay
+                if cooldown.get(ticker):
+                    seconds_elapsed = (datetime.now() - datetime.strptime(cooldown[ticker], "%Y-%m-%d %H:%M:%S")).total_seconds()
+                    if seconds_elapsed < 600:
+                        decay_factor = 1 - (seconds_elapsed / 600)
+                        proba_short *= decay_factor
+                        proba_short = min(max(proba_short, 0), 1)
+                        print(f"🕓 Cooldown active for {ticker}. Adjusted confidence: {proba_short:.2f}")
 
-                    if proba_short is None or proba_mid is None:
-                        print(f"⚠️ Missing prediction data for {ticker}, skipping.")
-                        continue
+                # ---- Medium-term Prediction ----
+                proba_mid = predict_medium_term(ticker)
 
-                    # ---- HOLD logic ----
-                    if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-                        print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
-                        continue
+                if proba_short is None or proba_mid is None:
+                    print(f"⚠️ Missing prediction data for {ticker}, skipping.")
+                    continue
 
-                    # ---- Momentum Confirmation ----
+                # ---- HOLD logic ----
+                if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
+                    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
+                    continue
 
-# ---- VWAP Confirmation ----
-if latest_row["Close"] < latest_row["vwap"]:
-    print(f"⏸️ {ticker} price below VWAP. Skipping.")
-    continue
+                # ---- VWAP Confirmation ----
+                if latest_row["Close"] < latest_row["vwap"]:
+                    print(f"⏸️ {ticker} price below VWAP. Skipping.")
+                    continue
+
+                # More logic would follow here...
+        else:
+            print("⏸️ Market is closed. Waiting...")
+            time.sleep(60)
+
+except Exception as e:
+    msg = f"🚨 Bot crashed: {e}"
+    print(msg, flush=True)
+    send_discord_message(msg)
 
 # ---- Volume Spike Confirmation ----
 recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
@@ -1111,7 +1116,7 @@ current_volume = latest_row["Volume"]
 if current_volume < 1.5 * recent_volume:
     print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
     continue
-    
+
 # ---- Support/Resistance Check ----
 near_support, near_resistance = detect_support_resistance(df)
 
@@ -1123,11 +1128,12 @@ elif prediction == 0 and near_support:
     continue
 
 # ---- Momentum Check ----
+price_change = latest_row["Close"] - latest_row["Open"]
 if proba_short > 0.75 and price_change <= 0:
     print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
     continue
-    
-                # ---- Blended Short + Medium Term Signal ----
+
+# ---- Blended Short + Medium Term Signal ----
 if proba_mid is None:
     print(f"⚠️ No medium-term signal for {ticker}, skipping trade.")
     continue
@@ -1142,6 +1148,7 @@ elif regime == "sideways" and proba_short < 0.7:
     print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
     continue
 
+# ---- Set final prediction from blended score ----
 if blended_proba > 0.75:
     prediction = 1
 elif blended_proba < 0.4:
@@ -1149,12 +1156,10 @@ elif blended_proba < 0.4:
 else:
     print(f"⏸️ Blended signal too uncertain for {ticker}. Skipping.")
     continue
-    
-# ✅ Get sentiment score before scoring
-sentiment = get_sentiment_score(ticker)
-price_change = latest_row["Close"] - latest_row["Open"]
 
-# ✅ Scoring for prioritization
+# ---- Get sentiment & score the opportunity ----
+sentiment = get_sentiment_score(ticker)
+
 score = (
     proba_short * 100 +
     sentiment * 10 -
@@ -1164,27 +1169,29 @@ score = (
 
 trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
-                save_trade_cache(cooldown)
-                account = api.get_account()
-                send_discord_message(
-                    f"📊 Trades: {trade_count} | Portfolio: ${account.portfolio_value}"
-                )
-                try:
-                    df_pnl = pd.read_csv("pnl_tracker.csv")
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    df_today = df_pnl[df_pnl["timestamp"].str.startswith(today)]
+# ✅ Cache update and account summary
+save_trade_cache(cooldown)
 
-                    total_pnl = df_today["pnl"].sum()
-                    per_ticker = df_today.groupby("ticker")["pnl"].sum().to_dict()
+try:
+    account = api.get_account()
+    send_discord_message(
+        f"📊 Trades: {trade_count} | Portfolio: ${account.portfolio_value}"
+    )
+    df_pnl = pd.read_csv("pnl_tracker.csv")
+    today = datetime.now().strftime("%Y-%m-%d")
+    df_today = df_pnl[df_pnl["timestamp"].str.startswith(today)]
 
-                    summary = f"📊 Daily PnL Summary: ${total_pnl:.2f}\n" + "\n".join(
-                        [f"{ticker}: ${pnl:.2f}" for ticker, pnl in per_ticker.items()]
-                    )
-                    send_discord_message(summary)
-                except Exception as e:
-                    print(f"⚠️ Failed to send PnL summary: {e}")
-                    
-                    # ✅ Prioritize and execute top trades
+    total_pnl = df_today["pnl"].sum()
+    per_ticker = df_today.groupby("ticker")["pnl"].sum().to_dict()
+
+    summary = f"📊 Daily PnL Summary: ${total_pnl:.2f}\n" + "\n".join(
+        [f"{ticker}: ${pnl:.2f}" for ticker, pnl in per_ticker.items()]
+    )
+    send_discord_message(summary)
+except Exception as e:
+    print(f"⚠️ Failed to send PnL summary: {e}")
+
+# ✅ Prioritize and execute top trades
 trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
 for cand in trade_candidates[:5]:  # Top 5 trades
@@ -1196,7 +1203,7 @@ for cand in trade_candidates[:5]:  # Top 5 trades
 
 save_trade_cache(cooldown)
 
-        time.sleep(300)
+time.sleep(300)
 except Exception as e:
     msg = f"🚨 Bot crashed: {e}"
     print(msg, flush=True)
