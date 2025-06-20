@@ -1010,96 +1010,46 @@ try:
             regime = get_market_regime()
             used_sectors = set()
 
-            for ticker in TICKERS:
-                df = get_data(ticker)
-                if df is None:
-                    continue
+for ticker in TICKERS:
+    df = get_data(ticker)
+    if df is None:
+        continue
 
-                # ✅ Check for risk events
-                risks = get_risk_events(ticker)
-                if risks:
-                    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
-                    continue
+    # ✅ Check for risk events
+    risks = get_risk_events(ticker)
+    if risks:
+        print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+        continue
 
-                sector = SECTOR_MAP.get(ticker, None)
-                if sector in used_sectors:
-                    print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
-                    continue
+    # ... load model etc.
 
-                model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+    # ---- HOLD logic ----
+    if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
+        print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
+        continue
 
-                # ✅ Load or retrain model
-                if is_model_stale(ticker) or not os.path.exists(model_path):
-                    print(f"🔁 Retraining model for {ticker}...")
-                    model, features = train_model(ticker, df)
-                    if model and features:
-                        try:
-                            joblib.dump(model, model_path)
-                        except Exception as e:
-                            print(f"❌ Failed to save model for {ticker}: {e}")
-                            continue
-                else:
-                    try:
-                        model = joblib.load(model_path)
-                        features = df.columns.intersection([
-                            "sma", "rsi", "macd", "macd_diff", "stoch",
-                            "atr", "bb_bbm", "hour", "minute", "dayofweek"
-                        ]).tolist()
-                    except Exception as e:
-                        print(f"⚠️ Failed to load model for {ticker}: {e}")
-                        continue
+    # ---- VWAP Confirmation ----
+    if latest_row["Close"] < latest_row["vwap"]:
+        print(f"⏸️ {ticker} price below VWAP. Skipping.")
+        continue
 
-                if model is None or features is None:
-                    print(f"⚠️ Skipping {ticker}: no trained model or features.")
-                    continue
+    # ---- Volume Spike Confirmation ----
+    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+    current_volume = latest_row["Volume"]
+    if current_volume < 1.5 * recent_volume:
+        print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+        continue
 
-                # ✅ Retrain medium-term model if needed
-                if is_medium_model_stale(ticker):
-                    print(f"🔁 Retraining medium-term model for {ticker}...")
-                    train_medium_model(ticker)
+    # (more logic follows)
 
-                # ---- Short-term Prediction ----
-                prediction, latest_row, proba_short = predict(ticker, model, features)
-
-                # ✅ Cooldown confidence decay
-                if cooldown.get(ticker):
-                    seconds_elapsed = (datetime.now() - datetime.strptime(cooldown[ticker], "%Y-%m-%d %H:%M:%S")).total_seconds()
-                    if seconds_elapsed < 600:
-                        decay_factor = 1 - (seconds_elapsed / 600)
-                        proba_short *= decay_factor
-                        proba_short = min(max(proba_short, 0), 1)
-                        print(f"🕓 Cooldown active for {ticker}. Adjusted confidence: {proba_short:.2f}")
-
-                # ---- Medium-term Prediction ----
-                proba_mid = predict_medium_term(ticker)
-
-                if proba_short is None or proba_mid is None:
-                    print(f"⚠️ Missing prediction data for {ticker}, skipping.")
-                    continue
-
-                # ---- HOLD logic ----
-                if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-                    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
-                    continue
-
-                # ---- VWAP Confirmation ----
-                if latest_row["Close"] < latest_row["vwap"]:
-                    print(f"⏸️ {ticker} price below VWAP. Skipping.")
-                    continue
-
-                # More logic would follow here...
-        else:
-            print("⏸️ Market is closed. Waiting...")
-            time.sleep(60)
+else:
+    print("⏸️ Market is closed. Waiting...")
+    time.sleep(60)
 
 except Exception as e:
     msg = f"🚨 Bot crashed: {e}"
     print(msg, flush=True)
     send_discord_message(msg)
-
-# ---- Volume Spike Confirmation ----
-recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-current_volume = latest_row["Volume"]
 
 if current_volume < 1.5 * recent_volume:
     print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
