@@ -991,9 +991,9 @@ send_discord_message(summary)
 
 try:
     cooldown = load_trade_cache()
-    
+
     print("✅ Console is working and bot is starting...", flush=True)
-    
+
     while True:
         if is_market_open():
             TICKERS = get_dynamic_watchlist()
@@ -1003,48 +1003,45 @@ try:
                 send_discord_message("🔔 Market close near. Liquidating positions.")
                 liquidate_positions()
                 send_end_of_day_summary()
-                continue  # skip rest of loop and restart
+                continue
 
             print("🔁 Trading cycle...", flush=True)
             trade_count = 0
             regime = get_market_regime()
             used_sectors = set()
 
-for ticker in TICKERS:
-    df = get_data(ticker)
-    if df is None:
-        continue
+            for ticker in TICKERS:
+                df = get_data(ticker)
+                if df is None:
+                    continue
 
-    # ✅ Check for risk events
-    risks = get_risk_events(ticker)
-    if risks:
-        print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
-        continue
+                # ✅ Check for risk events
+                risks = get_risk_events(ticker)
+                if risks:
+                    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+                    continue
 
-    # ... load model etc.
+                # ... load model etc.
 
-    # ---- HOLD logic ----
-    if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-        print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
-        continue
+                # ---- HOLD logic ----
+                if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
+                    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
+                    continue
 
-    # ---- VWAP Confirmation ----
-    if latest_row["Close"] < latest_row["vwap"]:
-        print(f"⏸️ {ticker} price below VWAP. Skipping.")
-        continue
+                # ---- VWAP Confirmation ----
+                if latest_row["Close"] < latest_row["vwap"]:
+                    print(f"⏸️ {ticker} price below VWAP. Skipping.")
+                    continue
 
-    # ---- Volume Spike Confirmation ----
-    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-    current_volume = latest_row["Volume"]
-    if current_volume < 1.5 * recent_volume:
-        print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
-        continue
-
-    # (more logic follows)
-
-else:
-    print("⏸️ Market is closed. Waiting...")
-    time.sleep(60)
+                # ---- Volume Spike Confirmation ----
+                recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+                current_volume = latest_row["Volume"]
+                if current_volume < 1.5 * recent_volume:
+                    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+                    continue
+        else:
+            print("⏸️ Market is closed. Waiting...")
+            time.sleep(60)
 
 except Exception as e:
     msg = f"🚨 Bot crashed: {e}"
