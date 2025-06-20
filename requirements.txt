@@ -12,3 +12,4 @@ requests
 vaderSentiment
 newsapi-python
 praw
+finnhub-python
