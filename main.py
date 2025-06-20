@@ -757,12 +757,15 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             )
             log_trade(timestamp, ticker, "BUY", qty, current_price)
             cooldown_cache[ticker] = {
-    "timestamp": timestamp,
-    "confidence": float(min(proba + 0.1, 1.0))  # artificially raise confidence for longer cooldown
-}
+                "timestamp": timestamp,
+                "confidence": float(min(proba + 0.1, 1.0))
+            }
             log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
             update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
-            
+
+    except Exception as e:
+        print(f"⚠️ Trade execution failed for {ticker}: {e}")
+
 # ---- ADDITIONAL BUY logic (Pyramiding) ----
 pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
 
