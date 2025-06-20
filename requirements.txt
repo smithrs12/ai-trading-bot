@@ -1,0 +1,14 @@
+alpaca-trade-api
+xgboost
+scikit-learn
+pandas
+numpy
+python-dotenv
+yfinance
+ta
+torch
+joblib
+requests
+vaderSentiment
+newsapi-python
+praw
