@@ -821,8 +821,8 @@ if avg_volume > 0 and recent_volume < 1.5 * avg_volume and price_change > 0:
     print(f"⏸️ {ticker} sell skipped: Low volume and positive momentum (Vol: {recent_volume}, Δ: ${price_change:.2f})")
     return
 
-        # ---- SELL logic ----
-        elif prediction == 0 and position:
+    # ---- SELL logic ----
+    if prediction == 0 and position:
             entry_price = float(position.avg_entry_price)
             regime = get_market_regime()
 
