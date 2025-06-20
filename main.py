@@ -1191,19 +1191,21 @@ try:
 except Exception as e:
     print(f"⚠️ Failed to send PnL summary: {e}")
 
-# ✅ Prioritize and execute top trades
-trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+# ✅ NEW try block for trade execution + sleep
+try:
+    # ✅ Prioritize and execute top trades
+    trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
-for cand in trade_candidates[:5]:  # Top 5 trades
-    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
-    execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
-    trade_count += 1
-    if sector:
-        used_sectors.add(sector)
+    for cand in trade_candidates[:5]:  # Top 5 trades
+        ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+        execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
+        trade_count += 1
+        if sector:
+            used_sectors.add(sector)
 
-save_trade_cache(cooldown)
+    save_trade_cache(cooldown)
+    time.sleep(300)
 
-time.sleep(300)
 except Exception as e:
     msg = f"🚨 Bot crashed: {e}"
     print(msg, flush=True)
