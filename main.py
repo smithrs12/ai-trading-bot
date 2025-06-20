@@ -850,9 +850,9 @@ else:  # sideways
 stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
 profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
 
-            stop_loss_price = entry_price * (1 - stop_loss_pct)
-            profit_target_price = entry_price * (1 + profit_take_pct)
-            gain = (current_price - entry_price) / entry_price
+stop_loss_price = entry_price * (1 - stop_loss_pct)
+profit_target_price = entry_price * (1 + profit_take_pct)
+gain = (current_price - entry_price) / entry_price
 
             if current_price >= profit_target_price and proba < 0.6:
                 api.submit_order(symbol=ticker,
