@@ -184,15 +184,6 @@ def update_q_nn(ticker, action, reward):
     loss.backward()
     q_optimizer.step()
 
-# Neural Q-Network
-def create_q_model(input_dim):
-    model = Sequential()
-    model.add(Dense(64, input_dim=input_dim, activation="relu"))
-    model.add(Dense(64, activation="relu"))
-    model.add(Dense(2, activation="linear"))  # Two actions: Buy or Sell
-    model.compile(optimizer=Adam(learning_rate=0.001), loss="mse")
-    return model
-
 # Regime Detection
 regime_cache = {"last": None, "type": "unknown"}
 from newsapi import NewsApiClient
@@ -248,7 +239,23 @@ def get_sentiment_score(ticker):
         print(f"⚠️ Reddit sentiment error for {ticker}: {e}")
 
     return score / count if count > 0 else 0
-
+    
+def is_high_risk_news_day():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        if os.path.exists("risk_events.json"):
+            with open("risk_events.json") as f:
+                data = json.load(f)
+            return today in data.get("high_risk_days", [])
+    except Exception as e:
+        print(f"⚠️ Failed to check news suppression: {e}")
+    return False
+    
+if is_high_risk_news_day():
+    print("⛔ High-risk economic event today. Suppressing trades.")
+    send_discord_message("⛔ Trading paused due to high-impact economic events.")
+    time.sleep(3600)  # sleep for an hour before re-checking
+    continue
 
 def is_market_open():
     return api.get_clock().is_open
@@ -274,7 +281,6 @@ def liquidate_positions():
             send_discord_message(
                 f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close."
             )
-
 
 def get_data(ticker, days=90):
     end = datetime.utcnow()
@@ -309,11 +315,36 @@ def get_data(ticker, days=90):
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
+        df = calculate_vwap(df)
         return df.dropna() if len(df) > 50 else None
     except Exception as e:
         print(f"❌ Data error for {ticker}: {e}", flush=True)
         return None
+        
+def calculate_vwap(df):
+    try:
+        pv = df["Close"] * df["Volume"]
+        cumulative_pv = pv.cumsum()
+        cumulative_volume = df["Volume"].cumsum()
+        df["vwap"] = cumulative_pv / cumulative_volume
+        return df
+    except Exception as e:
+        print(f"⚠️ VWAP calculation failed: {e}")
+        return df
 
+def detect_support_resistance(df, window=20, tolerance=0.01):
+    try:
+        recent_high = df["High"].rolling(window).max().iloc[-1]
+        recent_low = df["Low"].rolling(window).min().iloc[-1]
+        current_price = df["Close"].iloc[-1]
+        
+        near_resistance = abs(current_price - recent_high) / recent_high < tolerance
+        near_support = abs(current_price - recent_low) / recent_low < tolerance
+
+        return near_support, near_resistance
+    except Exception as e:
+        print(f"⚠️ Support/resistance detection failed: {e}")
+        return False, False
 
 def load_trade_cache():
     return json.load(
@@ -323,15 +354,19 @@ def load_trade_cache():
 def save_trade_cache(cache):
     json.dump(cache, open(TRADE_CACHE_FILE, "w"))
 
-
-def kelly_position_size(prob, price, equity):
+def kelly_position_size(prob, price, equity, atr=None, ref_atr=0.5):
     edge = 2 * prob - 1
-    if edge <= 0:
+    if edge <= 0 or atr is None or atr == 0:
         return 0
-    kelly_fraction = min(edge, MAX_POSITION_PCT)
-    allocation = equity * kelly_fraction
-    return int(allocation // price)
 
+    kelly_fraction = min(edge, MAX_POSITION_PCT)
+    base_allocation = equity * kelly_fraction
+    base_size = base_allocation // price
+
+    # Volatility adjustment (scale down if ATR is high)
+    atr_adjustment = ref_atr / atr
+    adjusted_size = int(base_size * atr_adjustment)
+    return max(adjusted_size, 0)
 
 def train_model(ticker, df):
     df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
@@ -350,19 +385,38 @@ def train_model(ticker, df):
                                   use_label_encoder=False)
     log_model = LogisticRegression(max_iter=1000)
     rf_model = RandomForestClassifier(n_estimators=100)
+    model_scores = {"xgb": [], "log": [], "rf": []}
+
+        # Calculate average scores and assign weights
+    avg_scores = {k: np.mean(v) for k, v in model_scores.items()}
+    total = sum(avg_scores.values())
+    weights = [avg_scores["xgb"] / total, avg_scores["log"] / total, avg_scores["rf"] / total]
+
+    print(f"⚖️ Adaptive weights for {ticker}: XGB={weights[0]:.2f}, LOG={weights[1]:.2f}, RF={weights[2]:.2f}", flush=True)
 
     ensemble = VotingClassifier(
         estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
         voting='soft',
-        weights=[3, 1, 2])  # Weighted voting: prioritize XGB & RF
+        weights=weights
+    )
 
     # Cross-validation performance tracking
     tscv = TimeSeriesSplit(n_splits=5)
     accs, precs, recs = [], [], []
 
     for train_idx, test_idx in tscv.split(X):
-        ensemble.fit(X.iloc[train_idx], y.iloc[train_idx])
-        y_pred = ensemble.predict(X.iloc[test_idx])
+            xgb_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+        log_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+        rf_model.fit(X.iloc[train_idx], y.iloc[train_idx])
+
+        preds_xgb = xgb_model.predict(X.iloc[test_idx])
+        preds_log = log_model.predict(X.iloc[test_idx])
+        preds_rf  = rf_model.predict(X.iloc[test_idx])
+
+        model_scores["xgb"].append(accuracy_score(y.iloc[test_idx], preds_xgb))
+        model_scores["log"].append(accuracy_score(y.iloc[test_idx], preds_log))
+        model_scores["rf"].append(accuracy_score(y.iloc[test_idx], preds_rf))
+
         accs.append(accuracy_score(y.iloc[test_idx], y_pred))
         precs.append(precision_score(y.iloc[test_idx], y_pred,
                                      zero_division=0))
@@ -429,6 +483,17 @@ def train_model(ticker, df):
 
     return ensemble, features
 
+def predict_weighted_proba(models, weights, X):
+    try:
+        probs = []
+        for model in models:
+            probs.append(model.predict_proba(X)[0][1])
+        weighted_proba = sum(w * p for w, p in zip(weights, probs))
+        return weighted_proba
+    except Exception as e:
+        print(f"⚠️ Ensemble blending error: {e}")
+        return 0.5  # Neutral fallback
+        
 def train_medium_model(ticker):
     df = yf.download(ticker, period="6mo", interval="1d")
     df.dropna(inplace=True)
@@ -528,35 +593,36 @@ def predict_medium_term(ticker):
 
         features = ["Open", "High", "Low", "Close", "Volume"]
         X = df[features].iloc[-1:]
-        proba = model.predict_proba(X)[0][1]
+
+        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
+            models = [est for name, est in model.estimators]
+            weights = model.weights
+            proba = predict_weighted_proba(models, weights, X)
+        else:
+            proba = model.predict_proba(X)[0][1]
+
         return proba
+
     except Exception as e:
         print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
         return None
 
 def predict(ticker, model, features):
     df = get_data(ticker, days=2)
-    if df is None or len(df) < 10: return 0, None, None
+    if df is None or len(df) < 10:
+        return 0, None, None
     X = df[features].iloc[-1:]
-    proba = model.predict_proba(X)[0][1]
+
+    if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
+        models = [est for name, est in model.estimators]
+        weights = model.weights
+        proba = predict_weighted_proba(models, weights, X)
+    else:
+        proba = model.predict_proba(X)[0][1]
+
     return int(proba > 0.5), df.iloc[-1], proba
 
 # ✅ Load medium-term model and make prediction
-medium_model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-if os.path.exists(medium_model_path):
-    try:
-        medium_model = joblib.load(medium_model_path)
-        df_mid = get_data(ticker, days=15)
-        if df_mid is not None and len(df_mid) > 5:
-            X_mid = df_mid[["Open", "High", "Low", "Close", "Volume"]].iloc[-1:]
-            medium_proba = medium_model.predict_proba(X_mid)[0][1]
-        else:
-            medium_proba = None
-    except Exception as e:
-        print(f"⚠️ Failed to load or use medium-term model for {ticker}: {e}")
-        medium_proba = None
-else:
-    medium_proba = None
 
 def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     df_short = get_data(ticker, days=short_days)
@@ -595,7 +661,8 @@ def execute_trade(ticker, prediction, proba, cooldown_cache):
 
         equity = float(api.get_account().equity)
         max_dollars = equity * MAX_POSITION_PCT
-        qty = kelly_position_size(proba, current_price, equity)
+        atr = latest_row.get("atr", 0.5)
+        qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
         sentiment = get_sentiment_score(ticker)
 
         if prediction == 1 and qty > 0 and (not position or float(
@@ -631,6 +698,17 @@ def execute_trade(ticker, prediction, proba, cooldown_cache):
                 log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
+                
+# ---- Trailing Stop-Loss (ATR based) ----
+atr = latest_row.get("atr", 0.5)
+trailing_stop_price = current_price - (1.5 * atr)
+if current_price < trailing_stop_price:
+    send_discord_message(f"🔻 {ticker} hit trailing stop at ${current_price:.2f}.")
+    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+    return
 
             if current_price <= stop_loss_price or proba < 0.4:
                 api.submit_order(symbol=ticker,
@@ -643,13 +721,12 @@ def execute_trade(ticker, prediction, proba, cooldown_cache):
                 )
                 log_trade(timestamp, ticker, "SELL", int(position.qty),
                           current_price)
-                update_q(ticker, 0, reward_function(0, 0.5 - proba, gain))
+                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
     except Exception as e:
         print(f"❌ Trade error for {ticker}: {e}", flush=True)
 
 
 print("✅ Console is working and bot is starting...", flush=True)
-
 
 def get_dynamic_watchlist(limit=8):
     tickers_to_scan = [
@@ -658,7 +735,21 @@ def get_dynamic_watchlist(limit=8):
         "NVDA", "AMD", "TSLA", "AMZN", "META", "MSFT", "GOOG", "COIN", "SHOP",
         "SNAP", "DIS", "T"
     ]
+    
+def send_end_of_day_summary():
+    if not os.path.exists(TRADE_LOG_FILE):
+        send_discord_message("📉 No trades executed today.")
+        return
 
+    df = pd.read_csv(TRADE_LOG_FILE)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    today = datetime.utcnow().date()
+    df_today = df[df["timestamp"].dt.date == today]
+
+    if df_today.empty:
+        send_discord_message("📉 No trades executed today.")
+        return
+            
     candidates = []
     for ticker in tickers_to_scan:
         try:
@@ -690,20 +781,6 @@ def get_dynamic_watchlist(limit=8):
     print(f"📈 Dynamic watchlist selected: {selected}", flush=True)
     send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
     return selected
-    
-    def send_end_of_day_summary():
-        if not os.path.exists(TRADE_LOG_FILE):
-            send_discord_message("📉 No trades executed today.")
-            return
-
-        df = pd.read_csv(TRADE_LOG_FILE)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        today = datetime.utcnow().date()
-        df_today = df[df["timestamp"].dt.date == today]
-
-        if df_today.empty:
-            send_discord_message("📉 No trades executed today.")
-            return
 
         profit = 0
         wins = 0
@@ -823,23 +900,50 @@ try:
                         continue
 
                     # ---- Momentum Confirmation ----
-                    price_change = latest_row["Close"] - latest_row["Open"]
-                    if proba_short > 0.75 and price_change <= 0:
-                        print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
-                        continue
+price_change = latest_row["Close"] - latest_row["Open"]
 
-                # ✅ Upgrade: Use both short- and medium-term signals
-                if medium_proba is None:
-                    print(f"⚠️ No medium-term signal for {ticker}, skipping trade.")
-                    continue
+# ---- VWAP Confirmation ----
+if latest_row["Close"] < latest_row["vwap"]:
+    print(f"⏸️ {ticker} price below VWAP. Skipping.")
+    continue
 
-                if proba_short > 0.75 and medium_proba > 0.7:
-                    prediction = 1
-                elif proba_short < 0.4 and medium_proba < 0.4:
-                    prediction = 0
-                else:
-                    print(f"⏸️ Mixed short/medium signal for {ticker}, skipping.")
-                    continue
+# ---- Volume Spike Confirmation ----
+recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+current_volume = latest_row["Volume"]
+
+if current_volume < 1.5 * recent_volume:
+    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+    continue
+    
+# ---- Support/Resistance Check ----
+near_support, near_resistance = detect_support_resistance(df)
+
+if prediction == 1 and near_resistance:
+    print(f"⏸️ {ticker} near resistance. Avoiding buy.")
+    continue
+elif prediction == 0 and near_support:
+    print(f"⏸️ {ticker} near support. Avoiding sell.")
+    continue
+
+# ---- Momentum Check ----
+if proba_short > 0.75 and price_change <= 0:
+    print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
+    continue
+    
+                # ---- Blended Short + Medium Term Signal ----
+if proba_mid is None:
+    print(f"⚠️ No medium-term signal for {ticker}, skipping trade.")
+    continue
+
+blended_proba = 0.6 * proba_short + 0.4 * proba_mid
+
+if blended_proba > 0.75:
+    prediction = 1
+elif blended_proba < 0.4:
+    prediction = 0
+else:
+    print(f"⏸️ Blended signal too uncertain for {ticker}. Skipping.")
+    continue
 
                 execute_trade(ticker, prediction, proba_short, cooldown)
                 trade_count += 1
