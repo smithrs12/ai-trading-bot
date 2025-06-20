@@ -577,7 +577,7 @@ def train_medium_model(ticker):
         print(f"⚠️ Not enough daily data to train medium-term model for {ticker}")
         return None, None
 
-    def predict_medium_term(ticker):
+def predict_medium_term(ticker):
     model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
     if not os.path.exists(model_path):
         return None
