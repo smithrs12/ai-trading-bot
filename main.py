@@ -821,96 +821,92 @@ if avg_volume > 0 and recent_volume < 1.5 * avg_volume and price_change > 0:
     print(f"⏸️ {ticker} sell skipped: Low volume and positive momentum (Vol: {recent_volume}, Δ: ${price_change:.2f})")
     return
 
-    # ---- SELL logic ----
-    if prediction == 0 and position:
-            entry_price = float(position.avg_entry_price)
-            regime = get_market_regime()
+# ---- SELL logic ----
+if prediction == 0 and position:
+    entry_price = float(position.avg_entry_price)
+    regime = get_market_regime()
 
-           # Dynamically optimized stop-loss and profit-taking
-volatility = latest_row.get("atr", 0.5)
-confidence_factor = proba
-regime = get_market_regime()
+    # Dynamically optimized stop-loss and profit-taking
+    volatility = latest_row.get("atr", 0.5)
+    confidence_factor = proba
+    regime = get_market_regime()
 
-# Base values
-base_stop_loss = 1.2 * volatility / current_price
-base_profit_target = 2.5 * volatility / current_price
+    base_stop_loss = 1.2 * volatility / current_price
+    base_profit_target = 2.5 * volatility / current_price
 
-# Adjust based on regime and confidence
-if regime == "bull":
-    stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-    profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-elif regime == "bear":
-    stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-    profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-else:  # sideways
-    stop_loss_pct = base_stop_loss
-    profit_take_pct = base_profit_target
+    if regime == "bull":
+        stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
+        profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
+    elif regime == "bear":
+        stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
+        profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
+    else:  # sideways
+        stop_loss_pct = base_stop_loss
+        profit_take_pct = base_profit_target
 
-# Cap ranges
-stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
+    stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
+    profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
 
-stop_loss_price = entry_price * (1 - stop_loss_pct)
-profit_target_price = entry_price * (1 + profit_take_pct)
-gain = (current_price - entry_price) / entry_price
+    stop_loss_price = entry_price * (1 - stop_loss_pct)
+    profit_target_price = entry_price * (1 + profit_take_pct)
+    gain = (current_price - entry_price) / entry_price
 
-            if current_price >= profit_target_price and proba < 0.6:
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
-                )
-                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
+    if current_price >= profit_target_price and proba < 0.6:
+        api.submit_order(symbol=ticker,
+                         qty=int(position.qty),
+                         side="sell",
+                         type="market",
+                         time_in_force="gtc")
+        send_discord_message(
+            f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
+        )
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
 
-            # Dynamic trailing stop based on ATR and gain
-trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-trailing_stop_price = current_price - (atr * trailing_atr_factor)
+    # Dynamic trailing stop
+    trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+    trailing_stop_price = current_price - (atr * trailing_atr_factor)
 
-if current_price < trailing_stop_price:
-    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-    return
-    
-# ---- Profit Decay Exit ----
-entry_price = float(position.avg_entry_price)
-time_held_minutes = (datetime.now() - datetime.strptime(position.asset_class, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60 if hasattr(position, "asset_class") else 0
-gain_pct = (current_price - entry_price) / entry_price
+    if current_price < trailing_stop_price:
+        send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+        api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
 
-if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-    send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-    api.submit_order(symbol=ticker,
-                     qty=int(position.qty),
-                     side="sell",
-                     type="market",
-                     time_in_force="gtc")
-    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-    return
+    # Profit decay logic
+    time_held_minutes = (datetime.now() - datetime.strptime(position.asset_class, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60 if hasattr(position, "asset_class") else 0
+    gain_pct = (current_price - entry_price) / entry_price
 
-            # Hard stop-loss or confidence-based exit
-            if current_price <= stop_loss_price or proba < 0.4:
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
-                )
-                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
+    if 0 < gain_pct < 0.02 and time_held_minutes > 60:
+        send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
+        api.submit_order(symbol=ticker,
+                         qty=int(position.qty),
+                         side="sell",
+                         type="market",
+                         time_in_force="gtc")
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
+
+    # Final fallback: hard stop-loss or confidence drop
+    if current_price <= stop_loss_price or proba < 0.4:
+        api.submit_order(symbol=ticker,
+                         qty=int(position.qty),
+                         side="sell",
+                         type="market",
+                         time_in_force="gtc")
+        send_discord_message(
+            f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)"
+        )
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
                 
 print("✅ Console is working and bot is starting...", flush=True)
 
