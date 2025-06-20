@@ -576,24 +576,6 @@ def train_medium_model(ticker):
     if len(df) < 90:
         print(f"⚠️ Not enough daily data to train medium-term model for {ticker}")
         return None, None
-
-def predict_medium_term(ticker):
-    model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-    if not os.path.exists(model_path):
-        return None
-
-    try:
-        model = joblib.load(model_path)
-        df = yf.download(ticker, period="6mo", interval="1d")
-        df.dropna(inplace=True)
-        if len(df) < 90:
-            return None
-
-        X = df[["Open", "High", "Low", "Close", "Volume"]].iloc[-1:]
-        return model.predict_proba(X)[0][1]
-    except Exception as e:
-        print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
-        return None
         
     df["return_5d"] = df["Close"].pct_change(5).shift(-5)
     df["target"] = (df["return_5d"] > 0.02).astype(int)
