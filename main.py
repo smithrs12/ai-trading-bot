@@ -28,9 +28,6 @@ from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.volatility import AverageTrueRange, BollingerBands
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.optimizers import Adam
 
 warnings.filterwarnings("ignore")
 load_dotenv()
