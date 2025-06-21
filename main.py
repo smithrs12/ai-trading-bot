@@ -76,6 +76,14 @@ TRADE_CACHE_FILE = "last_trades.json"
 Q_TABLE_FILE = "q_table.json"
 BACKTESTING = False
 
+def is_market_open():
+    try:
+        clock = api.get_clock()
+        return clock.is_open
+    except Exception as e:
+        print(f"⚠️ Market status check failed: {e}")
+        return False
+     
 if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
 
@@ -268,50 +276,7 @@ def is_high_risk_news_day():
     except Exception as e:
         print(f"⚠️ Failed to check news suppression: {e}")
     return False
-    
-def suppress_if_high_risk_day():
-    if is_high_risk_news_day():
-        print("⛔ High-risk economic event today. Suppressing trades.")
-        send_discord_message("⛔ Trading paused due to high-impact economic events.")
-        time.sleep(3600)
-        return True
-    return False
-
-if suppress_if_high_risk_day():
-    exit()
-
-def is_market_open():
-    return api.get_clock().is_open
-
-def close_to_market_close():
-    now = datetime.utcnow().time()
-    return dt_time(19, 55) <= now <= dt_time(20, 0)
-
-
-def liquidate_positions():
-    for pos in api.list_positions():
-        qty = int(float(pos.qty))
-        if qty > 0:
-            api.submit_order(symbol=pos.symbol,
-                             qty=qty,
-                             side="sell",
-                             type="market",
-                             time_in_force="gtc")
-            log_trade(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pos.symbol,
-                      "SELL", qty,
-                      float(pos.market_value) / qty)
-send_discord_message(f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close.")
-
-def get_data(ticker, days=90):
-    end = datetime.utcnow()
-    start = end - timedelta(days=days)
-    try:
-        time.sleep(0.25)  # ⏳ Prevent hitting rate limits
-        df = api.get_bars(ticker,
-                          tradeapi.TimeFrame.Minute,
-                          start=start.strftime("%Y-%m-%d"),
-                          end=end.strftime("%Y-%m-%d"),
-                          feed='iex').df
+ 
         df = df.rename(
             columns={
                 "open": "Open",
@@ -351,6 +316,43 @@ def calculate_vwap(df):
     except Exception as e:
         print(f"⚠️ VWAP calculation failed: {e}")
         return df
+
+def get_data(ticker, days=3, interval="1m"):
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=days)
+        df = yf.download(ticker, start=start, end=end, interval=interval)
+        if df.empty or len(df) < 10:
+            return None
+
+        df = df.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume"
+            })
+        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        macd = MACD(close=df["Close"])
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        df["stoch"] = StochasticOscillator(high=df["High"],
+                                           low=df["Low"],
+                                           close=df["Close"]).stoch()
+        df["atr"] = AverageTrueRange(high=df["High"],
+                                     low=df["Low"],
+                                     close=df["Close"]).average_true_range()
+        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+        df["hour"] = df.index.hour
+        df["minute"] = df.index.minute
+        df["dayofweek"] = df.index.dayofweek
+        df = calculate_vwap(df)
+        return df.dropna() if len(df) > 50 else None
+    except Exception as e:
+        print(f"❌ Data error for {ticker}: {e}", flush=True)
+        return None
 
 def detect_support_resistance(df, window=20, tolerance=0.01):
     try:
@@ -707,35 +709,38 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
 
-            trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-            trailing_stop_price = current_price - (atr * trailing_atr_factor)
+trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+trailing_stop_price = current_price - (atr * trailing_atr_factor)
 
-            if current_price < trailing_stop_price:
-                send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-                api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
+if current_price < trailing_stop_price:
+    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+    return
 
-            time_held_minutes = 0
-            try:
-                time_held_minutes = (datetime.now() - datetime.strptime(position.asset_class, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
-            except:
-                pass
+# ✅ Fix for profit decay logic: safe fallback to cooldown_cache
+time_held_minutes = 0
+try:
+    entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
+    if entry_time_str:
+        time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
+except:
+    pass
 
-            gain_pct = (current_price - entry_price) / entry_price
-            if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-                send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
+gain_pct = (current_price - entry_price) / entry_price
+if 0 < gain_pct < 0.02 and time_held_minutes > 60:
+    send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
+    api.submit_order(symbol=ticker,
+                     qty=int(position.qty),
+                     side="sell",
+                     type="market",
+                     time_in_force="gtc")
+    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+update_q_nn(ticker, 0, reward_function(0, entry_price, current_price))
+
 
             if current_price <= stop_loss_price or proba < 0.4:
                 api.submit_order(symbol=ticker,
@@ -762,7 +767,24 @@ def get_dynamic_watchlist(limit=8):
         "SNAP", "DIS", "T"
     ]
     return tickers_to_scan[:limit]
-    
+
+def liquidate_positions():
+    for pos in api.list_positions():
+        try:
+            qty = int(float(pos.qty))
+            if qty > 0:
+                api.submit_order(
+                    symbol=pos.symbol,
+                    qty=qty,
+                    side="sell",
+                    type="market",
+                    time_in_force="gtc"
+                )
+                log_trade(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pos.symbol, "SELL", qty, float(pos.market_value) / qty)
+                send_discord_message(f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close.")
+        except Exception as e:
+            print(f"❌ Error liquidating {pos.symbol}: {e}")
+
 def send_end_of_day_summary():
     if not os.path.exists(TRADE_LOG_FILE):
         send_discord_message("📉 No trades executed today.")
@@ -840,23 +862,6 @@ for ticker in df_today["ticker"].unique():
         else:
             losses += 1
 
-for ticker in df_today["ticker"].unique():
-    buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
-    sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
-
-    if not buys.empty and not sells.empty:
-        avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
-        avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
-        qty_sold = sells["qty"].sum()
-        pl = (avg_sell - avg_buy) * qty_sold
-        profit += pl
-        trades.append(f"{ticker}: ${pl:.2f}")
-
-        if pl > 0:
-            wins += 1
-        else:
-            losses += 1
-
 try:
     account = api.get_account()
     portfolio_value = float(account.portfolio_value)
@@ -894,6 +899,20 @@ while True:
         else:
             print("⏸️ Market is closed. Waiting...")
             time.sleep(60)
+         
+             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+
+    save_trade_cache(cooldown)
+    time.sleep(300)
+
+for cand in trade_candidates[:5]:  # Top 5 trades
+    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+    
+    df = get_data(ticker, days=5)
+    if df is None or len(df) < 5:
+        print(f"❌ Could not load data for {ticker}, skipping.")
+        continue
+
     except Exception as e:
         msg = f"🚨 Bot crashed in market open loop: {e}"
         print(msg, flush=True)
@@ -1090,22 +1109,11 @@ except Exception as e:
 
 # ✅ NEW try block for trade execution + sleep
 try:
-    trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
-
-    save_trade_cache(cooldown)
-    time.sleep(300)
-
-    for cand in trade_candidates[:5]:  # Top 5 trades
-         df = get_data(ticker, days=5)
-    if df is None or len(df) < 5:
-        print(f"❌ Could not load data for {ticker}, skipping.")
-        continue
-
-        ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
-        execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
-        trade_count += 1
-        if sector:
-            used_sectors.add(sector)
+    
+    execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
+    trade_count += 1
+    if sector:
+        used_sectors.add(sector)
 
     save_trade_cache(cooldown)
     time.sleep(300)
@@ -1114,4 +1122,4 @@ except Exception as e:
     msg = f"🚨 Bot crashed in market open loop: {e}"
     print(msg, flush=True)
     send_discord_message(msg)
-        time.sleep(60)
+    time.sleep(60)
