@@ -1,4 +1,4 @@
-# ai_trading_bot.py
+ # ai_trading_bot.py
 
 # [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
 # Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
@@ -417,30 +417,6 @@ def predict_weighted_proba(models, weights, X):
     probs = [model.predict_proba(X)[0][1] for model in models]
     weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
     return weighted_avg
-
-    xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
-    log_model = LogisticRegression(max_iter=1000)
-    rf_model = RandomForestClassifier(n_estimators=100)
-
-    regime = get_market_regime()
-    if regime == "bull":
-        weights = [0.5, 0.2, 0.3]
-    elif regime == "bear":
-        weights = [0.2, 0.4, 0.4]
-    else:
-        weights = [0.3, 0.3, 0.4]
-
-    ensemble = VotingClassifier(
-        estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
-        voting='soft',
-        weights=weights
-    )
-
-    ensemble.fit(X, y)
-    model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
-    joblib.dump(ensemble, model_path)
-
-    return ensemble, features
 
     def predict_weighted_proba(models, weights, X):
     total_weight = sum(weights)
