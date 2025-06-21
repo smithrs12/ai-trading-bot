@@ -409,13 +409,16 @@ def train_model(ticker, df):
     X, y = df[features], df["target"]
     if len(X) < 60 or y.nunique() < 2:
         return None, None
-         return VotingClassifier(estimators=[
+
+    model = VotingClassifier(estimators=[
         ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
         ('log', LogisticRegression(max_iter=1000)),
         ('rf', RandomForestClassifier(n_estimators=100))
-    ], voting='soft', weights=[3, 1, 2]), features
+    ], voting='soft', weights=[3, 1, 2])
 
-    
+    model.fit(X, y)
+    return model, features
+
 def predict_weighted_proba(models, weights, X):
     total_weight = sum(weights)
     if total_weight == 0:
