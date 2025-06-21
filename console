@@ -870,14 +870,12 @@ try:
 
     while True:
         if is_market_open():
-            TICKERS = get_dynamic_watchlist()
-            send_discord_message(f"🔄 New Top Tickers: {', '.join(TICKERS)}")
-
-            if close_to_market_close():
-                send_discord_message("🔔 Market close near. Liquidating positions.")
-                liquidate_positions()
-                send_end_of_day_summary()
-                continue
+            # your trading logic here
+            pass
+except Exception as e:
+    msg = f"🚨 Bot crashed in market open loop: {e}"
+    print(msg, flush=True)
+    send_discord_message(msg)
 
             # ✅ This block must be here
             print("🔁 Trading cycle...", flush=True)
