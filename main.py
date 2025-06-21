@@ -409,6 +409,12 @@ def train_model(ticker, df):
     X, y = df[features], df["target"]
     if len(X) < 60 or y.nunique() < 2:
         return None, None
+         return VotingClassifier(estimators=[
+        ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
+        ('log', LogisticRegression(max_iter=1000)),
+        ('rf', RandomForestClassifier(n_estimators=100))
+    ], voting='soft', weights=[3, 1, 2]), features
+
     
 def predict_weighted_proba(models, weights, X):
     total_weight = sum(weights)
@@ -840,31 +846,25 @@ summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
 send_discord_message(summary)
 
 try:
-    cooldown = load_trade_cache()
+cooldown = load_trade_cache()
 
-    while True:
+while True:
+    try:
         if is_market_open():
-            # your trading logic here
-            pass
-except Exception as e:
-    msg = f"🚨 Bot crashed in market open loop: {e}"
-    print(msg, flush=True)
-    send_discord_message(msg)
-
-            # ✅ This block must be here
             print("🔁 Trading cycle...", flush=True)
             trade_count = 0
             regime = get_market_regime()
             used_sectors = set()
             trade_candidates = []
-
-            for ticker in TICKERS:
-                # your code here
-
-except Exception as e:
-    msg = f"🚨 Bot crashed in market open loop: {e}"
-    print(msg, flush=True)
-    send_discord_message(msg)
+            TICKERS = get_dynamic_watchlist(limit=8)
+            # [Trading logic continues here...]
+        else:
+            print("⏸️ Market is closed. Waiting...")
+            time.sleep(60)
+    except Exception as e:
+        msg = f"🚨 Bot crashed in market open loop: {e}"
+        print(msg, flush=True)
+        send_discord_message(msg
 
     recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
     current_volume = df["Volume"].iloc[-1]
