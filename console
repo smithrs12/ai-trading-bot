@@ -136,10 +136,13 @@ def get_market_regime():
 # Q-Table Logic
 q_table = json.load(open(Q_TABLE_FILE)) if os.path.exists(Q_TABLE_FILE) else {}
 
-def reward_function(price_change, action):
-    # Reward based on direction and magnitude of change
-    return price_change if action == 1 else -price_change
-
+def reward_function(action, entry_price=None, exit_price=None):
+    if action == 1:
+        return 0  # No reward at buy time
+    elif action == 0 and entry_price is not None and exit_price is not None:
+        return (exit_price - entry_price) / entry_price
+    return -1  # Penalty for invalid input
+    
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -406,6 +409,8 @@ def train_model(ticker, df):
     X, y = df[features], df["target"]
     if len(X) < 60 or y.nunique() < 2:
         return None, None
+    
+def predict_weighted_proba(models, weights, X):
 
     xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
     log_model = LogisticRegression(max_iter=1000)
@@ -431,6 +436,14 @@ def train_model(ticker, df):
 
     return ensemble, features
 
+    def predict_weighted_proba(models, weights, X):
+    total_weight = sum(weights)
+    if total_weight == 0:
+        return 0.5  # fallback
+    probs = [model.predict_proba(X)[0][1] for model in models]
+    weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
+    return weighted_avg
+
 def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     df_short = get_data(ticker, days=short_days)
     df_mid = get_data(ticker, days=mid_days)
@@ -442,13 +455,13 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     X_mid = df_mid[features].iloc[-1:]
 
     try:
-        if isinstance(model, VotingClassifier):
+        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
             models = [est for _, est in model.estimators]
             weights = model.weights
             proba_short = predict_weighted_proba(models, weights, X_short)
             proba_mid = predict_weighted_proba(models, weights, X_mid)
         else:
-            proba_short = model.predict_proba(X_short)[0][1]
+            proba_short = model.predict_proba()[0][1]
             proba_mid = model.predict_proba(X_mid)[0][1]
 
         return proba_short, proba_mid, df_short.iloc[-1]
@@ -457,110 +470,24 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
         print(f"⚠️ Dual horizon prediction failed for {ticker}: {e}")
         return None, None, None
 
+def predict(ticker, model, features):
+    df = get_data(ticker, days=2)
+    if df is None or len(df) < 10:
+        return 0, None, None
     X = df[features].iloc[-1:]
-    if isinstance(model, VotingClassifier):
-        models = [est for _, est in model.estimators]
-        weights = model.weights
-        proba = predict_weighted_proba(models, weights, X)
-    else:
-        proba = model.predict_proba(X)[0][1]
-
-    return int(proba > 0.5), df.iloc[-1], proba
-
-    # Initialize models
-    xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
-    log_model = LogisticRegression(max_iter=1000)
-    rf_model = RandomForestClassifier(n_estimators=100)
-    model_scores = {"xgb": [], "log": [], "rf": []}
-
-    # Regime-aware weight adjustment
-    regime = get_market_regime()
-    if regime == "bull":
-        weights = [0.5, 0.2, 0.3]
-    elif regime == "bear":
-        weights = [0.2, 0.4, 0.4]
-    else:
-        weights = [0.3, 0.3, 0.4]
-
-    print(f"⚖️ Adaptive weights for {ticker} ({regime}): XGB={weights[0]:.2f}, LOG={weights[1]:.2f}, RF={weights[2]:.2f}", flush=True)
-
-    ensemble = VotingClassifier(
-        estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
-        voting='soft',
-        weights=weights
-    )
-
-    # Cross-validation performance tracking
-    tscv = TimeSeriesSplit(n_splits=5)
-    accs, precs, recs = [], [], []
-
-    for train_idx, test_idx in tscv.split(X):
-        xgb_model.fit(X.iloc[train_idx], y.iloc[train_idx])
-        log_model.fit(X.iloc[train_idx], y.iloc[train_idx])
-        rf_model.fit(X.iloc[train_idx], y.iloc[train_idx])
-
-        preds_xgb = xgb_model.predict(X.iloc[test_idx])
-        preds_log = log_model.predict(X.iloc[test_idx])
-        preds_rf  = rf_model.predict(X.iloc[test_idx])
-
-        model_scores["xgb"].append(accuracy_score(y.iloc[test_idx], preds_xgb))
-        model_scores["log"].append(accuracy_score(y.iloc[test_idx], preds_log))
-        model_scores["rf"].append(accuracy_score(y.iloc[test_idx], preds_rf))
-
-        y_pred = preds_xgb  # Can improve later with ensemble voting
-
-        accs.append(accuracy_score(y.iloc[test_idx], y_pred))
-        precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
-        recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
-
-    print(f"📊 [{ticker}] Acc: {np.mean(accs):.4f} | Prec: {np.mean(precs):.4f} | Rec: {np.mean(recs):.4f}", flush=True)
-    send_discord_message(
-        f"📊 [{ticker}] Ensemble Training:\nAcc: {np.mean(accs):.4f}, Prec: {np.mean(precs):.4f}, Rec: {np.mean(recs):.4f}"
-    )
-
-    if len(np.unique(y)) < 2:
-        print(f"⚠️ Skipping training for {ticker}: only one class in target variable.")
-        return None, None
 
     try:
-        ensemble.fit(X, y)
-        joblib.dump(ensemble, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
+            models = [est for _, est in model.estimators]
+            weights = model.weights
+            proba = predict_weighted_proba(models, weights, X)
+        else:
+            proba = model.predict_proba(X)[0][1]
+
+        return int(proba > 0.5), df.iloc[-1], proba
     except Exception as e:
-        print(f"❌ Failed to train model for {ticker}: {e}")
-        return None, None
-
-    # Feature importance
-    fi = pd.DataFrame({
-        "feature": features,
-        "importance": xgb_model.feature_importances_
-    }).sort_values("importance", ascending=False)
-    fi.to_csv(os.path.join(FEATURE_DIR, f"{ticker}_features.csv"), index=False)
-
-    # Save performance log
-    perf_log = {
-        "ticker": ticker,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "accuracy": float(np.mean(accs)),
-        "precision": float(np.mean(precs)),
-        "recall": float(np.mean(recs)),
-        "samples": len(X)
-    }
-    perf_df = pd.DataFrame([perf_log])
-    perf_file = os.path.join("model_performance.csv")
-    perf_df.to_csv(perf_file, mode='a', header=not os.path.exists(perf_file), index=False)
-
-    return ensemble, features
-
-def predict_weighted_proba(models, weights, X):
-    try:
-        probs = []
-        for model in models:
-            probs.append(model.predict_proba(X)[0][1])
-        weighted_proba = sum(w * p for w, p in zip(weights, probs))
-        return weighted_proba
-    except Exception as e:
-        print(f"⚠️ Ensemble blending error: {e}")
-        return 0.5  # Neutral fallback
+        print(f"⚠️ Prediction failed for {ticker}: {e}")
+        return 0, None, None
 
 def is_medium_model_stale(ticker, max_age_hours=24):
     path = os.path.join("models_medium", f"{ticker}_medium.pkl")
@@ -585,22 +512,7 @@ def train_medium_model(ticker):
     X, y = df[features], df["target"]
     if len(X) < 60 or y.nunique() < 2:
         print(f"⚠️ Insufficient or non-diverse data for {ticker} (medium-term).")
-        
-        # Log performance for medium-term model
-        perf_log = {
-            "ticker": ticker,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "accuracy": float(np.mean(accs)),
-            "precision": float(np.mean(precs)),
-            "recall": float(np.mean(recs)),
-            "samples": len(X),
-            "type": "medium"
-        }
-        perf_df = pd.DataFrame([perf_log])
-        perf_file = os.path.join("model_performance.csv")
-        perf_df.to_csv(perf_file, mode='a', header=not os.path.exists(perf_file), index=False)
         return None, None
-
     xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
     log_model = LogisticRegression(max_iter=1000)
     rf_model = RandomForestClassifier(n_estimators=100)
@@ -682,42 +594,6 @@ def predict_medium_term(ticker):
     except Exception as e:
         print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
         return None
-
-def predict(ticker, model, features):
-    df = get_data(ticker, days=2)
-    if df is None or len(df) < 10:
-        return 0, None, None
-    X = df[features].iloc[-1:]
-
-    if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
-        models = [est for name, est in model.estimators]
-        weights = model.weights
-        proba = predict_weighted_proba(models, weights, X)
-    else:
-        proba = model.predict_proba(X)[0][1]
-
-    return int(proba > 0.5), df.iloc[-1], proba
-
-# ✅ Load medium-term model and make prediction
-
-def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
-    df_short = get_data(ticker, days=short_days)
-    df_mid = get_data(ticker, days=mid_days)
-
-    if df_short is None or df_mid is None or len(df_short) < 10 or len(
-            df_mid) < 10:
-        return None, None, None
-
-    X_short = df_short[features].iloc[-1:]
-    X_mid = df_mid[features].iloc[-1:]
-
-    try:
-        proba_short = model.predict_proba(X_short)[0][1]
-        proba_mid = model.predict_proba(X_mid)[0][1]
-    except:
-        return None, None, None
-
-    return proba_short, proba_mid, df_short.iloc[-1]
 
 def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_row, df):
     try:
@@ -919,7 +795,7 @@ def send_end_of_day_summary():
         return
             
     candidates = []
-    for ticker in tickers_to_scan:
+    for ticker in UNIVERSE:
         try:
             df = get_data(ticker, days=5)
             if df is None or len(df) < 5: continue
@@ -992,8 +868,6 @@ send_discord_message(summary)
 try:
     cooldown = load_trade_cache()
 
-    print("✅ Console is working and bot is starting...", flush=True)
-
     while True:
         if is_market_open():
             TICKERS = get_dynamic_watchlist()
@@ -1005,15 +879,39 @@ try:
                 send_end_of_day_summary()
                 continue
 
+            # ✅ This block must be here
             print("🔁 Trading cycle...", flush=True)
             trade_count = 0
             regime = get_market_regime()
             used_sectors = set()
+            trade_candidates = []
 
-            for ticker in TICKERS:
-                df = get_data(ticker)
-                if df is None:
-                    continue
+for ticker in TICKERS:
+    df = get_data(ticker)
+    if df is None:
+        continue
+
+    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+    current_volume = df["Volume"].iloc[-1]
+
+    if current_volume < 1.5 * recent_volume:
+        print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+        continue
+
+    near_support, near_resistance = detect_support_resistance(df)
+
+    if prediction == 1 and near_resistance:
+        print(f"⏸️ {ticker} near resistance. Avoiding buy.")
+        continue
+    elif prediction == 0 and near_support:
+        print(f"⏸️ {ticker} near support. Avoiding sell.")
+        continue
+
+    price_change = latest_row["Close"] - latest_row["Open"]
+    if proba_short > 0.75 and price_change <= 0:
+        print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
+        continue
+
 
                 # ✅ Check for risk events
                 risks = get_risk_events(ticker)
@@ -1021,7 +919,64 @@ try:
                     print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
                     continue
 
-                # ... load model etc.
+if model is None or features is None:
+    print(f"⚠️ Skipping {ticker}: no trained model or features.")
+    continue
+
+# ✅ Retrain medium-term model if stale
+if is_medium_model_stale(ticker):
+    print(f"🔁 Retraining medium-term model for {ticker}...")
+    train_medium_model(ticker)
+
+# ---- Short-term prediction ----
+prediction, latest_row, proba_short = predict(ticker, model, features)
+
+# ✅ Confidence decay on cooldown
+if cooldown.get(ticker):
+    last_ts = cooldown[ticker].get("timestamp")
+if last_ts:
+    seconds_elapsed = (datetime.now() - datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")).total_seconds()
+    if seconds_elapsed < 600:
+        decay_factor = 1 - (seconds_elapsed / 600)
+        proba_short *= decay_factor
+        proba_short = min(max(proba_short, 0), 1)
+        print(f"🕓 Cooldown active for {ticker}. Adjusted confidence: {proba_short:.2f}")
+
+# ---- Medium-term prediction ----
+proba_mid = predict_medium_term(ticker)
+
+if proba_short is None or proba_mid is None:
+    print(f"⚠️ Missing prediction data for {ticker}, skipping.")
+    continue
+
+model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+if is_model_stale(ticker) or not os.path.exists(model_path):
+    print(f"🔁 Retraining model for {ticker}...")
+    model, features = train_model(ticker, df)
+    if model and features:
+        try:
+            joblib.dump(model, model_path)
+        except Exception as e:
+            print(f"❌ Failed to save model for {ticker}: {e}")
+            continue
+else:
+    try:
+        model = joblib.load(model_path)
+        features = df.columns.intersection([
+            "sma", "rsi", "macd", "macd_diff", "stoch",
+            "atr", "bb_bbm", "hour", "minute", "dayofweek"
+        ]).tolist()
+    except Exception as e:
+        print(f"⚠️ Failed to load model for {ticker}: {e}")
+        continue
+
+if model is None or features is None:
+    print(f"⚠️ Skipping {ticker}: no trained model or features.")
+    continue
+
+# ---- Prediction ----
+prediction, latest_row, proba_short = predict(ticker, model, features)
+proba_mid = predict_medium_term(ticker)
 
                 # ---- HOLD logic ----
                 if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
@@ -1102,6 +1057,7 @@ score = (
     (current_volume / recent_volume) * 2
 )
 
+sector = SECTOR_MAP.get(ticker, "Unknown")  # ✅ Fix: define sector
 trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
 # ✅ Cache update and account summary
@@ -1128,8 +1084,10 @@ except Exception as e:
 
 # ✅ NEW try block for trade execution + sleep
 try:
-    # ✅ Prioritize and execute top trades
     trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+
+    save_trade_cache(cooldown)
+    time.sleep(300)
 
     for cand in trade_candidates[:5]:  # Top 5 trades
         ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
