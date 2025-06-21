@@ -407,6 +407,7 @@ def train_model(ticker, df):
         "hour", "minute", "dayofweek"
     ]
     X, y = df[features], df["target"]
+
     if len(X) < 60 or y.nunique() < 2:
         return None, None
 
@@ -417,6 +418,14 @@ def train_model(ticker, df):
     ], voting='soft', weights=[3, 1, 2])
 
     model.fit(X, y)
+    return model, features
+
+    model = VotingClassifier(estimators=[
+        ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
+        ('log', LogisticRegression(max_iter=1000)),
+        ('rf', RandomForestClassifier(n_estimators=100))
+    ], voting='soft', weights=[3, 1, 2])
+
     return model, features
 
 def predict_weighted_proba(models, weights, X):
@@ -809,10 +818,36 @@ def send_end_of_day_summary():
     send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
     return selected
 
+# ✅ FIXED: df_today must be defined from trade log
+if not os.path.exists(TRADE_LOG_FILE):
+    df_today = pd.DataFrame()
+else:
+    df = pd.read_csv(TRADE_LOG_FILE)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    today = datetime.utcnow().date()
+    df_today = df[df["timestamp"].dt.date == today]
+
 profit = 0
 wins = 0
 losses = 0
 trades = []
+
+for ticker in df_today["ticker"].unique():
+    buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
+    sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
+
+    if not buys.empty and not sells.empty:
+        avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
+        avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
+        qty_sold = sells["qty"].sum()
+        pl = (avg_sell - avg_buy) * qty_sold
+        profit += pl
+        trades.append(f"{ticker}: ${pl:.2f}")
+
+        if pl > 0:
+            wins += 1
+        else:
+            losses += 1
 
 for ticker in df_today["ticker"].unique():
     buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
@@ -849,7 +884,7 @@ summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
 send_discord_message(summary)
 
 try:
-cooldown = load_trade_cache()
+    cooldown = load_trade_cache()
 
 while True:
     try:
@@ -1078,6 +1113,6 @@ try:
     time.sleep(300)
 
 except Exception as e:
-    msg = f"🚨 Bot crashed: {e}"
+    msg = f"🚨 Bot crashed in market open loop: {e}"
     print(msg, flush=True)
     send_discord_message(msg)
