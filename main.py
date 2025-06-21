@@ -411,6 +411,12 @@ def train_model(ticker, df):
         return None, None
     
 def predict_weighted_proba(models, weights, X):
+    total_weight = sum(weights)
+    if total_weight == 0:
+        return 0.5  # fallback
+    probs = [model.predict_proba(X)[0][1] for model in models]
+    weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
+    return weighted_avg
 
     xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
     log_model = LogisticRegression(max_iter=1000)
