@@ -4,6 +4,7 @@
 # Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
 # Trade Cooldown, Position Sizing, Walk-forward Validation, Persistent Q-table, Discord Alerts,
 # Trade Logging, Backtesting Switch (manual), Feature Importance Logging
+# -*- coding: utf-8 -*-
 
 import os
 import pandas as pd
@@ -299,9 +300,7 @@ def liquidate_positions():
             log_trade(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pos.symbol,
                       "SELL", qty,
                       float(pos.market_value) / qty)
-            send_discord_message(
-                f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close."
-            )
+send_discord_message(f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close.")
 
 def get_data(ticker, days=90):
     end = datetime.utcnow()
@@ -418,14 +417,6 @@ def train_model(ticker, df):
     ], voting='soft', weights=[3, 1, 2])
 
     model.fit(X, y)
-    return model, features
-
-    model = VotingClassifier(estimators=[
-        ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
-        ('log', LogisticRegression(max_iter=1000)),
-        ('rf', RandomForestClassifier(n_estimators=100))
-    ], voting='soft', weights=[3, 1, 2])
-
     return model, features
 
 def predict_weighted_proba(models, weights, X):
@@ -885,6 +876,9 @@ send_discord_message(summary)
 
 try:
     cooldown = load_trade_cache()
+except Exception as e:
+    print(f"⚠️ Failed to load cooldown cache: {e}")
+    cooldown = {}
 
 while True:
     try:
@@ -894,6 +888,7 @@ while True:
             regime = get_market_regime()
             used_sectors = set()
             trade_candidates = []
+            model, features = None, None
             TICKERS = get_dynamic_watchlist(limit=8)
             # [Trading logic continues here...]
         else:
@@ -902,7 +897,7 @@ while True:
     except Exception as e:
         msg = f"🚨 Bot crashed in market open loop: {e}"
         print(msg, flush=True)
-        send_discord_message(msg
+        send_discord_message(msg)
 
     recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
     current_volume = df["Volume"].iloc[-1]
@@ -1078,9 +1073,7 @@ save_trade_cache(cooldown)
 
 try:
     account = api.get_account()
-    send_discord_message(
-        f"📊 Trades: {trade_count} | Portfolio: ${account.portfolio_value}"
-    )
+    send_discord_message(f"📊 Trades: {trade_count} | Portfolio: ${account.portfolio_value}")
     df_pnl = pd.read_csv("pnl_tracker.csv")
     today = datetime.now().strftime("%Y-%m-%d")
     df_today = df_pnl[df_pnl["timestamp"].str.startswith(today)]
@@ -1103,6 +1096,11 @@ try:
     time.sleep(300)
 
     for cand in trade_candidates[:5]:  # Top 5 trades
+         df = get_data(ticker, days=5)
+    if df is None or len(df) < 5:
+        print(f"❌ Could not load data for {ticker}, skipping.")
+        continue
+
         ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
         execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
         trade_count += 1
@@ -1116,3 +1114,4 @@ except Exception as e:
     msg = f"🚨 Bot crashed in market open loop: {e}"
     print(msg, flush=True)
     send_discord_message(msg)
+        time.sleep(60)
