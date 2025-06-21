@@ -886,10 +886,13 @@ try:
             used_sectors = set()
             trade_candidates = []
 
-for ticker in TICKERS:
-    df = get_data(ticker)
-    if df is None:
-        continue
+            for ticker in TICKERS:
+                # your code here
+
+except Exception as e:
+    msg = f"🚨 Bot crashed in market open loop: {e}"
+    print(msg, flush=True)
+    send_discord_message(msg)
 
     recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
     current_volume = df["Volume"].iloc[-1]
