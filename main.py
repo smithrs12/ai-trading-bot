@@ -418,14 +418,6 @@ def predict_weighted_proba(models, weights, X):
     weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
     return weighted_avg
 
-    def predict_weighted_proba(models, weights, X):
-    total_weight = sum(weights)
-    if total_weight == 0:
-        return 0.5  # fallback
-    probs = [model.predict_proba(X)[0][1] for model in models]
-    weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
-    return weighted_avg
-
 def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     df_short = get_data(ticker, days=short_days)
     df_mid = get_data(ticker, days=mid_days)
