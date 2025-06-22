@@ -628,6 +628,10 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
                 return
 
+    except Exception as e:
+        print(f"🚨 execute_trade crashed for {ticker}: {e}")
+        send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
+
 # ---- RL-driven HOLD logic ----
 if position:
     _price = float(position.avg_entry_price)
@@ -637,10 +641,6 @@ if position:
     if hold_value > 0.3 and gain > 0 and proba > 0.55:
         print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
         return
-     
-    except Exception as e:
-        print(f"🚨 execute_trade crashed for {ticker}: {e}")
-        send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
 
 # ---- SELL logic ----
 if prediction == 0 and position:
