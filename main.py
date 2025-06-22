@@ -680,16 +680,16 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
 
-trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-trailing_stop_price = current_price - (atr * trailing_atr_factor)
+    trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+    trailing_stop_price = current_price - (atr * trailing_atr_factor)
 
-if current_price < trailing_stop_price:
-    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-    return
+    if current_price < trailing_stop_price:
+        send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+        api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+        return
 
 # ✅ Fix for profit decay logic: safe fallback to cooldown_cache
 time_held_minutes = 0
