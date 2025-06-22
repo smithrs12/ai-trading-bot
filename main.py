@@ -1016,78 +1016,71 @@ if model is None or features is None:
     print(f"⚠️ Skipping {ticker}: no trained model or features.")
     continue
 
-# ---- Prediction ----
-prediction, latest_row, proba_short = predict(ticker, model, features)
-proba_mid = predict_medium_term(ticker)
+try:
+    # ---- Prediction ----
+    prediction, latest_row, proba_short = predict(ticker, model, features)
+    proba_mid = predict_medium_term(ticker)
 
-# ---- HOLD logic ----
-if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
-    continue
+    if proba_short is None or proba_mid is None or latest_row is None:
+        print(f"⚠️ Missing prediction data for {ticker}, skipping.")
+        continue
 
-# ---- VWAP Confirmation ----
-if latest_row["Close"] < latest_row["vwap"]:
-    print(f"⏸️ {ticker} price below VWAP. Skipping.")
-    continue
+    # ---- HOLD logic ----
+    if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
+        print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
+        continue
 
-# ---- Volume Spike Confirmation ----
-recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-current_volume = latest_row["Volume"]
-if current_volume < 1.5 * recent_volume:
-    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
-    continue
- 
-        else:
-            print("⏸️ Market is closed. Waiting...")
-            time.sleep(60)
+    # ---- VWAP Confirmation ----
+    if latest_row["Close"] < latest_row["vwap"]:
+        print(f"⏸️ {ticker} price below VWAP. Skipping.")
+        continue
+
+    # ---- Volume Spike Confirmation ----
+    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+    current_volume = latest_row["Volume"]
+    if current_volume < 1.5 * recent_volume:
+        print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+        continue
+
+    # ---- Support/Resistance Check ----
+    near_support, near_resistance = detect_support_resistance(df)
+    if prediction == 1 and near_resistance:
+        print(f"⏸️ {ticker} near resistance. Avoiding buy.")
+        continue
+    elif prediction == 0 and near_support:
+        print(f"⏸️ {ticker} near support. Avoiding sell.")
+        continue
+
+    # ---- Momentum Check ----
+    price_change = latest_row["Close"] - latest_row["Open"]
+    if proba_short > 0.75 and price_change <= 0:
+        print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
+        continue
+
+    # ---- Blended Short + Medium Term Signal ----
+    blended_proba = 0.6 * proba_short + 0.4 * proba_mid
+
+    # Adjust trading aggressiveness based on regime
+    if regime == "bear" and proba_short < 0.8:
+        print(f"⚠️ Bear market detected. Skipping {ticker} due to low confidence ({proba_short:.2f}).")
+        continue
+    elif regime == "sideways" and proba_short < 0.7:
+        print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
+        continue
+
+    # ---- Set final prediction from blended score ----
+    if blended_proba > 0.75:
+        prediction = 1
+    elif blended_proba < 0.4:
+        prediction = 0
+    else:
+        print(f"⏸️ Blended signal too uncertain for {ticker}. Skipping.")
+        continue
 
 except Exception as e:
-    msg = f"🚨 Bot crashed: {e}"
+    msg = f"🚨 Bot crashed during pre-trade checks for {ticker}: {e}"
     print(msg, flush=True)
     send_discord_message(msg)
-
-if current_volume < 1.5 * recent_volume:
-    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
-    continue
-
-# ---- Support/Resistance Check ----
-near_support, near_resistance = detect_support_resistance(df)
-
-if prediction == 1 and near_resistance:
-    print(f"⏸️ {ticker} near resistance. Avoiding buy.")
-    continue
-elif prediction == 0 and near_support:
-    print(f"⏸️ {ticker} near support. Avoiding sell.")
-    continue
-
-# ---- Momentum Check ----
-price_change = latest_row["Close"] - latest_row["Open"]
-if proba_short > 0.75 and price_change <= 0:
-    print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
-    continue
-
-# ---- Blended Short + Medium Term Signal ----
-if proba_mid is None:
-    print(f"⚠️ No medium-term signal for {ticker}, skipping trade.")
-    continue
-
-blended_proba = 0.6 * proba_short + 0.4 * proba_mid
-
-# Adjust trading aggressiveness based on regime
-if regime == "bear" and proba_short < 0.8:
-    print(f"⚠️ Bear market detected. Skipping {ticker} due to low confidence ({proba_short:.2f}).")
-    continue
-elif regime == "sideways" and proba_short < 0.7:
-    print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
-    continue
-
-# ---- Set final prediction from blended score ----
-if blended_proba > 0.75:
-    prediction = 1
-elif blended_proba < 0.4:
-    prediction = 0
-else:
-    print(f"⏸️ Blended signal too uncertain for {ticker}. Skipping.")
     continue
 
 # ---- Get sentiment & score the opportunity ----
