@@ -681,7 +681,7 @@ try:
             update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
             return
 except Exception as e:
-    print(f"⚠️ Sell Failed For {ticker}: {e}")
+    print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
 # ---- Dynamic Trailing Stop ----
 try:
