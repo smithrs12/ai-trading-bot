@@ -680,6 +680,8 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
 
+try:
+    # trailing stop logic
     trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
     trailing_stop_price = current_price - (atr * trailing_atr_factor)
 
@@ -690,6 +692,9 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
         update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
         return
+
+except Exception as e:
+    print(f"⚠️ Error in trailing stop logic for {ticker}: {e}")
 
 # ✅ Fix for profit decay logic: safe fallback to cooldown_cache
 time_held_minutes = 0
