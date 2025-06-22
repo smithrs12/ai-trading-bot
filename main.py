@@ -276,35 +276,6 @@ def is_high_risk_news_day():
     except Exception as e:
         print(f"⚠️ Failed to check news suppression: {e}")
     return False
- 
-        df = df.rename(
-            columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close",
-                "volume": "Volume"
-            })
-        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
-        macd = MACD(close=df["Close"])
-        df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=df["High"],
-                                           low=df["Low"],
-                                           close=df["Close"]).stoch()
-        df["atr"] = AverageTrueRange(high=df["High"],
-                                     low=df["Low"],
-                                     close=df["Close"]).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
-        df["hour"] = df.index.hour
-        df["minute"] = df.index.minute
-        df["dayofweek"] = df.index.dayofweek
-        df = calculate_vwap(df)
-        return df.dropna() if len(df) > 50 else None
-    except Exception as e:
-        print(f"❌ Data error for {ticker}: {e}", flush=True)
-        return None
         
 def calculate_vwap(df):
     try:
@@ -906,12 +877,47 @@ while True:
     time.sleep(300)
 
 for cand in trade_candidates[:5]:  # Top 5 trades
-    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
-    
-    df = get_data(ticker, days=5)
-    if df is None or len(df) < 5:
-        print(f"❌ Could not load data for {ticker}, skipping.")
-        continue
+    try:
+        ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+
+        df = get_data(ticker, days=5)
+        if df is None or len(df) < 5:
+            print(f"❌ Could not load data for {ticker}, skipping.")
+            continue
+
+        recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+        current_volume = df["Volume"].iloc[-1]
+
+        if current_volume < 1.5 * recent_volume:
+            print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+            continue
+
+        near_support, near_resistance = detect_support_resistance(df)
+
+        if prediction == 1 and near_resistance:
+            print(f"⏸️ {ticker} near resistance. Avoiding buy.")
+            continue
+        elif prediction == 0 and near_support:
+            print(f"⏸️ {ticker} near support. Avoiding sell.")
+            continue
+
+        price_change = latest_row["Close"] - latest_row["Open"]
+        if proba_short > 0.75 and price_change <= 0:
+            print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
+            continue
+
+        risks = get_risk_events(ticker)
+        if risks:
+            print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+            continue
+
+        execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
+        trade_count += 1
+        if sector:
+            used_sectors.add(sector)
+
+        save_trade_cache(cooldown)
+        time.sleep(300)
 
     except Exception as e:
         msg = f"🚨 Bot crashed in market open loop: {e}"
