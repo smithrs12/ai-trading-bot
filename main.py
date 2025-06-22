@@ -679,6 +679,8 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
+             except Exception as e:
+    print(f"⚠️ Sell Failed For {ticker}: {e}")
 
 # ---- Dynamic Trailing Stop ----
 try:
