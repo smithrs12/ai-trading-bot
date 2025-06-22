@@ -630,8 +630,8 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
 
         # ---- RL-driven HOLD logic ----
         if position:
-            entry_price = float(position.avg_entry_price)
-            gain = (current_price - entry_price) / entry_price
+            _price = float(position.avg__price)
+            gain = (current_price - _price) / _price
             state = q_state(ticker, 1).unsqueeze(0)
             hold_value = q_net(state).item()
             if hold_value > 0.3 and gain > 0 and proba > 0.55:
@@ -640,7 +640,7 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
 
         # ---- SELL logic ----
         if prediction == 0 and position:
-            entry_price = float(position.avg_entry_price)
+            _price = float(position.avg__price)
             regime = get_market_regime()
             volatility = latest_row.get("atr", 0.5)
             confidence_factor = proba
@@ -661,10 +661,10 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
             profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
 
-            stop_loss_price = entry_price * (1 - stop_loss_pct)
-            profit_target_price = entry_price * (1 + profit_take_pct)
+            stop_loss_price = _price * (1 - stop_loss_pct)
+            profit_target_price = _price * (1 + profit_take_pct)
 
-            gain = (current_price - entry_price) / entry_price
+            gain = (current_price - _price) / _price
 
             if current_price >= profit_target_price and proba < 0.6:
                 api.submit_order(symbol=ticker,
@@ -680,30 +680,24 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
                 return
 
-try:
-    # trailing stop logic
-    trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-    trailing_stop_price = current_price - (atr * trailing_atr_factor)
+trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+trailing_stop_price = current_price - (atr * trailing_atr_factor)
 
-    if current_price < trailing_stop_price:
-        send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-        api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-        log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-        log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-        update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-        return
+if current_price < trailing_stop_price:
+    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+    log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
+    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+    return
 
-except Exception as e:
-    print(f"⚠️ Error in trailing stop logic for {ticker}: {e}")
-
-# ✅ Fix for profit decay logic: safe fallback to cooldown_cache
-time_held_minutes = 0
 try:
     entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
     if entry_time_str:
         time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
-except:
-    pass
+except Exception as e:
+    print(f"⚠️ Error getting time held for {ticker}: {e}")
+    time_held_minutes = 0
 
 gain_pct = (current_price - entry_price) / entry_price
 if 0 < gain_pct < 0.02 and time_held_minutes > 60:
