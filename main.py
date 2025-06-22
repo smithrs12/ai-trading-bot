@@ -690,7 +690,13 @@ try:
 
     if current_price < trailing_stop_price:
         send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-        api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
+        api.submit_order(
+            symbol=ticker,
+            qty=int(position.qty),
+            side="sell",
+            type="market",
+            time_in_force="gtc"
+        )
         log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
         log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
         update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
