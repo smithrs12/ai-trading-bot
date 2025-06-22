@@ -638,48 +638,49 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
                 return
 
-        # ---- SELL logic ----
-        if prediction == 0 and position:
-            _price = float(position.avg__price)
-            regime = get_market_regime()
-            volatility = latest_row.get("atr", 0.5)
-            confidence_factor = proba
+# ---- SELL logic ----
+try:
+    if prediction == 0 and position:
+        _price = float(position.avg_entry_price)
+        regime = get_market_regime()
+        volatility = latest_row.get("atr", 0.5)
+        confidence_factor = proba
 
-            base_stop_loss = 1.2 * volatility / current_price
-            base_profit_target = 2.5 * volatility / current_price
+        base_stop_loss = 1.2 * volatility / current_price
+        base_profit_target = 2.5 * volatility / current_price
 
-            if regime == "bull":
-                stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-                profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-            elif regime == "bear":
-                stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-                profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-            else:
-                stop_loss_pct = base_stop_loss
-                profit_take_pct = base_profit_target
+        if regime == "bull":
+            stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
+            profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
+        elif regime == "bear":
+            stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
+            profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
+        else:
+            stop_loss_pct = base_stop_loss
+            profit_take_pct = base_profit_target
 
-            stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-            profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
+        stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
+        profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
 
-            stop_loss_price = _price * (1 - stop_loss_pct)
-            profit_target_price = _price * (1 + profit_take_pct)
+        stop_loss_price = _price * (1 - stop_loss_pct)
+        profit_target_price = _price * (1 + profit_take_pct)
 
-            gain = (current_price - _price) / _price
+        gain = (current_price - _price) / _price
 
-            if current_price >= profit_target_price and proba < 0.6:
-                api.submit_order(symbol=ticker,
-                                 qty=int(position.qty),
-                                 side="sell",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
-                )
-                log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                log_pnl(ticker, int(position.qty), current_price, "SELL", entry_price, "short")
-                update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                return
-             except Exception as e:
+        if current_price >= profit_target_price and proba < 0.6:
+            api.submit_order(symbol=ticker,
+                             qty=int(position.qty),
+                             side="sell",
+                             type="market",
+                             time_in_force="gtc")
+            send_discord_message(
+                f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})"
+            )
+            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+            update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+            return
+except Exception as e:
     print(f"⚠️ Sell Failed For {ticker}: {e}")
 
 # ---- Dynamic Trailing Stop ----
