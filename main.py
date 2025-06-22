@@ -562,6 +562,16 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         current_price = api.get_latest_bar(ticker).c
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # ---- RL-driven HOLD logic ----
+        if position:
+            _price = float(position.avg_entry_price)
+            gain = (current_price - _price) / _price
+            state = q_state(ticker, 1).unsqueeze(0)
+            hold_value = q_net(state).item()
+            if hold_value > 0.3 and gain > 0 and proba > 0.55:
+                print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
+                return
+
         if ticker in cooldown_cache:
             last_trade = cooldown_cache[ticker]
             last_time = datetime.strptime(last_trade["timestamp"], "%Y-%m-%d %H:%M:%S")
@@ -631,16 +641,6 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
     except Exception as e:
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
         send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
-
-# ---- RL-driven HOLD logic ----
-if position:
-    _price = float(position.avg_entry_price)
-    gain = (current_price - _price) / _price
-    state = q_state(ticker, 1).unsqueeze(0)
-    hold_value = q_net(state).item()
-    if hold_value > 0.3 and gain > 0 and proba > 0.55:
-        print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
-        return
 
 # ---- SELL logic ----
 if prediction == 0 and position:
