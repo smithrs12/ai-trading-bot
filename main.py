@@ -950,17 +950,16 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         print(f"⏸️ {ticker} near support. Avoiding sell.")
         continue
 
-    price_change = latest_row["Close"] - latest_row["Open"]
-    if proba_short > 0.75 and price_change <= 0:
-        print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
-        continue
+price_change = latest_row["Close"] - latest_row["Open"]
+if proba_short > 0.75 and price_change <= 0:
+    print(f"⚠️ {ticker} short-term strong but lacks intraday momentum. Skipping.")
+    continue
 
-
-                # ✅ Check for risk events
-                risks = get_risk_events(ticker)
-                if risks:
-                    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
-                    continue
+# ✅ Check for risk events
+risks = get_risk_events(ticker)
+if risks:
+    print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
+    continue
 
 if model is None or features is None:
     print(f"⚠️ Skipping {ticker}: no trained model or features.")
@@ -1021,22 +1020,23 @@ if model is None or features is None:
 prediction, latest_row, proba_short = predict(ticker, model, features)
 proba_mid = predict_medium_term(ticker)
 
-                # ---- HOLD logic ----
-                if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-                    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
-                    continue
+# ---- HOLD logic ----
+if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
+    print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
+    continue
 
-                # ---- VWAP Confirmation ----
-                if latest_row["Close"] < latest_row["vwap"]:
-                    print(f"⏸️ {ticker} price below VWAP. Skipping.")
-                    continue
+# ---- VWAP Confirmation ----
+if latest_row["Close"] < latest_row["vwap"]:
+    print(f"⏸️ {ticker} price below VWAP. Skipping.")
+    continue
 
-                # ---- Volume Spike Confirmation ----
-                recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-                current_volume = latest_row["Volume"]
-                if current_volume < 1.5 * recent_volume:
-                    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
-                    continue
+# ---- Volume Spike Confirmation ----
+recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+current_volume = latest_row["Volume"]
+if current_volume < 1.5 * recent_volume:
+    print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+    continue
+ 
         else:
             print("⏸️ Market is closed. Waiting...")
             time.sleep(60)
