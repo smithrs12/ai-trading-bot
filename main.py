@@ -844,6 +844,12 @@ except Exception as e:
     print(f"⚠️ Failed to load cooldown cache: {e}")
     cooldown = {}
 
+try:
+    cooldown = load_trade_cache()
+except Exception as e:
+    print(f"⚠️ Failed to load cooldown cache: {e}")
+    cooldown = {}
+
 while True:
     try:
         if is_market_open():
@@ -854,15 +860,31 @@ while True:
             trade_candidates = []
             model, features = None, None
             TICKERS = get_dynamic_watchlist(limit=8)
-            # [Trading logic continues here...]
+
+            trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+
+            for cand in trade_candidates[:5]:  # Top 5 trades
+                try:
+                    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+
+                    # [your trading logic here]
+
+                except Exception as e:
+                    msg = f"🚨 Bot crashed in market open loop: {e}"
+                    print(msg, flush=True)
+                    send_discord_message(msg)
+
         else:
             print("⏸️ Market is closed. Waiting...")
             time.sleep(60)
-         
-        trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
-    save_trade_cache(cooldown)
-    time.sleep(300)
+        save_trade_cache(cooldown)
+        time.sleep(300)
+
+    except Exception as e:
+        print(f"🚨 Fatal error in trading loop: {e}")
+        send_discord_message(f"🚨 Fatal error: {e}")
+        time.sleep(60)
 
 for cand in trade_candidates[:5]:  # Top 5 trades
     try:
