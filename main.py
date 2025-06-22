@@ -859,7 +859,7 @@ while True:
             print("⏸️ Market is closed. Waiting...")
             time.sleep(60)
          
-             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+        trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
     save_trade_cache(cooldown)
     time.sleep(300)
