@@ -87,20 +87,36 @@ def is_market_open():
 if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
 
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+def log_trade_to_gsheet(ts, ticker, action, qty, price):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds",
+                 "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        client = gspread.authorize(creds)
+
+        sheet = client.open("trade_history").sheet1  # change name if needed
+        row = [ts, ticker, action, qty, price]
+        sheet.append_row(row)
+    except Exception as e:
+        print(f"⚠️ Failed to log to Google Sheets: {e}")
 
 def log_trade(ts, ticker, action, qty, price):
     account = api.get_account()
     row = pd.DataFrame([[
         ts, ticker, action, qty, price, account.buying_power, account.equity
-    ]],
-                       columns=[
-                           "timestamp", "ticker", "action", "qty", "price",
-                           "buying_power", "equity"
-                       ])
+    ]], columns=[
+        "timestamp", "ticker", "action", "qty", "price", "buying_power", "equity"
+    ])
     row.to_csv(TRADE_LOG_FILE,
                mode='a',
                header=not os.path.exists(TRADE_LOG_FILE),
                index=False)
+
+    # Also log to Google Sheet
+    log_trade_to_gsheet(ts, ticker, action, qty, price)
 
 def log_pnl(ticker, qty, price, direction, entry_price, model_type):
     pnl = (price - entry_price) * qty if direction == "SELL" else 0
