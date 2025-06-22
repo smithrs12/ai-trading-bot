@@ -30,6 +30,18 @@ from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.volatility import AverageTrueRange, BollingerBands
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+# Trade log credentials
+creds_trade = ServiceAccountCredentials.from_json_keyfile_name("trade_log_credentials.json", scope)
+gsheet_trade = gspread.authorize(creds_trade)
+
+# Meta model credentials
+creds_meta = ServiceAccountCredentials.from_json_keyfile_name("meta_credentials.json", scope)
+gsheet_meta = gspread.authorize(creds_meta)
 
 warnings.filterwarnings("ignore")
 load_dotenv()
@@ -92,16 +104,35 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 def log_trade_to_gsheet(ts, ticker, action, qty, price):
     try:
-        scope = ["https://spreadsheets.google.com/feeds",
-                 "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-        client = gspread.authorize(creds)
-
-        sheet = client.open("trade_history").sheet1  # change name if needed
-        row = [ts, ticker, action, qty, price]
-        sheet.append_row(row)
+        sheet = gsheet_trade.open("trade_history").sheet1  # Update sheet name if needed
+        sheet.append_row([ts, ticker, action, qty, price])
     except Exception as e:
-        print(f"⚠️ Failed to log to Google Sheets: {e}")
+        print(f"⚠️ Failed to log trade to Google Sheets: {e}")
+
+def log_meta_model_metrics(ticker, acc, prec, rec, date_str=None):
+    try:
+        if not date_str:
+            date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet = gsheet_meta.open("meta_model_log").sheet1  # Update sheet name if needed
+        sheet.append_row([date_str, ticker, acc, prec, rec])
+    except Exception as e:
+        print(f"⚠️ Failed to log meta model metrics: {e}")
+
+def log_meta_training_row(features_dict):
+    try:
+        sheet = gsheet_meta.open("meta_model_training").sheet1
+        sheet.append_row([features_dict[k] for k in features_dict])
+    except Exception as e:
+        print(f"⚠️ Failed to log meta training row: {e}")
+
+import xgboost as xgb
+
+def train_meta_model(df):
+    features = df.drop(columns=["final_outcome"])
+    labels = df["final_outcome"]
+    model = xgb.XGBClassifier(eval_metric="logloss")
+    model.fit(features, labels)
+    joblib.dump(model, "meta_model.pkl")
 
 def log_trade(ts, ticker, action, qty, price):
     account = api.get_account()
@@ -506,6 +537,9 @@ def train_medium_model(ticker):
         recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
 
     print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
+ 
+    log_meta_model_metrics(ticker, np.mean(accs), np.mean(precs), np.mean(recs))
+
     model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
     os.makedirs("models_medium", exist_ok=True)
     joblib.dump(ensemble, model_path)
@@ -606,6 +640,29 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
 
         # ---- BUY logic ----
         if prediction == 1 and qty > 0 and (not position or float(position.market_value) < max_dollars):
+
+            # ---- Meta Model Approval ----
+            try:
+                if os.path.exists("meta_model.pkl"):
+                    import xgboost as xgb
+                    meta_model = joblib.load("meta_model.pkl")
+                    meta_features = pd.DataFrame([{
+                        "proba_short": proba,
+                        "proba_mid": proba_mid,
+                        "sentiment": sentiment,
+                        "price_change": price_change,
+                        "atr": atr,
+                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                        "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                    }])
+                    meta_pred = meta_model.predict(meta_features)[0]
+                    if meta_pred == 0:
+                        print(f"⛔ Meta model vetoed the trade for {ticker}. Skipping.")
+                        return
+            except Exception as e:
+                print(f"⚠️ Meta model check failed for {ticker}: {e}")
+
+            # ✅ Only runs if no veto or exception
             api.submit_order(symbol=ticker,
                              qty=qty,
                              side="buy",
@@ -621,6 +678,23 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             }
             log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
             update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
+         
+         # ---- Meta Model Logging ----
+try:
+    outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
+    meta_log = {
+        "proba_short": proba,
+        "proba_mid": proba_mid,
+        "sentiment": sentiment,
+        "price_change": price_change,
+        "atr": atr,
+        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+        "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+        "final_outcome": outcome
+    }
+    log_meta_training_row(meta_log)
+except Exception as e:
+    print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
 
         # ---- ADDITIONAL BUY logic (Pyramiding) ----
         pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
@@ -636,6 +710,28 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         ):
             additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
             if additional_qty > 0:
+
+                # ---- Meta Model Approval ----
+                try:
+                    if os.path.exists("meta_model.pkl"):
+                        import xgboost as xgb
+                        meta_model = joblib.load("meta_model.pkl")
+                        meta_features = pd.DataFrame([{
+                            "proba_short": proba,
+                            "proba_mid": proba_mid,
+                            "sentiment": sentiment,
+                            "price_change": price_change,
+                            "atr": atr,
+                            "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                            "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                        }])
+                        meta_pred = meta_model.predict(meta_features)[0]
+                        if meta_pred == 0:
+                            print(f"⛔ Meta model vetoed the trade for {ticker}. Skipping.")
+                            return
+                except Exception as e:
+                    print(f"⚠️ Meta model check failed for {ticker}: {e}")
+
                 api.submit_order(symbol=ticker,
                                  qty=additional_qty,
                                  side="buy",
@@ -652,7 +748,25 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                     "adds": pyramiding_count + 1
                 }
                 update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
-                return
+             
+        # ---- Meta Model Logging ----
+        try:
+            outcome = 1
+            meta_log = {
+                "proba_short": proba,
+                "proba_mid": proba_mid,
+                "sentiment": sentiment,
+                "price_change": price_change,
+                "atr": atr,
+                "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                "final_outcome": outcome
+            }
+            log_meta_training_row(meta_log)
+        except Exception as e:
+            print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
+
+        return
 
     except Exception as e:
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
