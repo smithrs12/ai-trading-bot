@@ -420,7 +420,7 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Indicators
+        # Technical Indicators
         df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
@@ -430,12 +430,15 @@ def get_data(ticker, days=3, interval="1m"):
         df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
         df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
 
-        # 💡 Enforce all indicators to be 1D Series
+        # ✅ Flatten any 2D values
         for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            elif isinstance(df[col], np.ndarray) and df[col].ndim > 1:
-                df[col] = pd.Series(df[col][:, 0], index=df.index)
+            series = df[col]
+            if isinstance(series, pd.DataFrame):
+                df[col] = series.iloc[:, 0]
+            elif isinstance(series, np.ndarray) and series.ndim > 1:
+                df[col] = pd.Series(series.squeeze(), index=df.index)
+            elif hasattr(series, "ndim") and series.ndim > 1:
+                df[col] = series.squeeze()
 
         # Time features
         df["hour"] = df.index.hour
