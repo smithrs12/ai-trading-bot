@@ -409,31 +409,28 @@ def get_data(ticker, days=3, interval="1m"):
         if df.empty or len(df) < 10:
             return None
 
-        df = df.rename(
-            columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close",
-                "volume": "Volume"
-            })
+        df = df.rename(columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume"
+        })
 
-        # Ensure all indicators are Series (1D)
-        df["sma"] = SMAIndicator(close=df["Close"]).sma_indicator().squeeze()
-        df["rsi"] = RSIIndicator(close=df["Close"]).rsi().squeeze()
+        # ✅ Add required window values for all indicators
+        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator().squeeze()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi().squeeze()
         macd = MACD(close=df["Close"])
         df["macd"] = macd.macd().squeeze()
         df["macd_diff"] = macd.macd_diff().squeeze()
-        df["stoch"] = StochasticOscillator(high=df["High"],
-                                           low=df["Low"],
-                                           close=df["Close"]).stoch().squeeze()
-        df["atr"] = AverageTrueRange(high=df["High"],
-                                     low=df["Low"],
-                                     close=df["Close"]).average_true_range().squeeze()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg().squeeze()
+        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"], window=14).stoch().squeeze()
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"], window=14).average_true_range().squeeze()
+        df["bb_bbm"] = BollingerBands(close=df["Close"], window=20).bollinger_mavg().squeeze()
+
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
+
         df = calculate_vwap(df)
 
         return df.dropna() if len(df) > 50 else None
