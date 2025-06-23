@@ -409,33 +409,67 @@ def get_data(ticker, days=3, interval="1m"):
         df = yf.download(ticker, start=start, end=end, interval=interval)
 
         if df.empty or len(df) < 10:
-            print(f"⚠️ No or insufficient data for {ticker}.")
             return None
 
-        # Force correct casing and drop multi-index columns
-        df.columns = [col.title() for col in df.columns]
-        df = df[["Open", "High", "Low", "Close", "Volume"]]
+        # ✅ Fix multi-index column names (tuple issue)
+        if isinstance(df.columns[0], tuple):
+            df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
 
-        # Ensure all inputs are 1D
-        close = df["Close"].astype(float).squeeze()
-        high = df["High"].astype(float).squeeze()
-        low = df["Low"].astype(float).squeeze()
+        # ✅ Standardize capitalization to match indicator expectations
+        df = df.rename(columns={
+            "Open": "Open",
+            "High": "High",
+            "Low": "Low",
+            "Close": "Close",
+            "Volume": "Volume"
+        })
 
-        # Technical indicators
-        df["sma"] = SMAIndicator(close=close, window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(close=close, window=14).rsi()
-        macd = MACD(close=close)
-        df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=high, low=low, close=close).stoch()
-        df["atr"] = AverageTrueRange(high=high, low=low, close=close).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=close).bollinger_mavg()
+        # ✅ Apply technical indicators with shape safety
+        try:
+            df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ SMA error: {e}")
+            df["sma"] = np.nan
 
-        # Date-based features
+        try:
+            df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ RSI error: {e}")
+            df["rsi"] = np.nan
+
+        try:
+            macd = MACD(close=df["Close"])
+            df["macd"] = macd.macd().astype(float).squeeze()
+            df["macd_diff"] = macd.macd_diff().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ MACD error: {e}")
+            df["macd"] = np.nan
+            df["macd_diff"] = np.nan
+
+        try:
+            df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ Stoch error: {e}")
+            df["stoch"] = np.nan
+
+        try:
+            df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ ATR error: {e}")
+            df["atr"] = np.nan
+
+        try:
+            df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg().astype(float).squeeze()
+        except Exception as e:
+            print(f"❌ BB_BBM error: {e}")
+            df["bb_bbm"] = np.nan
+
+        # ✅ Add time-based features
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
 
+        # ✅ VWAP Calculation
         df = calculate_vwap(df)
 
         return df.dropna() if len(df) > 50 else None
@@ -443,20 +477,6 @@ def get_data(ticker, days=3, interval="1m"):
     except Exception as e:
         print(f"❌ Data error for {ticker}: {e}", flush=True)
         return None
-
-def detect_support_resistance(df, window=20, tolerance=0.01):
-    try:
-        recent_high = df["High"].rolling(window).max().iloc[-1]
-        recent_low = df["Low"].rolling(window).min().iloc[-1]
-        current_price = df["Close"].iloc[-1]
-        
-        near_resistance = abs(current_price - recent_high) / recent_high < tolerance
-        near_support = abs(current_price - recent_low) / recent_low < tolerance
-
-        return near_support, near_resistance
-    except Exception as e:
-        print(f"⚠️ Support/resistance detection failed: {e}")
-        return False, False
 
 def load_trade_cache():
     return json.load(
