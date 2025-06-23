@@ -417,19 +417,20 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Use .astype(float).squeeze() to guarantee 1D Series
-        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator().astype(float).squeeze()
-        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi().astype(float).squeeze()
+        # Technical Indicators with enforced 1D output
+        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
-        df["macd"] = macd.macd().astype(float).squeeze()
-        df["macd_diff"] = macd.macd_diff().astype(float).squeeze()
-        df["stoch"] = StochasticOscillator(high=df["High"],
-                                           low=df["Low"],
-                                           close=df["Close"]).stoch().astype(float).squeeze()
-        df["atr"] = AverageTrueRange(high=df["High"],
-                                     low=df["Low"],
-                                     close=df["Close"]).average_true_range().astype(float).squeeze()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg().astype(float).squeeze()
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
+        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+
+        # Enforce all as 1D Series
+        for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
+            if len(df[col].shape) > 1:
+                df[col] = df[col].iloc[:, 0]
 
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
