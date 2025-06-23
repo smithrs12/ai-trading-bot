@@ -420,7 +420,7 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # --- Indicator Calculations with enforced 1D shape ---
+        # --- Calculate indicators ---
         df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
@@ -430,14 +430,10 @@ def get_data(ticker, days=3, interval="1m"):
         df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
         df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
 
-        # --- Enforce 1D for any accidental 2D returns ---
+        # --- Force all columns to 1D Series ---
         for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-            elif hasattr(df[col], "squeeze"):
-                df[col] = df[col].squeeze()
+            df[col] = pd.Series(df[col].values.ravel(), index=df.index)
 
-        # --- Add time-based features ---
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
