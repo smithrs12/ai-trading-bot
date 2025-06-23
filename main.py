@@ -420,27 +420,36 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Technical Indicators
+        # Indicators with debug shape printing
         df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        print("SMA shape:", df["sma"].shape)
+
         df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        print("RSI shape:", df["rsi"].shape)
+
         macd = MACD(close=df["Close"])
         df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
-        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+        print("MACD shape:", df["macd"].shape)
 
-        # ✅ Flatten any 2D values
+        df["macd_diff"] = macd.macd_diff()
+        print("MACD_DIFF shape:", df["macd_diff"].shape)
+
+        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
+        print("Stoch shape:", df["stoch"].shape)
+
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
+        print("ATR shape:", df["atr"].shape)
+
+        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+        print("BB_BBM shape:", df["bb_bbm"].shape)
+
+        # Check all indicators to ensure 1D
         for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
             series = df[col]
-            if isinstance(series, pd.DataFrame):
-                df[col] = series.iloc[:, 0]
-            elif isinstance(series, np.ndarray) and series.ndim > 1:
+            if hasattr(series, "ndim") and series.ndim > 1:
+                print(f"⚠️ {col} is not 1D. Fixing...")
                 df[col] = pd.Series(series.squeeze(), index=df.index)
-            elif hasattr(series, "ndim") and series.ndim > 1:
-                df[col] = series.squeeze()
 
-        # Time features
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
