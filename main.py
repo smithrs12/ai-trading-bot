@@ -409,16 +409,24 @@ def get_data(ticker, days=3, interval="1m"):
         df = yf.download(ticker, start=start, end=end, interval=interval, auto_adjust=False)
 
         if df.empty or len(df) < 10:
+            print(f"⚠️ Empty or insufficient data for {ticker}")
             return None
 
         # ✅ Fix multi-index column names (tuple issue)
         if isinstance(df.columns[0], tuple):
             df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
 
-        # ✅ Normalize lowercase columns to match indicators
+        # ✅ Normalize lowercase column names to proper capitalization
         df.columns = [col.lower().capitalize() for col in df.columns]
+        print(f"📊 Columns for {ticker}: {df.columns.tolist()}")
 
-        # ✅ Apply technical indicators with shape safety
+        # ✅ Ensure all required columns exist
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(col in df.columns for col in required_cols):
+            print(f"❌ Missing required columns in {ticker} data: {df.columns.tolist()}")
+            return None
+
+        # ✅ Apply technical indicators
         try:
             df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator().astype(float).squeeze()
         except Exception as e:
@@ -458,12 +466,10 @@ def get_data(ticker, days=3, interval="1m"):
             print(f"❌ BB_BBM error: {e}")
             df["bb_bbm"] = np.nan
 
-        # ✅ Add time-based features
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
 
-        # ✅ VWAP Calculation
         df = calculate_vwap(df)
 
         return df.dropna() if len(df) > 50 else None
@@ -527,18 +533,36 @@ def train_model(ticker, df):
 
 def predict_weighted_proba(models, weights, X):
     total_weight = sum(weights)
-    if total_weight == 0:
-        return 0.5  # fallback
-    probs = [model.predict_proba(X)[0][1] for model in models]
-    weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
-    return weighted_avg
+    if total_weight == 0 or X is None or X.empty:
+        print("⚠️ Invalid input to predict_weighted_proba: empty features or zero total weight.")
+        return 0.5
+
+    try:
+        probs = []
+        for model in models:
+            prob = model.predict_proba(X)[0][1]
+            probs.append(prob)
+
+        weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
+        return weighted_avg
+
+    except Exception as e:
+        print(f"❌ Weighted proba prediction failed: {e}")
+        return 0.5  # fallback confidence
 
 def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
     df_short = get_data(ticker, days=short_days)
     df_mid = get_data(ticker, days=mid_days)
 
-    if df_short is None or df_mid is None or len(df_short) < 10 or len(df_mid) < 10:
-        return None, None, None
+    required_cols = set(features + ["Close"])
+
+    for label, df in [("short", df_short), ("mid", df_mid)]:
+        if df is None or len(df) < 10:
+            print(f"⚠️ {label} timeframe data for {ticker} is missing or too short.")
+            return None, None, None
+        if not required_cols.issubset(df.columns):
+            print(f"⚠️ {label} timeframe data for {ticker} missing required columns: {required_cols - set(df.columns)}")
+            return None, None, None
 
     X_short = df_short[features].iloc[-1:]
     X_mid = df_mid[features].iloc[-1:]
@@ -561,8 +585,15 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
 
 def predict(ticker, model, features):
     df = get_data(ticker, days=2)
+
+    required_cols = set(features + ["Close"])
     if df is None or len(df) < 10:
+        print(f"⚠️ Not enough data for {ticker}.")
         return 0, None, None
+    if not required_cols.issubset(df.columns):
+        print(f"⚠️ Missing required columns for {ticker}: {required_cols - set(df.columns)}")
+        return 0, None, None
+
     X = df[features].iloc[-1:]
 
     try:
