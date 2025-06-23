@@ -406,7 +406,7 @@ def get_data(ticker, days=3, interval="1m"):
     try:
         end = datetime.now()
         start = end - timedelta(days=days)
-        df = yf.download(ticker, start=start, end=end, interval=interval)
+        df = yf.download(ticker, start=start, end=end, interval=interval, auto_adjust=False)
 
         if df.empty or len(df) < 10:
             return None
