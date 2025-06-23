@@ -412,7 +412,6 @@ def get_data(ticker, days=3, interval="1m"):
             print(f"⚠️ No or insufficient data for {ticker}.")
             return None
 
-        # Ensure columns are capitalized to match indicator requirements
         df = df.rename(columns={
             "open": "Open",
             "high": "High",
@@ -421,33 +420,28 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # --- Indicator Calculations (with shape fixes) ---
-        indicators = {}
-        indicators["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-        indicators["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        # --- Indicator Calculations with enforced 1D shape ---
+        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
-        indicators["macd"] = macd.macd()
-        indicators["macd_diff"] = macd.macd_diff()
-        stoch = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"])
-        indicators["stoch"] = stoch.stoch()
-        atr = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"])
-        indicators["atr"] = atr.average_true_range()
-        bb = BollingerBands(close=df["Close"])
-        indicators["bb_bbm"] = bb.bollinger_mavg()
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
+        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
 
-        # Flatten and insert into df
-        for key, series in indicators.items():
-            if isinstance(series, pd.Series):
-                df[key] = series
-            else:
-                df[key] = pd.Series(series.squeeze(), index=df.index)
+        # --- Enforce 1D for any accidental 2D returns ---
+        for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
+            elif hasattr(df[col], "squeeze"):
+                df[col] = df[col].squeeze()
 
-        # --- Add datetime features ---
+        # --- Add time-based features ---
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
 
-        # --- VWAP ---
         df = calculate_vwap(df)
 
         return df.dropna() if len(df) > 50 else None
