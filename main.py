@@ -399,18 +399,20 @@ def calculate_vwap(df):
         return df
 
 def get_data(ticker, days=3, interval="1m"):
-    from datetime import datetime, timedelta
-    import pandas as pd
     if interval == "1m" and days > 7:
         print(f"⚠️ Reducing 'days' from {days} to 7 for 1m interval due to YF limit.")
         days = 7
+
     try:
         end = datetime.now()
         start = end - timedelta(days=days)
         df = yf.download(ticker, start=start, end=end, interval=interval)
+
         if df.empty or len(df) < 10:
+            print(f"⚠️ No or insufficient data for {ticker}.")
             return None
 
+        # Ensure columns are capitalized to match indicator requirements
         df = df.rename(columns={
             "open": "Open",
             "high": "High",
@@ -419,27 +421,33 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Convert indicators to 1D Series explicitly
-        df["sma"] = pd.Series(SMAIndicator(df["Close"], window=14).sma_indicator().to_numpy().flatten(), index=df.index)
-        df["rsi"] = pd.Series(RSIIndicator(df["Close"], window=14).rsi().to_numpy().flatten(), index=df.index)
+        # --- Indicator Calculations (with shape fixes) ---
+        indicators = {}
+        indicators["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        indicators["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        macd = MACD(close=df["Close"])
+        indicators["macd"] = macd.macd()
+        indicators["macd_diff"] = macd.macd_diff()
+        stoch = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"])
+        indicators["stoch"] = stoch.stoch()
+        atr = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"])
+        indicators["atr"] = atr.average_true_range()
+        bb = BollingerBands(close=df["Close"])
+        indicators["bb_bbm"] = bb.bollinger_mavg()
 
-        macd = MACD(df["Close"])
-        df["macd"] = pd.Series(macd.macd().to_numpy().flatten(), index=df.index)
-        df["macd_diff"] = pd.Series(macd.macd_diff().to_numpy().flatten(), index=df.index)
+        # Flatten and insert into df
+        for key, series in indicators.items():
+            if isinstance(series, pd.Series):
+                df[key] = series
+            else:
+                df[key] = pd.Series(series.squeeze(), index=df.index)
 
-        stoch = StochasticOscillator(df["High"], df["Low"], df["Close"])
-        df["stoch"] = pd.Series(stoch.stoch().to_numpy().flatten(), index=df.index)
-
-        atr = AverageTrueRange(df["High"], df["Low"], df["Close"])
-        df["atr"] = pd.Series(atr.average_true_range().to_numpy().flatten(), index=df.index)
-
-        bb = BollingerBands(df["Close"])
-        df["bb_bbm"] = pd.Series(bb.bollinger_mavg().to_numpy().flatten(), index=df.index)
-
+        # --- Add datetime features ---
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
 
+        # --- VWAP ---
         df = calculate_vwap(df)
 
         return df.dropna() if len(df) > 50 else None
