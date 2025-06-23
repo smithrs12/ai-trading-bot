@@ -412,54 +412,26 @@ def get_data(ticker, days=3, interval="1m"):
             print(f"⚠️ No or insufficient data for {ticker}.")
             return None
 
-        df = df.rename(columns={
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume"
-        })
+        # Force correct casing and drop multi-index columns
+        df.columns = [col.title() for col in df.columns]
+        df = df[["Open", "High", "Low", "Close", "Volume"]]
 
-        # Indicator debugging
-        try:
-            df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-            print("✅ SMA shape:", df["sma"].shape)
-        except Exception as e:
-            print("❌ SMA error:", e)
+        # Ensure all inputs are 1D
+        close = df["Close"].astype(float).squeeze()
+        high = df["High"].astype(float).squeeze()
+        low = df["Low"].astype(float).squeeze()
 
-        try:
-            df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
-            print("✅ RSI shape:", df["rsi"].shape)
-        except Exception as e:
-            print("❌ RSI error:", e)
+        # Technical indicators
+        df["sma"] = SMAIndicator(close=close, window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(close=close, window=14).rsi()
+        macd = MACD(close=close)
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        df["stoch"] = StochasticOscillator(high=high, low=low, close=close).stoch()
+        df["atr"] = AverageTrueRange(high=high, low=low, close=close).average_true_range()
+        df["bb_bbm"] = BollingerBands(close=close).bollinger_mavg()
 
-        try:
-            macd = MACD(close=df["Close"])
-            df["macd"] = macd.macd()
-            df["macd_diff"] = macd.macd_diff()
-            print("✅ MACD shape:", df["macd"].shape)
-            print("✅ MACD_DIFF shape:", df["macd_diff"].shape)
-        except Exception as e:
-            print("❌ MACD error:", e)
-
-        try:
-            df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
-            print("✅ Stoch shape:", df["stoch"].shape)
-        except Exception as e:
-            print("❌ Stoch error:", e)
-
-        try:
-            df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
-            print("✅ ATR shape:", df["atr"].shape)
-        except Exception as e:
-            print("❌ ATR error:", e)
-
-        try:
-            df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
-            print("✅ BB_BBM shape:", df["bb_bbm"].shape)
-        except Exception as e:
-            print("❌ BB_BBM error:", e)
-
+        # Date-based features
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
