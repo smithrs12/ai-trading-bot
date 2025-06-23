@@ -125,6 +125,14 @@ if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+from datetime import time as dt_time
+
+def is_premarket_risk_period():
+    now = datetime.now().time()
+    market_open = dt_time(6, 30)  # 6:30 AM PT
+    market_cutoff = dt_time(6, 40)
+    return market_open <= now < market_cutoff
+
 def log_trade_to_gsheet(ts, ticker, action, qty, price):
     try:
         sheet = gsheet_trade.open("trade_history").sheet1  # Update sheet name if needed
@@ -194,6 +202,27 @@ def send_discord_message(msg):
             requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
         except:
             pass
+
+def retry_submit_order(symbol, qty, side, max_attempts=3, delay=3):
+    attempt = 1
+    while attempt <= max_attempts:
+        try:
+            api.submit_order(
+                symbol=symbol,
+                qty=qty,
+                side=side,
+                type="market",
+                time_in_force="gtc"
+            )
+            print(f"✅ Trade submitted for {symbol} on attempt {attempt}")
+            return True
+        except Exception as e:
+            print(f"⚠️ Attempt {attempt} failed for {symbol}: {e}")
+            if attempt == max_attempts:
+                send_discord_message(f"❌ Failed to execute trade for {symbol} after {max_attempts} attempts.")
+                return False
+            time.sleep(delay)
+            attempt += 1
 
 def get_market_regime():
     spy = get_data("SPY", days=10)
@@ -643,21 +672,24 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
                 return
 
+        # ---- Hybrid Cooldown Logic ----
         if ticker in cooldown_cache:
             last_trade = cooldown_cache[ticker]
             last_time = datetime.strptime(last_trade["timestamp"], "%Y-%m-%d %H:%M:%S")
             last_conf = last_trade.get("confidence", 0.5)
-            cooldown_secs = int(600 + 600 * last_conf)
-            if (datetime.now() - last_time).seconds < cooldown_secs:
-                print(f"⏳ Adaptive cooldown active for {ticker} ({cooldown_secs//60} min)")
+            seconds_since = (datetime.now() - last_time).total_seconds()
+
+            # Hard block for first 5 minutes
+            if seconds_since < 300:
+                print(f"⏳ Cooldown: Hard block active for {ticker} ({int(seconds_since)}s elapsed)")
                 return
 
-        equity = float(api.get_account().equity)
-        max_dollars = equity * MAX_POSITION_PCT
-        atr = latest_row.get("atr", 0.5)
-        qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
-        sentiment = get_sentiment_score(ticker)
-        price_change = latest_row["Close"] - latest_row["Open"]
+            # Soft cooldown decay for re-entry
+            decay_factor = max(0.1, 1 - seconds_since / 900)  # Decays over 15 mins
+            adjusted_proba = proba * decay_factor
+            if adjusted_proba < 0.6:
+                print(f"⏳ Cooldown: Adjusted confidence too low ({adjusted_proba:.2f}) for {ticker}. Skipping.")
+                return
 
         # ---- BUY logic ----
         if prediction == 1 and qty > 0 and (not position or float(position.market_value) < max_dollars):
@@ -684,14 +716,13 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
             # ✅ Only runs if no veto or exception
-            api.submit_order(symbol=ticker,
-                             qty=qty,
-                             side="buy",
-                             type="market",
-                             time_in_force="gtc")
+            if not retry_submit_order(ticker, qty, "buy"):
+                return
+
             send_discord_message(
                 f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f} Sentiment: {sentiment:+.2f})"
             )
+
             log_trade(timestamp, ticker, "BUY", qty, current_price)
             cooldown_cache[ticker] = {
                 "timestamp": timestamp,
@@ -753,22 +784,21 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 except Exception as e:
                     print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
-                api.submit_order(symbol=ticker,
-                                 qty=additional_qty,
-                                 side="buy",
-                                 type="market",
-                                 time_in_force="gtc")
-                send_discord_message(
-                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
-                )
-                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
-                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
-                cooldown_cache[ticker] = {
-                    "timestamp": timestamp,
-                    "confidence": float(min(proba + 0.1, 1.0)),
-                    "adds": pyramiding_count + 1
-                }
-                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
+        # ✅ Only runs if no veto or exception
+        if not retry_submit_order(ticker, additional_qty, "buy"):
+            return
+
+        send_discord_message(
+            f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
+        )
+        log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
+        log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
+        cooldown_cache[ticker] = {
+            "timestamp": timestamp,
+            "confidence": float(min(proba + 0.1, 1.0)),
+            "adds": pyramiding_count + 1
+        }
+        update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
              
             # ---- Meta Model Logging ----
             try:
@@ -793,80 +823,71 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
         send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
 
-        # ---- SELL logic ----
-        if prediction == 0 and position:
-            try:
-                _price = float(position.avg_entry_price)
-                regime = get_market_regime()
-                volatility = latest_row.get("atr", 0.5)
-                confidence_factor = proba
+# ---- SELL logic ----
+if prediction == 0 and position:
+    try:
+        _price = float(position.avg_entry_price)
+        regime = get_market_regime()
+        volatility = latest_row.get("atr", 0.5)
+        confidence_factor = proba
 
-                base_stop_loss = 1.2 * volatility / current_price
-                base_profit_target = 2.5 * volatility / current_price
+        base_stop_loss = 1.2 * volatility / current_price
+        base_profit_target = 2.5 * volatility / current_price
 
-                if regime == "bull":
-                    stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-                    profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-                elif regime == "bear":
-                    stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-                    profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-                else:
-                    stop_loss_pct = base_stop_loss
-                    profit_take_pct = base_profit_target
+        if regime == "bull":
+            stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
+            profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
+        elif regime == "bear":
+            stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
+            profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
+        else:
+            stop_loss_pct = base_stop_loss
+            profit_take_pct = base_profit_target
 
-                stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-                profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
+        stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
+        profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
 
-                stop_loss_price = _price * (1 - stop_loss_pct)
-                profit_target_price = _price * (1 + profit_take_pct)
-                gain = (current_price - _price) / _price
+        stop_loss_price = _price * (1 - stop_loss_pct)
+        profit_target_price = _price * (1 + profit_take_pct)
+        gain = (current_price - _price) / _price
 
-                # Profit target reached
-                if current_price >= profit_target_price and proba < 0.6:
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    send_discord_message(f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
+        # Profit target reached
+        if current_price >= profit_target_price and proba < 0.6:
+            if not retry_submit_order(ticker, int(position.qty), "sell"):
+                return
+            send_discord_message(f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})")
+            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+            update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+            return
 
-                # Dynamic Trailing Stop
-                trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-                trailing_stop_price = current_price - (volatility * trailing_atr_factor)
-                if current_price < trailing_stop_price:
-                    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
+        # Dynamic Trailing Stop
+        trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+        trailing_stop_price = current_price - (volatility * trailing_atr_factor)
+        if current_price < trailing_stop_price:
+            if not retry_submit_order(ticker, int(position.qty), "sell"):
+                return
+            send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+            update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+            return
 
-                # Profit Decay
-                time_held_minutes = 0
-                entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
-                if entry_time_str:
-                    time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
+        # Profit Decay
+        time_held_minutes = 0
+        entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
+        if entry_time_str:
+            time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
 
-                gain_pct = (current_price - _price) / _price
-                if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-                    send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, _price, current_price))
-                    return
+        gain_pct = (current_price - _price) / _price
+        if 0 < gain_pct < 0.02 and time_held_minutes > 60:
+            if not retry_submit_order(ticker, int(position.qty), "sell"):
+                return
+            send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
+            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+            update_q_nn(ticker, 0, reward_function(0, _price, current_price))
 
-                # Stop-loss or confidence drop
-                if current_price <= stop_loss_price or proba < 0.4:
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    send_discord_message(f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
-
-            except Exception as e:
-                print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
 def get_dynamic_watchlist(limit=8):
     tickers_to_scan = [
@@ -875,136 +896,98 @@ def get_dynamic_watchlist(limit=8):
         "NVDA", "AMD", "TSLA", "AMZN", "META", "MSFT", "GOOG", "COIN", "SHOP",
         "SNAP", "DIS", "T"
     ]
-    return tickers_to_scan[:limit]
 
-def liquidate_positions():
-    for pos in api.list_positions():
-        try:
-            qty = int(float(pos.qty))
-            if qty > 0:
-                api.submit_order(
-                    symbol=pos.symbol,
-                    qty=qty,
-                    side="sell",
-                    type="market",
-                    time_in_force="gtc"
-                )
-                log_trade(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pos.symbol, "SELL", qty, float(pos.market_value) / qty)
-                send_discord_message(f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close.")
-        except Exception as e:
-            print(f"❌ Error liquidating {pos.symbol}: {e}")
+    win_rates = {}
+    try:
+        if os.path.exists(TRADE_LOG_FILE):
+            df = pd.read_csv(TRADE_LOG_FILE)
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            for ticker in tickers_to_scan:
+                trades = df[df["ticker"] == ticker]
+                buys = trades[trades["action"].str.contains("BUY")]
+                sells = trades[trades["action"] == "SELL"]
+                if not buys.empty and not sells.empty:
+                    avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
+                    avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
+                    if avg_sell > avg_buy:
+                        win_rates[ticker] = win_rates.get(ticker, 0) + 1
+                    else:
+                        win_rates[ticker] = win_rates.get(ticker, 0)
+
+        ranked = sorted(tickers_to_scan, key=lambda t: win_rates.get(t, 0), reverse=True)
+        return ranked[:limit]
+    except Exception as e:
+        print(f"⚠️ Failed to tune watchlist: {e}")
+        return tickers_to_scan[:limit]
 
 def send_end_of_day_summary():
     if not os.path.exists(TRADE_LOG_FILE):
         send_discord_message("📉 No trades executed today.")
         return
 
-    df = pd.read_csv(TRADE_LOG_FILE)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    today = datetime.utcnow().date()
-    df_today = df[df["timestamp"].dt.date == today]
+    try:
+        df = pd.read_csv(TRADE_LOG_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        today = datetime.utcnow().date()
+        df_today = df[df["timestamp"].dt.date == today]
 
-    if df_today.empty:
-        send_discord_message("📉 No trades executed today.")
-        return
-            
-    candidates = []
-    for ticker in UNIVERSE:
+        if df_today.empty:
+            send_discord_message("📉 No trades executed today.")
+            return
+
+        profit = 0
+        wins = 0
+        losses = 0
+        trades = []
+
+        for ticker in df_today["ticker"].unique():
+            buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"].str.contains("BUY"))]
+            sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
+
+            if not buys.empty and not sells.empty:
+                avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
+                avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
+                qty_sold = sells["qty"].sum()
+                pl = (avg_sell - avg_buy) * qty_sold
+                profit += pl
+                trades.append(f"{ticker}: ${pl:.2f}")
+
+                if pl > 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+        total_trades = wins + losses
+        win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+
         try:
-            df = get_data(ticker, days=5)
-            if df is None or len(df) < 5: continue
+            account = api.get_account()
+            portfolio_value = float(account.portfolio_value)
+        except:
+            portfolio_value = "N/A"
 
-            ret = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
-            sentiment = get_sentiment_score(ticker)
-            atr = df["atr"].iloc[-1]
-            volume = df["Volume"].rolling(5).mean().iloc[-1]
+        summary = f"📊 End of Day Summary ({today}):\n"
+        summary += "\n".join(trades) + "\n"
+        summary += f"\n💰 Total P/L: ${profit:.2f}"
+        summary += f"\n📈 Portfolio Value: ${portfolio_value}"
+        summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
 
-            # Score formula: prioritize momentum, volatility, sentiment, and liquidity
-            regime = get_market_regime()
-            if regime == "bull":
-                score = (ret * 120) + (sentiment * 4) + np.log(volume)
-            elif regime == "bear":
-                score = (sentiment * 6) + (atr * 3) + np.log(volume)
-            else:  # sideways
-                score = (ret * 60) + (sentiment * 4) + np.log(volume)
+        send_discord_message(summary)
 
-            candidates.append((ticker, score))
-        except Exception as e:
-            print(f"⚠️ Skipping {ticker}: {e}")
-
-    # Sort by score and return top tickers
-    ranked = sorted(candidates, key=lambda x: x[1], reverse=True)
-    selected = [t[0] for t in ranked[:limit]]
-
-    print(f"📈 Dynamic watchlist selected: {selected}", flush=True)
-    send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
-    return selected
-
-# ✅ FIXED: df_today must be defined from trade log
-if not os.path.exists(TRADE_LOG_FILE):
-    df_today = pd.DataFrame()
-else:
-    df = pd.read_csv(TRADE_LOG_FILE)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    today = datetime.utcnow().date()
-    df_today = df[df["timestamp"].dt.date == today]
-
-profit = 0
-wins = 0
-losses = 0
-trades = []
-
-for ticker in df_today["ticker"].unique():
-    buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
-    sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
-
-    if not buys.empty and not sells.empty:
-        avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
-        avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
-        qty_sold = sells["qty"].sum()
-        pl = (avg_sell - avg_buy) * qty_sold
-        profit += pl
-        trades.append(f"{ticker}: ${pl:.2f}")
-
-        if pl > 0:
-            wins += 1
-        else:
-            losses += 1
-
-try:
-    account = api.get_account()
-    portfolio_value = float(account.portfolio_value)
-except:
-    portfolio_value = "N/A"
-
-total_trades = wins + losses
-win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-
-summary = f"📊 End of Day Summary ({today}):\n"
-summary += "\n".join(trades) + "\n"
-summary += f"\n💰 Total P/L: ${profit:.2f}"
-summary += f"\n📈 Portfolio Value: ${portfolio_value}"
-summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
-
-send_discord_message(summary)
-
-try:
-    cooldown = load_trade_cache()
-except Exception as e:
-    print(f"⚠️ Failed to load cooldown cache: {e}")
-    cooldown = {}
-
-try:
-    cooldown = load_trade_cache()
-except Exception as e:
-    print(f"⚠️ Failed to load cooldown cache: {e}")
-    cooldown = {}
+    except Exception as e:
+        print(f"❌ Failed to send EOD summary: {e}")
 
 while True:
     try:
         if is_market_open():
             print("🔁 Trading cycle...", flush=True)
-         
+
+            # ⛔ Suppress trades in first 10 minutes after market open
+            if is_premarket_risk_period():
+                print("🛑 Suppressing trades during first 10 minutes of market open.")
+                time.sleep(60)
+                continue
+
             # 🔁 Auto-retrain meta model daily
             if should_retrain_meta_model():
                 retrain_meta_model_from_sheet()
@@ -1080,6 +1063,14 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         if model is None or features is None:
             print(f"⚠️ Skipping {ticker}: no trained model or features.")
             continue
+         
+                 # 🔎 Price Action Strength Filter
+        if df is not None:
+            last_candles = df.tail(5)
+            green_candles = (last_candles["Close"] > last_candles["Open"]).sum()
+            if green_candles < 3:
+                print(f"⛔ {ticker} lacks strong recent price action ({green_candles}/5 green candles). Skipping.")
+                continue
 
         # Run predictions
         prediction, latest_row, proba_short = predict(ticker, model, features)
@@ -1102,6 +1093,13 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
             print(f"⏸️ HOLDING {ticker}: Short-term moderate, mid-term strong outlook.")
             continue
+        
+        # Volume Spike Check
+        recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+        current_volume = latest_row["Volume"]
+        if current_volume < 1.5 * recent_volume:
+            print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+            continue
 
         # VWAP check
         if latest_row["Close"] < latest_row["vwap"]:
@@ -1113,6 +1111,16 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         current_volume = latest_row["Volume"]
         if current_volume < 1.5 * recent_volume:
             print(f"⏸️ {ticker} volume not spiking (Current: {current_volume:.0f}, Avg: {recent_volume:.0f}). Skipping.")
+            continue
+         
+        # Blended short + medium confidence score
+        blended_proba = 0.6 * proba_short + 0.4 * proba_mid
+
+        if regime == "bear" and proba_short < 0.8:
+            print(f"⚠️ Bear market: Skipping {ticker} due to low confidence ({proba_short:.2f}).")
+            continue
+        elif regime == "sideways" and proba_short < 0.7:
+            print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
             continue
 
         # Support/resistance logic
@@ -1136,15 +1144,6 @@ for cand in trade_candidates[:5]:  # Top 5 trades
             print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
             continue
 
-        # Blended short + medium signal
-        blended_proba = 0.6 * proba_short + 0.4 * proba_mid
-        if regime == "bear" and proba_short < 0.8:
-            print(f"⚠️ Bear market: Skipping {ticker} due to low confidence ({proba_short:.2f}).")
-            continue
-        elif regime == "sideways" and proba_short < 0.7:
-            print(f"⏸️ Sideways market: Skipping {ticker} with moderate confidence ({proba_short:.2f}).")
-            continue
-
         # Adjust prediction if needed
         if blended_proba > 0.75:
             prediction = 1
@@ -1165,13 +1164,56 @@ for cand in trade_candidates[:5]:  # Top 5 trades
 
         # Add to candidate list
         sector = SECTOR_MAP.get(ticker, "Unknown")
+        if sector in used_sectors:
+            print(f"⛔ Skipping {ticker} to avoid sector overexposure ({sector})")
+            continue
+
         trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
-        # Execute the trade
+        # 🧱 Support/Resistance Filter
+        near_support, near_resistance = detect_support_resistance(df)
+        if prediction == 1 and near_resistance:
+            print(f"⛔ {ticker} is near resistance. Skipping buy.")
+            continue
+        elif prediction == 0 and near_support:
+            print(f"⛔ {ticker} is near support. Skipping sell.")
+            continue
+
+        # 🧮 Final Trade Quality Filter
+        try:
+            volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
+            trade_score = (
+                proba_short * 100 +
+                sentiment * 10 -
+                latest_row["atr"] * 5 +
+                volume_ratio * 2
+            )
+            if trade_score < 20:
+                print(f"⛔ Trade score too low ({trade_score:.2f}) for {ticker}. Skipping.")
+                continue
+        except Exception as e:
+            print(f"⚠️ Trade score filter error for {ticker}: {e}")
+
+        # ✅ Execute the trade
         execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
         trade_count += 1
         if sector:
             used_sectors.add(sector)
+
+        # ⏳ Auto-liquidate 5 mins before market close (12:55 PM PT)
+        now = datetime.now().time()
+        if dt_time(12, 55) <= now < dt_time(12, 56):
+            print("⚠️ Approaching market close. Liquidating positions.")
+            liquidate_positions()
+            time.sleep(60)  # Prevent duplicate execution in same loop
+            continue
+
+        # ✅ Send end-of-day summary near close
+        if dt_time(12, 56) <= now < dt_time(12, 58):
+            print("📊 Sending end-of-day summary before market close.")
+            send_end_of_day_summary()
+            time.sleep(120)  # Avoid repeat calls
+            continue
 
         save_trade_cache(cooldown)
         time.sleep(300)
