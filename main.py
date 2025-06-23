@@ -35,6 +35,29 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
+def should_retrain_meta_model(max_age_hours=24):
+    model_path = "meta_model.pkl"
+    if not os.path.exists(model_path):
+        return True
+    last_modified = os.path.getmtime(model_path)
+    age_hours = (time.time() - last_modified) / 3600
+    return age_hours > max_age_hours
+
+def retrain_meta_model_from_sheet():
+    try:
+        sheet = gsheet_meta.open("meta_model_training").sheet1
+        records = sheet.get_all_records()
+        if len(records) < 10:
+            print("⚠️ Not enough data to retrain meta model.")
+            return
+        df = pd.DataFrame(records)
+        train_meta_model(df)
+        print("✅ Meta model retrained successfully.")
+        send_discord_message("🧠 Meta model retrained.")
+    except Exception as e:
+        print(f"❌ Failed to retrain meta model: {e}")
+        send_discord_message(f"❌ Meta model retraining failed: {e}")
+
 # Trade log credentials
 creds_trade = ServiceAccountCredentials.from_json_keyfile_name("trade_log_credentials.json", scope)
 gsheet_trade = gspread.authorize(creds_trade)
@@ -95,6 +118,9 @@ def is_market_open():
     except Exception as e:
         print(f"⚠️ Market status check failed: {e}")
         return False
+     
+        if should_retrain_meta_model():
+        retrain_meta_model_from_sheet()
      
 if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
@@ -172,7 +198,6 @@ def send_discord_message(msg):
         except:
             pass
 
-
 def get_market_regime():
     spy = get_data("SPY", days=10)
     if spy is None: return regime_cache["type"]
@@ -187,7 +212,6 @@ def get_market_regime():
     regime_cache["last"] = datetime.now()
     regime_cache["type"] = regime
     return regime
-
 
 # Q-Table Logic
 q_table = json.load(open(Q_TABLE_FILE)) if os.path.exists(Q_TABLE_FILE) else {}
@@ -983,6 +1007,11 @@ while True:
     try:
         if is_market_open():
             print("🔁 Trading cycle...", flush=True)
+         
+            # 🔁 Auto-retrain meta model daily
+            if should_retrain_meta_model():
+                retrain_meta_model_from_sheet()
+             
             trade_count = 0
             regime = get_market_regime()
             used_sectors = set()
