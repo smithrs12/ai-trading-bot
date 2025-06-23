@@ -799,25 +799,25 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             "adds": pyramiding_count + 1
         }
         update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
-             
-            # ---- Meta Model Logging ----
-            try:
-                outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
-                meta_log = {
-                    "proba_short": proba,
-                    "proba_mid": proba_mid,
-                    "sentiment": sentiment,
-                    "price_change": price_change,
-                    "atr": atr,
-                    "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                    "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
-                    "final_outcome": outcome
-                }
-                log_meta_training_row(meta_log)
-            except Exception as e:
-                print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
 
-            return
+        # ---- Meta Model Logging ----
+        try:
+            outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
+            meta_log = {
+                "proba_short": proba,
+                "proba_mid": proba_mid,
+                "sentiment": sentiment,
+                "price_change": price_change,
+                "atr": atr,
+                "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                "final_outcome": outcome
+            }
+            log_meta_training_row(meta_log)
+        except Exception as e:
+            print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
+
+        return
 
     except Exception as e:
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
