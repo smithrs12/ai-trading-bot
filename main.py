@@ -119,9 +119,6 @@ def is_market_open():
         print(f"⚠️ Market status check failed: {e}")
         return False
      
-        if should_retrain_meta_model():
-        retrain_meta_model_from_sheet()
-     
 if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
 
