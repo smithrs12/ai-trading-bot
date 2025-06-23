@@ -415,14 +415,8 @@ def get_data(ticker, days=3, interval="1m"):
         if isinstance(df.columns[0], tuple):
             df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
 
-        # ✅ Standardize capitalization to match indicator expectations
-        df = df.rename(columns={
-            "Open": "Open",
-            "High": "High",
-            "Low": "Low",
-            "Close": "Close",
-            "Volume": "Volume"
-        })
+        # ✅ Normalize lowercase columns to match indicators
+        df.columns = [col.lower().capitalize() for col in df.columns]
 
         # ✅ Apply technical indicators with shape safety
         try:
