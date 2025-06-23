@@ -888,6 +888,8 @@ if prediction == 0 and position:
             log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
             update_q_nn(ticker, 0, reward_function(0, _price, current_price))
 
+    except Exception as e:
+        print(f"⚠️ SELL logic failed for {ticker}: {e}")
 
 def get_dynamic_watchlist(limit=8):
     tickers_to_scan = [
