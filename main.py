@@ -230,18 +230,25 @@ def retry_submit_order(symbol, qty, side, max_attempts=3, delay=3):
             attempt += 1
 
 def get_market_regime():
-    spy = get_data("SPY", days=10)
-    if spy is None: return regime_cache["type"]
+    spy = get_data("SPY", days=7)  # Limit to 7 days to avoid 1m restriction
+    if spy is None:
+        print("⚠️ Failed to load SPY data. Using last known regime.")
+        return regime_cache["type"]
+
     ma20 = spy["Close"].rolling(20).mean()
     volatility = spy["Close"].pct_change().rolling(20).std()
+
     if spy.Close.iloc[-1] > ma20.iloc[-1] and volatility.iloc[-1] < 0.02:
         regime = "bull"
     elif spy.Close.iloc[-1] < ma20.iloc[-1] and volatility.iloc[-1] > 0.03:
         regime = "bear"
     else:
         regime = "sideways"
+
     regime_cache["last"] = datetime.now()
     regime_cache["type"] = regime
+
+    print(f"📉 Current market regime: {regime}")
     return regime
 
 # Q-Table Logic
@@ -392,6 +399,9 @@ def calculate_vwap(df):
         return df
 
 def get_data(ticker, days=3, interval="1m"):
+    if interval == "1m" and days > 7:
+        print(f"⚠️ Reducing 'days' from {days} to 7 for 1m interval due to YF limit.")
+        days = 7
     try:
         end = datetime.now()
         start = end - timedelta(days=days)
@@ -407,6 +417,7 @@ def get_data(ticker, days=3, interval="1m"):
                 "close": "Close",
                 "volume": "Volume"
             })
+
         df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
@@ -423,6 +434,7 @@ def get_data(ticker, days=3, interval="1m"):
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
         df = calculate_vwap(df)
+
         return df.dropna() if len(df) > 50 else None
     except Exception as e:
         print(f"❌ Data error for {ticker}: {e}", flush=True)
