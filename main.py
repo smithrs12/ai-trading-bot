@@ -417,7 +417,7 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Technical Indicators with enforced 1D output
+        # Compute indicators
         df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
         macd = MACD(close=df["Close"])
@@ -427,10 +427,9 @@ def get_data(ticker, days=3, interval="1m"):
         df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
         df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
 
-        # Enforce all as 1D Series
+        # Ensure all columns are 1D Series
         for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
-            if len(df[col].shape) > 1:
-                df[col] = df[col].iloc[:, 0]
+            df[col] = pd.Series(df[col].values.squeeze(), index=df.index)
 
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
