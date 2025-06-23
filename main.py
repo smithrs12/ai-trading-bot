@@ -784,112 +784,112 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 except Exception as e:
                     print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
-        # ✅ Only runs if no veto or exception
-        if not retry_submit_order(ticker, additional_qty, "buy"):
-            return
+                # ✅ Only runs if no veto or exception
+                if not retry_submit_order(ticker, additional_qty, "buy"):
+                    return
 
-        send_discord_message(
-            f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
-        )
-        log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
-        log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
-        cooldown_cache[ticker] = {
-            "timestamp": timestamp,
-            "confidence": float(min(proba + 0.1, 1.0)),
-            "adds": pyramiding_count + 1
-        }
-        update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
+                send_discord_message(
+                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
+                )
+                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
+                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
+                cooldown_cache[ticker] = {
+                    "timestamp": timestamp,
+                    "confidence": float(min(proba + 0.1, 1.0)),
+                    "adds": pyramiding_count + 1
+                }
+                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
 
-        # ---- Meta Model Logging ----
-        try:
-            outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
-            meta_log = {
-                "proba_short": proba,
-                "proba_mid": proba_mid,
-                "sentiment": sentiment,
-                "price_change": price_change,
-                "atr": atr,
-                "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
-                "final_outcome": outcome
-            }
-            log_meta_training_row(meta_log)
-        except Exception as e:
-            print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
+                # ---- Meta Model Logging ----
+                try:
+                    outcome = 1 if prediction == 1 else 0
+                    meta_log = {
+                        "proba_short": proba,
+                        "proba_mid": proba_mid,
+                        "sentiment": sentiment,
+                        "price_change": price_change,
+                        "atr": atr,
+                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                        "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                        "final_outcome": outcome
+                    }
+                    log_meta_training_row(meta_log)
+                except Exception as e:
+                    print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
+         
+        # ---- SELL logic ----
+        if prediction == 0 and position:
+            try:
+                _price = float(position.avg_entry_price)
+                regime = get_market_regime()
+                volatility = latest_row.get("atr", 0.5)
+                confidence_factor = proba
 
-        return
+                base_stop_loss = 1.2 * volatility / current_price
+                base_profit_target = 2.5 * volatility / current_price
+
+                if regime == "bull":
+                    stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
+                    profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
+                elif regime == "bear":
+                    stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
+                    profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
+                else:
+                    stop_loss_pct = base_stop_loss
+                    profit_take_pct = base_profit_target
+
+                stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
+                profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
+
+                stop_loss_price = _price * (1 - stop_loss_pct)
+                profit_target_price = _price * (1 + profit_take_pct)
+                gain = (current_price - _price) / _price
+
+                # Profit target reached
+                if current_price >= profit_target_price and proba < 0.6:
+                    if not retry_submit_order(ticker, int(position.qty), "sell"):
+                        return
+                    send_discord_message(f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})")
+                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                    return
+
+                # Dynamic Trailing Stop
+                trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
+                trailing_stop_price = current_price - (volatility * trailing_atr_factor)
+                if current_price < trailing_stop_price:
+                    if not retry_submit_order(ticker, int(position.qty), "sell"):
+                        return
+                    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
+                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
+                    return
+
+                # Profit Decay
+                time_held_minutes = 0
+                entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
+                if entry_time_str:
+                    time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
+
+                gain_pct = (current_price - _price) / _price
+                if 0 < gain_pct < 0.02 and time_held_minutes > 60:
+                    if not retry_submit_order(ticker, int(position.qty), "sell"):
+                        return
+                    send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
+                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
+                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
+                    update_q_nn(ticker, 0, reward_function(0, _price, current_price))
+
+            except Exception as e:
+                print(f"⚠️ SELL logic failed for {ticker}: {e}")
+
+        return  # end of execute_trade()
 
     except Exception as e:
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
         send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
-
-# ---- SELL logic ----
-if prediction == 0 and position:
-    try:
-        _price = float(position.avg_entry_price)
-        regime = get_market_regime()
-        volatility = latest_row.get("atr", 0.5)
-        confidence_factor = proba
-
-        base_stop_loss = 1.2 * volatility / current_price
-        base_profit_target = 2.5 * volatility / current_price
-
-        if regime == "bull":
-            stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-            profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-        elif regime == "bear":
-            stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-            profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-        else:
-            stop_loss_pct = base_stop_loss
-            profit_take_pct = base_profit_target
-
-        stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-        profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
-
-        stop_loss_price = _price * (1 - stop_loss_pct)
-        profit_target_price = _price * (1 + profit_take_pct)
-        gain = (current_price - _price) / _price
-
-        # Profit target reached
-        if current_price >= profit_target_price and proba < 0.6:
-            if not retry_submit_order(ticker, int(position.qty), "sell"):
-                return
-            send_discord_message(f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})")
-            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-            update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-            return
-
-        # Dynamic Trailing Stop
-        trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-        trailing_stop_price = current_price - (volatility * trailing_atr_factor)
-        if current_price < trailing_stop_price:
-            if not retry_submit_order(ticker, int(position.qty), "sell"):
-                return
-            send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-            update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-            return
-
-        # Profit Decay
-        time_held_minutes = 0
-        entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
-        if entry_time_str:
-            time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
-
-        gain_pct = (current_price - _price) / _price
-        if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-            if not retry_submit_order(ticker, int(position.qty), "sell"):
-                return
-            send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-            log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-            log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-            update_q_nn(ticker, 0, reward_function(0, _price, current_price))
-
-    except Exception as e:
-        print(f"⚠️ SELL logic failed for {ticker}: {e}")
 
 def get_dynamic_watchlist(limit=8):
     tickers_to_scan = [
