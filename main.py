@@ -399,6 +399,7 @@ def calculate_vwap(df):
         return df
 
 def get_data(ticker, days=3, interval="1m"):
+    import pandas as pd  # Ensure it's explicitly in scope
     if interval == "1m" and days > 7:
         print(f"⚠️ Reducing 'days' from {days} to 7 for 1m interval due to YF limit.")
         days = 7
@@ -417,19 +418,18 @@ def get_data(ticker, days=3, interval="1m"):
             "volume": "Volume"
         })
 
-        # Compute indicators
-        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        # Calculate indicators and force 1D Series with index
+        df["sma"] = pd.Series(SMAIndicator(close=df["Close"], window=14).sma_indicator().values.flatten(), index=df.index)
+        df["rsi"] = pd.Series(RSIIndicator(close=df["Close"], window=14).rsi().values.flatten(), index=df.index)
         macd = MACD(close=df["Close"])
-        df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
-        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
-
-        # Ensure all columns are 1D Series
-        for col in ["sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm"]:
-            df[col] = pd.Series(df[col].values.squeeze(), index=df.index)
+        df["macd"] = pd.Series(macd.macd().values.flatten(), index=df.index)
+        df["macd_diff"] = pd.Series(macd.macd_diff().values.flatten(), index=df.index)
+        stoch = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"])
+        df["stoch"] = pd.Series(stoch.stoch().values.flatten(), index=df.index)
+        atr = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"])
+        df["atr"] = pd.Series(atr.average_true_range().values.flatten(), index=df.index)
+        bb = BollingerBands(close=df["Close"])
+        df["bb_bbm"] = pd.Series(bb.bollinger_mavg().values.flatten(), index=df.index)
 
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
