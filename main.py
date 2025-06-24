@@ -1076,11 +1076,35 @@ def liquidate_positions():
 
 cooldown = load_trade_cache()
 
+def detect_support_resistance(df, window=20, tolerance=0.01):
+    """
+    Detects whether the latest price is near support or resistance levels.
+    """
+    if len(df) < window:
+        return False, False
+
+    recent = df.tail(window)
+    close = recent["Close"]
+    support = close.min()
+    resistance = close.max()
+
+    last_price = close.iloc[-1]
+    near_support = abs(last_price - support) / support < tolerance
+    near_resistance = abs(last_price - resistance) / resistance < tolerance
+
+    return near_support, near_resistance
+
 while True:
     try:
         if is_market_open():
             print("🔁 Trading cycle...", flush=True)
             now = datetime.now().time()
+
+            # 🚫 Block trades for first 30 minutes after market open (6:30–7:00 AM PT)
+            if dt_time(6, 30) <= now < dt_time(7, 0):
+                print("🛑 No trades allowed during first 30 minutes after market open.")
+                time.sleep(60)
+                continue
 
             if is_premarket_risk_period():
                 print("🛑 Suppressing trades during first 10 minutes of market open.")
@@ -1096,10 +1120,50 @@ while True:
             trade_candidates = []
             model, features = None, None
             TICKERS = get_dynamic_watchlist(limit=8)
+            print(f"🔎 Watchlist for this cycle: {TICKERS}")
 
+            # ✅ Indent this block!
+            for ticker in TICKERS:
+                try:
+                    df = get_data(ticker, days=2)
+                    if df is None:
+                        continue
+
+                    if is_model_stale(ticker):
+                        model, features = train_model(ticker, df)
+                        if model is None:
+                            continue
+                        joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                    else:
+                        model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                        features = model.feature_names_in_ if hasattr(model, "feature_names_in_") else [
+                            "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm", "hour", "minute", "dayofweek"
+                        ]
+
+                    proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
+                    if proba_short is None or proba_mid is None or latest_row is None:
+                        continue
+
+                    sentiment = get_sentiment_score(ticker)
+                    df_volume_avg = df["Volume"].rolling(20).mean().iloc[-2] if len(df) >= 20 else 1
+                    score = (
+                        proba_short * 100 +
+                        sentiment * 10 -
+                        latest_row.get("atr", 0.5) * 5 +
+                        (latest_row.get("Volume", 1) / df_volume_avg) * 2
+                    )
+
+                    sector = SECTOR_MAP.get(ticker, "Unknown")
+                    prediction = int(proba_short > 0.5)
+                    trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+
+                except Exception as e:
+                    print(f"⚠️ Failed to process {ticker}: {e}")
+
+            # ✅ These also stay indented inside the same try block
             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
-            for cand in trade_candidates[:5]:  # Top 5 trades
+            for cand in trade_candidates[:5]:
                 try:
                     ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
                     df = get_data(ticker, days=2)
@@ -1214,14 +1278,15 @@ while True:
         else:
             print("⏸️ Market is closed. Waiting...")
             time.sleep(60)
+            continue  # 🟢 Skip to next iteration without saving or dumping
 
-        save_trade_cache(cooldown)
+        # ✅ Only run if market was open
+        try:
+            save_trade_cache(cooldown)
+        except Exception as e:
+            print(f"⚠️ Failed to save cooldown cache: {e}")
+
         with open(Q_TABLE_FILE, "w") as f:
             json.dump(q_table, f)
-        time.sleep(300)
 
-    except Exception as e:
-        msg = f"🚨 Fatal error in trading loop: {e}"
-        print(msg)
-        send_discord_message(msg)
-        time.sleep(60)
+        time.sleep(300)
