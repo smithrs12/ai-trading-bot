@@ -410,7 +410,7 @@ def get_data(ticker, days=2, interval='1Min'):
         start_dt = (end_dt - timedelta(days=days)).replace(microsecond=0)
         start_str = start_dt.isoformat() + "Z"
         end_str = end_dt.isoformat() + "Z"
-        
+
         print(f"📊 Fetching bars for {ticker} from {start_str} to {end_str} at {interval} interval")
 
         barset = alpaca.get_bars(
@@ -423,22 +423,26 @@ def get_data(ticker, days=2, interval='1Min'):
             feed='iex'
         ).df
 
-        if barset.empty or ticker not in barset.index.get_level_values(0):
-            print(f"⚠️ No Alpaca data for {ticker}")
+        if barset.empty:
+            print(f"⚠️ Barset is empty for {ticker}")
             return None
 
-        print(f"✅ Retrieved {len(barset)} bars for {ticker}")
+        if not isinstance(barset.index, pd.MultiIndex):
+            df = barset.copy()
+            print(f"✅ Retrieved {len(df)} bars for {ticker} (non-MultiIndex)")
+        else:
+            df = barset[barset.index.get_level_values(0) == ticker].copy()
+            print(f"✅ Retrieved {len(df)} bars for {ticker} (MultiIndex)")
 
-        df = barset[barset.index.get_level_values(0) == ticker].copy()
         df.index = df.index.tz_localize(None)
         df = df.rename(columns={
             "open": "Open", "high": "High", "low": "Low",
             "close": "Close", "volume": "Volume"
         })
 
-        # ... your indicators ...
+        # Indicators placeholder
         df["sma"] = df["Close"].rolling(14).mean()
-        # etc...
+        # Add more indicators here...
 
         df.dropna(inplace=True)
         return df
