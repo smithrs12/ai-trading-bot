@@ -421,7 +421,7 @@ def get_data(ticker, days=2, interval='1Min'):
             start=start_str,
             end=end_str,
             adjustment='raw',
-            limit=None
+            limit=None,
             feed='iex'
         ).df
 
@@ -624,7 +624,7 @@ def train_medium_model(ticker):
             start=start_dt.strftime("%Y-%m-%d"),
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
-            limit=500
+            limit=500,
             feed='iex'
         ).df
 
@@ -734,7 +734,7 @@ def predict_medium_term(ticker):
             start=start_dt.strftime("%Y-%m-%d"),
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
-            limit=500
+            limit=500,
             feed='iex'
         ).df
 
