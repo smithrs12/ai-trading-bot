@@ -440,9 +440,22 @@ def get_data(ticker, days=2, interval='1Min'):
             "close": "Close", "volume": "Volume"
         })
 
-        # Indicators placeholder
-        df["sma"] = df["Close"].rolling(14).mean()
-        # Add more indicators here...
+        # ✅ Technical Indicators
+        df["sma"] = df["Close"].rolling(window=14).mean()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        macd = MACD(close=df["Close"])
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        stoch = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"])
+        df["stoch"] = stoch.stoch()
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
+        bb = BollingerBands(close=df["Close"])
+        df["bb_bbm"] = bb.bollinger_mavg()
+
+        # ✅ Time-based features
+        df["hour"] = df.index.hour
+        df["minute"] = df.index.minute
+        df["dayofweek"] = df.index.dayofweek
 
         df.dropna(inplace=True)
         return df
