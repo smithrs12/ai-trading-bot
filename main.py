@@ -36,7 +36,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY")
 API_SECRET = os.getenv("ALPACA_SECRET_KEY")
-BASE_URL = os.getenv("ALPACA_BASE_URL")  # e.g. https://paper-api.alpaca.markets
+BASE_URL = os.getenv("ALPACA_BASE_URL")  # e.g. https://paper-api.alpaca.s
 
 # ✅ Initialize Alpaca API
 alpaca = tradeapi.REST(API_KEY, API_SECRET, BASE_URL, api_version='v2')
@@ -135,7 +135,7 @@ BACKTESTING = False
 
 def is_market_open():
     try:
-        clock = api.get_clock()
+        clock = alpaca.get_clock()
         return clock.is_open
     except Exception as e:
         print(f"⚠️ Market status check failed: {e}")
@@ -1325,8 +1325,6 @@ while True:
             print(f"⚠️ Failed to save cooldown cache or Q-table: {e}")
 
         # ✅ Move this line outside the try block
-        time.sleep(300)
-     
         time.sleep(300)
 
     except Exception as e:  # ✅ Must align with try above!
