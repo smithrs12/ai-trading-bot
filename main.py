@@ -1283,10 +1283,9 @@ while True:
         # ✅ Only run if market was open
         try:
             save_trade_cache(cooldown)
+            with open(Q_TABLE_FILE, "w") as f:
+                json.dump(q_table, f)
         except Exception as e:
-            print(f"⚠️ Failed to save cooldown cache: {e}")
-
-        with open(Q_TABLE_FILE, "w") as f:
-            json.dump(q_table, f)
+            print(f"⚠️ Failed to save cooldown cache or Q-table: {e}")
 
         time.sleep(300)
