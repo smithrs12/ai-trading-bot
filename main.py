@@ -605,9 +605,13 @@ def train_medium_model(ticker):
 
     features = ["Open", "High", "Low", "Close", "Volume"]
     X, y = df[features], df["target"]
-    if len(X) < 60 or y.nunique() < 2:
-        print(f"⚠️ Insufficient or non-diverse data for {ticker} (medium-term).")
+    if len(X) < 60:
+        print(f"⚠️ Not enough training samples for {ticker} (medium-term): {len(X)} rows.")
         return None, None
+    if y.nunique() < 2:
+        print(f"⚠️ Target lacks diversity for {ticker} (medium-term). Only found class: {y.unique()}")
+        return None, None
+
     xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
     log_model = LogisticRegression(max_iter=1000)
     rf_model = RandomForestClassifier(n_estimators=100)
@@ -655,10 +659,15 @@ def train_medium_model(ticker):
 def predict_medium_term(ticker):
     model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
     if not os.path.exists(model_path):
-        return None
+        print(f"⚠️ Medium-term model not found for {ticker}. Attempting to train.")
+        model, features = train_medium_model(ticker)
+        if model is None:
+            return None
+        joblib.dump(model, model_path)
+    else:
+        model = joblib.load(model_path)
 
     try:
-        model = joblib.load(model_path)
         df = yf.download(ticker, period="6mo", interval="1d")
         df.dropna(inplace=True)
         if len(df) < 90:
