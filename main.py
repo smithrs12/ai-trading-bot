@@ -1290,3 +1290,10 @@ while True:
 
         # ✅ Move this line outside the try block
         time.sleep(300)
+     
+        time.sleep(300)
+
+    except Exception as e:  # ✅ Must align with try above!
+        print(f"🚨 Fatal error in main trading loop: {e}")
+        send_discord_message(f"🚨 Fatal error in main trading loop: {e}")
+        time.sleep(60)  # Backoff before retrying
