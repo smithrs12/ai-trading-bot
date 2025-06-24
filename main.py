@@ -1,10 +1,10 @@
- # ai_trading_bot.py
+# -*- coding: utf-8 -*-
+# ai_trading_bot.py
 
 # [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
 # Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
 # Trade Cooldown, Position Sizing, Walk-forward Validation, Persistent Q-table, Discord Alerts,
 # Trade Logging, Backtesting Switch (manual), Feature Importance Logging
-# -*- coding: utf-8 -*-
 
 import os
 import pandas as pd
@@ -23,7 +23,6 @@ import joblib
 import json
 import random
 import pytz
-import yfinance as yf
 import finnhub
 from ta.trend import SMAIndicator, MACD
 from ta.momentum import RSIIndicator, StochasticOscillator
@@ -33,8 +32,19 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# ✅ Load environment variables
+load_dotenv()
+API_KEY = os.getenv("ALPACA_API_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET_KEY")
+BASE_URL = os.getenv("ALPACA_BASE_URL")  # e.g. https://paper-api.alpaca.markets
+
+# ✅ Initialize Alpaca API
+alpaca = tradeapi.REST(API_KEY, API_SECRET, BASE_URL, api_version='v2')
+
+# ✅ Google Sheets API scope
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
+# ✅ Meta model retraining check
 def should_retrain_meta_model(max_age_hours=24):
     model_path = "meta_model.pkl"
     if not os.path.exists(model_path):
@@ -398,59 +408,68 @@ def calculate_vwap(df):
         print(f"⚠️ VWAP calculation failed: {e}")
         return df
 
-def get_data(ticker, days=3, interval="1m"):
-    if interval == "1m" and days > 7:
-        print(f"⚠️ Reducing 'days' from {days} to 7 for 1m interval due to YF limit.")
-        days = 7
-
+def get_data(ticker, days=2, interval='1Min'):
     try:
-        end = datetime.now()
-        start = end - timedelta(days=days)
-        df = yf.download(ticker, start=start, end=end, interval=interval, auto_adjust=False)
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=days)
 
-        if df.empty or len(df) < 10:
-            print(f"⚠️ Empty or insufficient data for {ticker}")
+        barset = alpaca.get_bars(
+            ticker,
+            timeframe=interval,
+            start=start_dt.isoformat(),
+            end=end_dt.isoformat(),
+            adjustment='raw',
+            limit=None
+        ).df
+
+        if barset.empty or ticker not in barset.index.get_level_values(0):
+            print(f"⚠️ No Alpaca data for {ticker}")
             return None
 
-        # ✅ Handle multi-index columns by selecting the first level if needed
-        if isinstance(df.columns[0], tuple):
-            df.columns = [col[0] for col in df.columns]
-
-        # ✅ Normalize column names to expected format
-        rename_map = {
+        df = barset[barset.index.get_level_values(0) == ticker].copy()
+        df.index = df.index.tz_localize(None)
+        df = df.rename(columns={
             "open": "Open", "high": "High", "low": "Low",
-            "close": "Close", "volume": "Volume", "adj close": "Adj Close"
-        }
-        df.columns = [rename_map.get(col.lower(), col) for col in df.columns]
+            "close": "Close", "volume": "Volume"
+        })
 
-        print(f"📊 Columns for {ticker}: {df.columns.tolist()}")
+        # Calculate features
+        df["sma"] = df["Close"].rolling(14).mean()
+        delta = df["Close"].diff()
+        up = delta.clip(lower=0)
+        down = -1 * delta.clip(upper=0)
+        avg_gain = up.rolling(14).mean()
+        avg_loss = down.rolling(14).mean()
+        rs = avg_gain / avg_loss
+        df["rsi"] = 100 - (100 / (1 + rs))
 
-        required_cols = ["Open", "High", "Low", "Close", "Volume"]
-        if not all(col in df.columns for col in required_cols):
-            print(f"❌ Missing required columns in {ticker} data: {df.columns.tolist()}")
-            return None
+        ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+        ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+        df["macd"] = ema12 - ema26
+        df["macd_diff"] = df["macd"].diff()
 
-        # ✅ Technical indicators
-        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
-        macd = MACD(close=df["Close"])
-        df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
-        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+        low14 = df["Low"].rolling(14).min()
+        high14 = df["High"].rolling(14).max()
+        df["stoch"] = 100 * (df["Close"] - low14) / (high14 - low14)
+
+        tr1 = df["High"] - df["Low"]
+        tr2 = abs(df["High"] - df["Close"].shift())
+        tr3 = abs(df["Low"] - df["Close"].shift())
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        df["atr"] = tr.rolling(14).mean()
 
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
 
-        # ✅ VWAP calculation
+        df["bb_bbm"] = df["Close"].rolling(20).mean()
         df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
 
-        return df.dropna() if len(df) > 50 else None
+        df.dropna(inplace=True)
+        return df
 
     except Exception as e:
-        print(f"❌ Data error for {ticker}: {e}", flush=True)
+        print(f"❌ Error fetching Alpaca data for {ticker}: {e}")
         return None
 
 def load_trade_cache():
