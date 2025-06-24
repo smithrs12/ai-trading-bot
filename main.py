@@ -136,6 +136,7 @@ BACKTESTING = False
 def is_market_open():
     try:
         clock = alpaca.get_clock()
+        print(f"🕒 Market Clock: is_open={clock.is_open}, timestamp={clock.timestamp}")
         return clock.is_open
     except Exception as e:
         print(f"⚠️ Market status check failed: {e}")
@@ -1164,6 +1165,7 @@ TICKERS = get_dynamic_watchlist(limit=8)
 ensure_models_trained(TICKERS)
 
 while True:
+    print("🚀 Trading bot has started and is running.")
     try:
         if is_market_open():
             print("🔁 Trading cycle...", flush=True)
