@@ -141,7 +141,8 @@ if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
 
 def is_premarket_risk_period():
-    now = datetime.now().time()
+    from pytz import timezone
+    now = datetime.now(timezone("US/Pacific")).time()
     market_open = dt_time(6, 30)  # 6:30 AM PT
     market_cutoff = dt_time(6, 40)
     return market_open <= now < market_cutoff
@@ -1168,12 +1169,19 @@ def detect_support_resistance(df, window=20, tolerance=0.01):
 TICKERS = get_dynamic_watchlist(limit=8)
 ensure_models_trained(TICKERS)
 
+from pytz import timezone
+
 while True:
     print("🚀 Trading bot has started and is running.")
     try:
+        now = datetime.now(timezone("US/Pacific")).time()
+
+        if now >= dt_time(13, 0):  # 1:00 PM PT
+            print("✅ Trading session complete. Exiting.")
+            break
+
         if is_market_open():
             print("🔁 Trading cycle...", flush=True)
-            now = datetime.now().time()
 
             # 🚫 Block trades for first 30 minutes after market open (6:30–7:00 AM PT)
             if dt_time(6, 30) <= now < dt_time(7, 0):
