@@ -410,6 +410,7 @@ def get_data(ticker, days=2, interval='1Min'):
         start_dt = (end_dt - timedelta(days=days)).replace(microsecond=0)
         start_str = start_dt.isoformat() + "Z"
         end_str = end_dt.isoformat() + "Z"
+        print(f"📊 Fetching bars for {ticker} from {start_str} to {end_str} at {interval} interval")
 
         barset = alpaca.get_bars(
             ticker,
@@ -417,9 +418,13 @@ def get_data(ticker, days=2, interval='1Min'):
             start=start_str,
             end=end_str,
             adjustment='raw',
-            limit=None,
-            feed='iex'
+            limit=None
         ).df
+
+        if barset.empty:
+            print(f"⚠️ Barset is EMPTY for {ticker}")
+        else:
+            print(f"✅ Retrieved {len(barset)} bars for {ticker}")
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
             print(f"⚠️ No Alpaca data for {ticker}")
@@ -620,8 +625,7 @@ def train_medium_model(ticker):
             start=start_dt.strftime("%Y-%m-%d"),
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
-            limit=500,
-            feed='iex'
+            limit=500
         ).df
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
@@ -730,8 +734,7 @@ def predict_medium_term(ticker):
             start=start_dt.strftime("%Y-%m-%d"),
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
-            limit=500,
-            feed='iex'
+            limit=500
         ).df
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
