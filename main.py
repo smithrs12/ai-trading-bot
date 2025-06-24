@@ -656,6 +656,35 @@ def train_medium_model(ticker):
 
     return ensemble, features
 
+def ensure_models_trained(tickers):
+    for ticker in tickers:
+        try:
+            # ----- SHORT-TERM MODEL -----
+            model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+            needs_short = is_model_stale(ticker) or not os.path.exists(model_path)
+            if needs_short:
+                df = get_data(ticker, days=2)
+                if df is not None:
+                    model, features = train_model(ticker, df)
+                    if model:
+                        joblib.dump(model, model_path)
+                        print(f"✅ Trained and saved short-term model for {ticker}")
+                    else:
+                        print(f"⚠️ Failed to train short-term model for {ticker}")
+
+            # ----- MEDIUM-TERM MODEL -----
+            med_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
+            needs_med = is_medium_model_stale(ticker) or not os.path.exists(med_path)
+            if needs_med:
+                model, _ = train_medium_model(ticker)
+                if model:
+                    print(f"✅ Trained and saved medium-term model for {ticker}")
+                else:
+                    print(f"⚠️ Failed to train medium-term model for {ticker}")
+
+        except Exception as e:
+            print(f"❌ Model pretraining error for {ticker}: {e}")
+
 def predict_medium_term(ticker):
     model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
     if not os.path.exists(model_path):
@@ -1077,6 +1106,10 @@ def detect_support_resistance(df, window=20, tolerance=0.01):
     near_resistance = abs(last_price - resistance) / resistance < tolerance
 
     return near_support, near_resistance
+
+# ✅ Pre-train all required models before starting trading loop
+TICKERS = get_dynamic_watchlist(limit=8)
+ensure_models_trained(TICKERS)
 
 while True:
     try:
