@@ -410,6 +410,7 @@ def get_data(ticker, days=2, interval='1Min'):
         start_dt = (end_dt - timedelta(days=days)).replace(microsecond=0)
         start_str = start_dt.isoformat() + "Z"
         end_str = end_dt.isoformat() + "Z"
+        
         print(f"📊 Fetching bars for {ticker} from {start_str} to {end_str} at {interval} interval")
 
         barset = alpaca.get_bars(
@@ -418,17 +419,15 @@ def get_data(ticker, days=2, interval='1Min'):
             start=start_str,
             end=end_str,
             adjustment='raw',
-            limit=None
+            limit=None,
+            feed='iex'
         ).df
-
-        if barset.empty:
-            print(f"⚠️ Barset is EMPTY for {ticker}")
-        else:
-            print(f"✅ Retrieved {len(barset)} bars for {ticker}")
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
             print(f"⚠️ No Alpaca data for {ticker}")
             return None
+
+        print(f"✅ Retrieved {len(barset)} bars for {ticker}")
 
         df = barset[barset.index.get_level_values(0) == ticker].copy()
         df.index = df.index.tz_localize(None)
@@ -437,36 +436,9 @@ def get_data(ticker, days=2, interval='1Min'):
             "close": "Close", "volume": "Volume"
         })
 
-        # Calculate indicators
+        # ... your indicators ...
         df["sma"] = df["Close"].rolling(14).mean()
-        delta = df["Close"].diff()
-        up = delta.clip(lower=0)
-        down = -1 * delta.clip(upper=0)
-        avg_gain = up.rolling(14).mean()
-        avg_loss = down.rolling(14).mean()
-        rs = avg_gain / avg_loss
-        df["rsi"] = 100 - (100 / (1 + rs))
-
-        ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-        ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-        df["macd"] = ema12 - ema26
-        df["macd_diff"] = df["macd"].diff()
-
-        low14 = df["Low"].rolling(14).min()
-        high14 = df["High"].rolling(14).max()
-        df["stoch"] = 100 * (df["Close"] - low14) / (high14 - low14)
-
-        tr1 = df["High"] - df["Low"]
-        tr2 = abs(df["High"] - df["Close"].shift())
-        tr3 = abs(df["Low"] - df["Close"].shift())
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(14).mean()
-
-        df["hour"] = df.index.hour
-        df["minute"] = df.index.minute
-        df["dayofweek"] = df.index.dayofweek
-        df["bb_bbm"] = df["Close"].rolling(20).mean()
-        df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
+        # etc...
 
         df.dropna(inplace=True)
         return df
