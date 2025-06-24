@@ -410,14 +410,16 @@ def calculate_vwap(df):
 
 def get_data(ticker, days=2, interval='1Min'):
     try:
-        end_dt = datetime.now()
-        start_dt = end_dt - timedelta(days=days)
+        end_dt = datetime.utcnow().replace(microsecond=0)
+        start_dt = (end_dt - timedelta(days=days)).replace(microsecond=0)
+        start_str = start_dt.isoformat() + "Z"
+        end_str = end_dt.isoformat() + "Z"
 
         barset = alpaca.get_bars(
             ticker,
             timeframe=interval,
-            start=start_dt.isoformat(),
-            end=end_dt.isoformat(),
+            start=start_str,
+            end=end_str,
             adjustment='raw',
             limit=None
         ).df
@@ -433,7 +435,7 @@ def get_data(ticker, days=2, interval='1Min'):
             "close": "Close", "volume": "Volume"
         })
 
-        # Calculate features
+        # Calculate indicators
         df["sma"] = df["Close"].rolling(14).mean()
         delta = df["Close"].diff()
         up = delta.clip(lower=0)
@@ -461,7 +463,6 @@ def get_data(ticker, days=2, interval='1Min'):
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
-
         df["bb_bbm"] = df["Close"].rolling(20).mean()
         df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
 
@@ -612,68 +613,74 @@ def is_medium_model_stale(ticker, max_age_hours=24):
     return age_hours > max_age_hours
         
 def train_medium_model(ticker):
-    df = yf.download(ticker, period="6mo", interval="1d")
-    df.dropna(inplace=True)
-    if len(df) < 90:
-        print(f"⚠️ Not enough daily data to train medium-term model for {ticker}")
+    try:
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=180)
+
+        barset = alpaca.get_bars(
+            ticker,
+            timeframe="1Day",
+            start=start_dt.strftime("%Y-%m-%d"),
+            end=end_dt.strftime("%Y-%m-%d"),
+            adjustment='raw',
+            limit=500
+        ).df
+
+        if barset.empty or ticker not in barset.index.get_level_values(0):
+            print(f"⚠️ No Alpaca daily data for {ticker}")
+            return None, None
+
+        df = barset[barset.index.get_level_values(0) == ticker].copy()
+        df.index = df.index.tz_localize(None)
+        df = df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume"
+        })
+        df.dropna(inplace=True)
+
+        if len(df) < 90:
+            print(f"⚠️ Not enough daily data to train medium-term model for {ticker}")
+            return None, None
+
+        df["return_5d"] = df["Close"].pct_change(5).shift(-5)
+        df["target"] = (df["return_5d"] > 0.02).astype(int)
+        df.dropna(inplace=True)
+
+        features = ["Open", "High", "Low", "Close", "Volume"]
+        X, y = df[features], df["target"]
+
+        if len(X) < 60 or y.nunique() < 2:
+            print(f"⚠️ Insufficient training samples or class diversity for {ticker} (medium-term).")
+            return None, None
+
+        model = VotingClassifier(estimators=[
+            ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
+            ('log', LogisticRegression(max_iter=1000)),
+            ('rf', RandomForestClassifier(n_estimators=100))
+        ], voting='soft', weights=[3, 1, 2])
+
+        tscv = TimeSeriesSplit(n_splits=5)
+        accs, precs, recs = [], [], []
+
+        for train_idx, test_idx in tscv.split(X):
+            model.fit(X.iloc[train_idx], y.iloc[train_idx])
+            y_pred = model.predict(X.iloc[test_idx])
+            accs.append(accuracy_score(y.iloc[test_idx], y_pred))
+            precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
+            recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
+
+        print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
+        log_meta_model_metrics(ticker, np.mean(accs), np.mean(precs), np.mean(recs))
+
+        model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
+        os.makedirs("models_medium", exist_ok=True)
+        joblib.dump(model, model_path)
+
+        return model, features
+
+    except Exception as e:
+        print(f"❌ Medium-term model training error for {ticker}: {e}")
         return None, None
-        
-    df["return_5d"] = df["Close"].pct_change(5).shift(-5)
-    df["target"] = (df["return_5d"] > 0.02).astype(int)
-    df.dropna(inplace=True)
-
-    features = ["Open", "High", "Low", "Close", "Volume"]
-    X, y = df[features], df["target"]
-    if len(X) < 60:
-        print(f"⚠️ Not enough training samples for {ticker} (medium-term): {len(X)} rows.")
-        return None, None
-    if y.nunique() < 2:
-        print(f"⚠️ Target lacks diversity for {ticker} (medium-term). Only found class: {y.unique()}")
-        return None, None
-
-    xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
-    log_model = LogisticRegression(max_iter=1000)
-    rf_model = RandomForestClassifier(n_estimators=100)
-
-    ensemble = VotingClassifier(estimators=[
-        ('xgb', xgb_model),
-        ('log', log_model),
-        ('rf', rf_model)
-    ], voting='soft', weights=[3, 1, 2])
-
-    tscv = TimeSeriesSplit(n_splits=5)
-    accs, precs, recs = [], [], []
-
-    for train_idx, test_idx in tscv.split(X):
-        ensemble.fit(X.iloc[train_idx], y.iloc[train_idx])
-        y_pred = ensemble.predict(X.iloc[test_idx])
-        accs.append(accuracy_score(y.iloc[test_idx], y_pred))
-        precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
-        recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
-
-    print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
- 
-    log_meta_model_metrics(ticker, np.mean(accs), np.mean(precs), np.mean(recs))
-
-    model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-    os.makedirs("models_medium", exist_ok=True)
-    joblib.dump(ensemble, model_path)
-
-    # ✅ Log medium-term model performance
-    perf_log = {
-        "ticker": ticker,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "model_type": "medium",
-        "accuracy": float(np.mean(accs)),
-        "precision": float(np.mean(precs)),
-        "recall": float(np.mean(recs)),
-        "samples": len(X)
-    }
-    perf_df = pd.DataFrame([perf_log])
-    perf_file = os.path.join("model_performance.csv")
-    perf_df.to_csv(perf_file, mode='a', header=not os.path.exists(perf_file), index=False)
-
-    return ensemble, features
 
 def ensure_models_trained(tickers):
     for ticker in tickers:
@@ -705,27 +712,50 @@ def ensure_models_trained(tickers):
             print(f"❌ Model pretraining error for {ticker}: {e}")
 
 def predict_medium_term(ticker):
-    model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-    if not os.path.exists(model_path):
-        print(f"⚠️ Medium-term model not found for {ticker}. Attempting to train.")
-        model, features = train_medium_model(ticker)
-        if model is None:
-            return None
-        joblib.dump(model, model_path)
-    else:
-        model = joblib.load(model_path)
-
     try:
-        df = yf.download(ticker, period="6mo", interval="1d")
+        model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
+        if not os.path.exists(model_path):
+            print(f"⚠️ Medium-term model not found for {ticker}. Attempting to train.")
+            model, features = train_medium_model(ticker)
+            if model is None:
+                return None
+            joblib.dump(model, model_path)
+        else:
+            model = joblib.load(model_path)
+
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=180)
+
+        barset = alpaca.get_bars(
+            ticker,
+            timeframe="1Day",
+            start=start_dt.strftime("%Y-%m-%d"),
+            end=end_dt.strftime("%Y-%m-%d"),
+            adjustment='raw',
+            limit=500
+        ).df
+
+        if barset.empty or ticker not in barset.index.get_level_values(0):
+            print(f"⚠️ No Alpaca daily data for prediction: {ticker}")
+            return None
+
+        df = barset[barset.index.get_level_values(0) == ticker].copy()
+        df.index = df.index.tz_localize(None)
+        df = df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume"
+        })
         df.dropna(inplace=True)
+
         if len(df) < 90:
+            print(f"⚠️ Not enough daily data for prediction: {ticker}")
             return None
 
         features = ["Open", "High", "Low", "Close", "Volume"]
         X = df[features].iloc[-1:]
 
         if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
-            models = [est for name, est in model.estimators]
+            models = [est for _, est in model.estimators]
             weights = model.weights
             proba = predict_weighted_proba(models, weights, X)
         else:
