@@ -516,10 +516,11 @@ def train_model(ticker, df):
     df.dropna(inplace=True)
 
     features = [
-        "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm",
-        "hour", "minute", "dayofweek"
+    "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
+    "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
     ]
     X, y = df[features], df["target"]
+
 
     if len(X) < 60 or y.nunique() < 2:
         return None, None
@@ -1205,7 +1206,7 @@ while True:
             TICKERS = get_dynamic_watchlist(limit=8)
             print(f"🔎 Watchlist for this cycle: {TICKERS}")
 
-            # ✅ Indent this block!
+            # ✅ PROPERLY INDENTED:
             for ticker in TICKERS:
                 try:
                     df = get_data(ticker, days=2)
@@ -1219,8 +1220,9 @@ while True:
                         joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
                     else:
                         model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                        features = model.feature_names_in_ if hasattr(model, "feature_names_in_") else [
-                            "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm", "hour", "minute", "dayofweek"
+                        features = [
+                            "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
+                            "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
                         ]
 
                     proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
