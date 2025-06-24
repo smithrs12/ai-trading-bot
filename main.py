@@ -412,37 +412,40 @@ def get_data(ticker, days=3, interval="1m"):
             print(f"⚠️ Empty or insufficient data for {ticker}")
             return None
 
-        # ✅ Flatten multi-index column names (if present)
+        # ✅ Handle multi-index columns by selecting the first level if needed
         if isinstance(df.columns[0], tuple):
-            df.columns = [col[1] if isinstance(col, tuple) else col for col in df.columns]
+            df.columns = [col[0] for col in df.columns]
 
-        # ✅ Convert all column names to uppercase for consistency
-        df.columns = [col.upper() for col in df.columns]
+        # ✅ Normalize column names to expected format
+        rename_map = {
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume", "adj close": "Adj Close"
+        }
+        df.columns = [rename_map.get(col.lower(), col) for col in df.columns]
 
         print(f"📊 Columns for {ticker}: {df.columns.tolist()}")
 
-        # ✅ Check required columns
-        required_cols = ["OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
         if not all(col in df.columns for col in required_cols):
             print(f"❌ Missing required columns in {ticker} data: {df.columns.tolist()}")
             return None
 
         # ✅ Technical indicators
-        df["SMA"] = SMAIndicator(close=df["CLOSE"], window=14).sma_indicator()
-        df["RSI"] = RSIIndicator(close=df["CLOSE"], window=14).rsi()
-        macd = MACD(close=df["CLOSE"])
-        df["MACD"] = macd.macd()
-        df["MACD_DIFF"] = macd.macd_diff()
-        df["STOCH"] = StochasticOscillator(high=df["HIGH"], low=df["LOW"], close=df["CLOSE"]).stoch()
-        df["ATR"] = AverageTrueRange(high=df["HIGH"], low=df["LOW"], close=df["CLOSE"]).average_true_range()
-        df["BB_BBM"] = BollingerBands(close=df["CLOSE"]).bollinger_mavg()
+        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        macd = MACD(close=df["Close"])
+        df["macd"] = macd.macd()
+        df["macd_diff"] = macd.macd_diff()
+        df["stoch"] = StochasticOscillator(high=df["High"], low=df["Low"], close=df["Close"]).stoch()
+        df["atr"] = AverageTrueRange(high=df["High"], low=df["Low"], close=df["Close"]).average_true_range()
+        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
 
-        df["HOUR"] = df.index.hour
-        df["MINUTE"] = df.index.minute
-        df["DAYOFWEEK"] = df.index.dayofweek
+        df["hour"] = df.index.hour
+        df["minute"] = df.index.minute
+        df["dayofweek"] = df.index.dayofweek
 
-        # ✅ VWAP Calculation
-        df["VWAP"] = (df["CLOSE"] * df["VOLUME"]).cumsum() / df["VOLUME"].cumsum()
+        # ✅ VWAP calculation
+        df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
 
         return df.dropna() if len(df) > 50 else None
 
