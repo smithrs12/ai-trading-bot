@@ -452,10 +452,25 @@ def get_data(ticker, days=2, interval='1Min'):
         bb = BollingerBands(close=df["Close"])
         df["bb_bbm"] = bb.bollinger_mavg()
 
-        # ✅ Time-based features
+        # ✅ Time-based features (add BEFORE renaming)
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
+
+        # ✅ Rename columns to match model expectations
+        rename_map = {
+            "sma": "smaClose",
+            "rsi": "rsiClose",
+            "macd": "macdClose",
+            "macd_diff": "macd_diffClose",
+            "stoch": "stochClose",
+            "atr": "atrClose",
+            "bb_bbm": "bb_bbmClose",
+            "hour": "hourClose",
+            "minute": "minuteClose",
+            "dayofweek": "dayofweekClose"
+        }
+        df.rename(columns=rename_map, inplace=True)
 
         df.dropna(inplace=True)
         return df
