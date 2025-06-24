@@ -422,6 +422,7 @@ def get_data(ticker, days=2, interval='1Min'):
             end=end_str,
             adjustment='raw',
             limit=None
+            feed='iex'
         ).df
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
@@ -624,6 +625,7 @@ def train_medium_model(ticker):
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
             limit=500
+            feed='iex'
         ).df
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
@@ -733,6 +735,7 @@ def predict_medium_term(ticker):
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
             limit=500
+            feed='iex'
         ).df
 
         if barset.empty or ticker not in barset.index.get_level_values(0):
