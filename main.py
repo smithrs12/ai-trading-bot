@@ -632,14 +632,18 @@ def train_medium_model(ticker):
             end=end_dt.strftime("%Y-%m-%d"),
             adjustment='raw',
             limit=500,
-            feed='iex'
+            feed='iex'  # You can change to 'sip' if needed
         ).df
 
-        if barset.empty or ticker not in barset.index.get_level_values(0):
+        if barset.empty:
             print(f"⚠️ No Alpaca daily data for {ticker}")
             return None, None
 
-        df = barset[barset.index.get_level_values(0) == ticker].copy()
+        if isinstance(barset.index, pd.MultiIndex):
+            df = barset[barset.index.get_level_values(0) == ticker].copy()
+        else:
+            df = barset.copy()
+
         df.index = df.index.tz_localize(None)
         df = df.rename(columns={
             "open": "Open", "high": "High", "low": "Low",
