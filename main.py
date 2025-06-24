@@ -1288,4 +1288,5 @@ while True:
         except Exception as e:
             print(f"⚠️ Failed to save cooldown cache or Q-table: {e}")
 
+        # ✅ Move this line outside the try block
         time.sleep(300)
