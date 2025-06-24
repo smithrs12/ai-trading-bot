@@ -134,13 +134,8 @@ Q_TABLE_FILE = "q_table.json"
 BACKTESTING = False
 
 def is_market_open():
-    try:
-        clock = alpaca.get_clock()
-        print(f"🕒 Market Clock: is_open={clock.is_open}, timestamp={clock.timestamp}")
-        return clock.is_open
-    except Exception as e:
-        print(f"⚠️ Market status check failed: {e}")
-        return False
+    print("🧪 Debug override: assuming market is open")
+    return True
      
 if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
 if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
