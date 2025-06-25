@@ -1212,7 +1212,7 @@ if is_market_open():
                 continue
 
             # ✅ Check for news risk here
-            if is_high_risk_news_day(ticker):
+            if is_high_risk_news_day():
                 print(f"⚠️ Skipping {ticker} due to high-risk news day")
                 continue
 
