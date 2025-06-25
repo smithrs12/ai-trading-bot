@@ -364,22 +364,27 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=No
         else:
             bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
 
-        df = bars.df
+        # Convert to dataframe
+        df = bars.df if hasattr(bars, "df") else pd.DataFrame(bars)
 
-        # ✅ Some Alpaca bar responses do not include 'symbol'
-        if 'symbol' in df.columns:
-            df = df[df['symbol'] == ticker]
+        # ✅ Fix multi-index (symbol, timestamp)
+        if isinstance(df.index, pd.MultiIndex):
+            df = df.xs(ticker, level="symbol")
 
-        df = df.rename(columns={
-            "t": "timestamp", "o": "Open", "h": "High",
-            "l": "Low", "c": "Close", "v": "Volume"
-        })
+        # ✅ Rename columns if needed
+        rename_map = {
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume"
+        }
+        df.rename(columns=rename_map, inplace=True)
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df.set_index("timestamp", inplace=True)
+        df.index.name = "timestamp"
         df = df.sort_index()
 
-        # Technical indicators
+        # ✅ Add indicators
         df["sma"] = SMAIndicator(df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
         macd = MACD(df["Close"])
