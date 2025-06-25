@@ -1216,18 +1216,17 @@ if is_market_open():
                 print(f"⚠️ Skipping {ticker} due to high-risk news day")
                 continue
 
-            if is_model_stale(ticker):
-                model, features = train_model(ticker, df)
-                if model is None:
-                    continue
-                
-                        joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                    else:
-                        model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                        features = [
-                            "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
-                            "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
-                        ]
+                if is_model_stale(ticker):
+                    model, features = train_model(ticker, df)
+                    if model is None:
+                        continue
+                    joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                else:
+                    model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                    features = [
+                        "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
+                        "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
+                    ]
 
                     proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
                     if proba_short is None or proba_mid is None or latest_row is None:
