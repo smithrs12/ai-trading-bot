@@ -355,22 +355,14 @@ def calculate_vwap(df):
         print(f"⚠️ VWAP calculation failed: {e}")
         return df
 
-def get_data(ticker, days=None, start=None, end=None, timeframe="1Min", limit=1000):
+def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000):
     try:
-        if days is not None:
-            if timeframe == "1Min":
-                limit = days * 390  # Approx. minutes in a trading day
-            elif timeframe == "5Min":
-                limit = days * 78
-            elif timeframe == "15Min":
-                limit = days * 26
-            elif timeframe == "1Day":
-                limit = days
-            else:
-                limit = 1000  # fallback if unknown
-
         barset = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
-        df = barset.df[barset.df['symbol'] == ticker].copy()
+        df = barset.df.copy()
+        
+        # Handle multi-indexed DataFrame for multiple tickers
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df[ticker].copy()
 
         df = df.rename(columns={
             "t": "timestamp", "o": "Open", "h": "High",
