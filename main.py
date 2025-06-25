@@ -390,15 +390,8 @@ def get_risk_events(ticker):
         print(f"⚠️ Risk event check failed for {ticker}: {e}")
         return []
 
-def is_high_risk_news_day():
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    try:
-        if os.path.exists("risk_events.json"):
-            with open("risk_events.json") as f:
-                data = json.load(f)
-            return today in data.get("high_risk_days", [])
-    except Exception as e:
-        print(f"⚠️ Failed to check news suppression: {e}")
+def is_high_risk_news_day(ticker):
+    # Placeholder logic for now — you can add real news checks later
     return False
         
 def calculate_vwap(df):
