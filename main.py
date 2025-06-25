@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # ai_trading_bot.py
 
 # [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
@@ -161,7 +160,7 @@ def log_meta_model_metrics(ticker, acc, prec, rec, date_str=None):
         sheet = gsheet_meta.open("meta_model_log").sheet1  # Update sheet name if needed
         sheet.append_row([date_str, ticker, acc, prec, rec])
     except Exception as e:
-        print(f"⚠️ Failed to log meta model metrics: {e}")
+        print(f"⚠️ Failed to log meta model metrics: {type(e).__name__} - {e}")
 
 def log_meta_training_row(features_dict):
     try:
