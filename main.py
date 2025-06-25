@@ -1212,41 +1212,41 @@ if is_market_open():
                 continue
 
             # ✅ Check for news risk here
-            if is_high_risk_news_day():
+            if is_high_risk_news_day(ticker):
                 print(f"⚠️ Skipping {ticker} due to high-risk news day")
                 continue
 
-                if is_model_stale(ticker):
-                    model, features = train_model(ticker, df)
-                    if model is None:
-                        continue
-                    joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                else:
-                    model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                    features = [
-                        "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
-                        "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
-                    ]
+            if is_model_stale(ticker):
+                model, features = train_model(ticker, df)
+                if model is None:
+                    continue
+                joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+            else:
+                model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                features = [
+                    "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
+                    "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
+                ]
 
-                    proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
-                    if proba_short is None or proba_mid is None or latest_row is None:
-                        continue
+            proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
+            if proba_short is None or proba_mid is None or latest_row is None:
+                continue
 
-                    sentiment = get_sentiment_score(ticker)
-                    df_volume_avg = df["Volume"].rolling(20).mean().iloc[-2] if len(df) >= 20 else 1
-                    score = (
-                        proba_short * 100 +
-                        sentiment * 10 -
-                        latest_row.get("atr", 0.5) * 5 +
-                        (latest_row.get("Volume", 1) / df_volume_avg) * 2
-                    )
+            sentiment = get_sentiment_score(ticker)
+            df_volume_avg = df["Volume"].rolling(20).mean().iloc[-2] if len(df) >= 20 else 1
+            score = (
+                proba_short * 100 +
+                sentiment * 10 -
+                latest_row.get("atr", 0.5) * 5 +
+                (latest_row.get("Volume", 1) / df_volume_avg) * 2
+            )
 
-                    sector = SECTOR_MAP.get(ticker, "Unknown")
-                    prediction = int(proba_short > 0.5)
-                    trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+            sector = SECTOR_MAP.get(ticker, "Unknown")
+            prediction = int(proba_short > 0.5)
+            trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
-                except Exception as e:
-                    print(f"⚠️ Failed to process {ticker}: {e}")
+        except Exception as e:
+            print(f"⚠️ Failed to process {ticker}: {e}")
 
             # ✅ Must stay inside the is_market_open() block
             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
