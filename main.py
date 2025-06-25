@@ -1180,209 +1180,201 @@ ensure_models_trained(TICKERS)
 
 from pytz import timezone
 
-if is_market_open():
-    print("🔁 Trading cycle...", flush=True)
+try:
+    if is_market_open():
+        print("🔁 Trading cycle...", flush=True)
 
-    if dt_time(6, 30) <= now < dt_time(7, 0):
-        print("🛑 No trades allowed during first 30 minutes after market open.")
-        time.sleep(60)
-        continue
-
-    if is_premarket_risk_period():
-        print("🛑 Suppressing trades during first 10 minutes of market open.")
-        time.sleep(60)
-        continue
-
-    if should_retrain_meta_model():
-        retrain_meta_model_from_sheet()
-
-    trade_count = 0
-    regime = get_market_regime()
-    used_sectors = set()
-    trade_candidates = []
-    model, features = None, None
-    TICKERS = get_dynamic_watchlist(limit=8)
-    print(f"🔎 Watchlist for this cycle: {TICKERS}")
-
-    # ✅ This block must be indented
-    for ticker in TICKERS:
-        try:
-            df = get_data(ticker, days=2)
-            if df is None:
-                continue
-
-            # ✅ Check for news risk here
-            if is_high_risk_news_day(ticker):
-                print(f"⚠️ Skipping {ticker} due to high-risk news day")
-                continue
-
-            if is_model_stale(ticker):
-                model, features = train_model(ticker, df)
-                if model is None:
-                    continue
-                joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-            else:
-                model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
-                features = [
-                    "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
-                    "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
-                ]
-
-            proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
-            if proba_short is None or proba_mid is None or latest_row is None:
-                continue
-
-            sentiment = get_sentiment_score(ticker)
-            df_volume_avg = df["Volume"].rolling(20).mean().iloc[-2] if len(df) >= 20 else 1
-            score = (
-                proba_short * 100 +
-                sentiment * 10 -
-                latest_row.get("atr", 0.5) * 5 +
-                (latest_row.get("Volume", 1) / df_volume_avg) * 2
-            )
-
-            sector = SECTOR_MAP.get(ticker, "Unknown")
-            prediction = int(proba_short > 0.5)
-            trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
-
-        except Exception as e:
-            print(f"⚠️ Failed to process {ticker}: {e}")
-
-            # ✅ Must stay inside the is_market_open() block
-            trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
-
-            for cand in trade_candidates[:5]:
-                try:
-                    ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
-                    df = get_data(ticker, days=2)
-
-                    if df is None or latest_row is None:
-                        print(f"⚠️ Missing data for {ticker}, skipping.")
-                        continue
-
-                    # ✅ INSERT VWAP LINE HERE
-                    latest_row["vwap"] = calculate_vwap(df)
-
-                    last_candles = df.tail(5)
-                    green_candles = (last_candles["Close"] > last_candles["Open"]).sum()
-                    if green_candles < 3:
-                        print(f"⛔ {ticker} lacks strong recent price action ({green_candles}/5 green). Skipping.")
-                        continue
-
-                    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-                    current_volume = latest_row["Volume"]
-                    if current_volume < 1.5 * recent_volume:
-                        print(f"⏸️ {ticker} volume not spiking. Skipping.")
-                        continue
-                        
-                    if latest_row.get("vwap") and latest_row["Close"] < latest_row["vwap"]:
-                        print(f"⏸️ {ticker} below VWAP. Skipping.")
-                        continue
-
-                    last_ts = cooldown.get(ticker, {}).get("timestamp")
-                    if last_ts:
-                        elapsed = (datetime.now() - datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")).total_seconds()
-                        if elapsed < 600:
-                            decay = 1 - (elapsed / 600)
-                            proba_short *= decay
-                            print(f"🕓 Cooldown decay for {ticker}: {proba_short:.2f}")
-
-                    blended_proba = 0.6 * proba_short + 0.4 * proba_mid
-
-                    if regime == "bear" and proba_short < 0.8:
-                        print(f"⚠️ Bear regime: skipping {ticker} (conf: {proba_short:.2f})")
-                        continue
-                    elif regime == "sideways" and proba_short < 0.7:
-                        print(f"⏸️ Sideways regime: skipping {ticker} (conf: {proba_short:.2f})")
-                        continue
-
-                    near_support, near_resistance = detect_support_resistance(df)
-                    if prediction == 1 and near_resistance:
-                        print(f"⛔ {ticker} near resistance. Avoiding buy.")
-                        continue
-                    elif prediction == 0 and near_support:
-                        print(f"⛔ {ticker} near support. Avoiding sell.")
-                        continue
-
-                    price_change = latest_row["Close"] - latest_row["Open"]
-                    if proba_short > 0.75 and price_change <= 0:
-                        print(f"⚠️ {ticker} lacks intraday momentum. Skipping.")
-                        continue
-
-                    risks = get_risk_events(ticker)
-                    if risks:
-                        print(f"⚠️ {ticker} risky ({', '.join(risks)}). Skipping.")
-                        continue
-
-                    if blended_proba > 0.75:
-                        prediction = 1
-                    elif blended_proba < 0.4:
-                        prediction = 0
-                    else:
-                        print(f"⏸️ Uncertain signal for {ticker}. Skipping.")
-                        continue
-
-                    sentiment = get_sentiment_score(ticker)
-                    score = (
-                        proba_short * 100 +
-                        sentiment * 10 -
-                        latest_row["atr"] * 5 +
-                        (current_volume / recent_volume) * 2
-                    )
-                    if score < 20:
-                        print(f"⛔ Trade score too low ({score:.2f}) for {ticker}. Skipping.")
-                        continue
-
-                    if sector in used_sectors:
-                        print(f"⛔ Already traded sector: {sector}. Skipping {ticker}.")
-                        continue
-
-                    used_sectors.add(sector)
-
-                    execute_trade(ticker, prediction, proba_short, proba_mid, latest_row, df)
-                    trade_count += 1
-
-                except Exception as e:
-                    msg = f"🚨 Trade logic error for {ticker}: {e}"
-                    print(msg)
-                    send_discord_message(msg)
-
-            # ⏳ Auto-liquidate 5 mins before market close (12:55 PM PT)
-            if dt_time(12, 55) <= now < dt_time(12, 56):
-                print("⚠️ Approaching market close. Liquidating positions.")
-                liquidate_positions()
-                time.sleep(60)  # Prevent repeat execution
-                continue
-
-            # 📊 Send end-of-day summary just before market close
-            if dt_time(12, 56) <= now < dt_time(12, 58):
-                print("📊 Sending end-of-day summary before market close.")
-                send_end_of_day_summary()
-                time.sleep(120)  # Prevent repeat
-                continue
-
-            # ✅ Exit cleanly after 1:00 PM PT
-            if now >= dt_time(13, 0):
-                print("✅ Trading session complete. Exiting.")
-                break
-
-        else:
-            print("⏸️ Market is closed. Waiting...")
+        if dt_time(6, 30) <= now < dt_time(7, 0):
+            print("🛑 No trades allowed during first 30 minutes after market open.")
             time.sleep(60)
-            continue  # 🟢 Skip to next iteration without saving or dumping
+            continue
 
-        # ✅ Only run if market was open
-        try:
-            save_trade_cache(cooldown)
-            with open(Q_TABLE_FILE, "w") as f:
-                json.dump(q_table, f)
-        except Exception as e:
-            print(f"⚠️ Failed to save cooldown cache or Q-table: {e}")
+        if is_premarket_risk_period():
+            print("🛑 Suppressing trades during first 10 minutes of market open.")
+            time.sleep(60)
+            continue
 
-        # ✅ Move this line outside the try block
-        time.sleep(300)
+        if should_retrain_meta_model():
+            retrain_meta_model_from_sheet()
 
-    except Exception as e:  # ✅ Must align with try above!
-        print(f"🚨 Fatal error in main trading loop: {e}")
-        send_discord_message(f"🚨 Fatal error in main trading loop: {e}")
-        time.sleep(60)  # Backoff before retrying
+        trade_count = 0
+        regime = get_market_regime()
+        used_sectors = set()
+        trade_candidates = []
+        model, features = None, None
+        TICKERS = get_dynamic_watchlist(limit=8)
+        print(f"🔎 Watchlist for this cycle: {TICKERS}")
+
+        for ticker in TICKERS:
+            try:
+                df = get_data(ticker, days=2)
+                if df is None:
+                    continue
+
+                if is_high_risk_news_day(ticker):
+                    print(f"⚠️ Skipping {ticker} due to high-risk news day")
+                    continue
+
+                if is_model_stale(ticker):
+                    model, features = train_model(ticker, df)
+                    if model is None:
+                        continue
+                    joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                else:
+                    model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
+                    features = [
+                        "smaClose", "rsiClose", "macdClose", "macd_diffClose", "stochClose",
+                        "atrClose", "bb_bbmClose", "hourClose", "minuteClose", "dayofweekClose"
+                    ]
+
+                proba_short, proba_mid, latest_row = dual_horizon_predict(ticker, model, features)
+                if proba_short is None or proba_mid is None or latest_row is None:
+                    continue
+
+                sentiment = get_sentiment_score(ticker)
+                df_volume_avg = df["Volume"].rolling(20).mean().iloc[-2] if len(df) >= 20 else 1
+                score = (
+                    proba_short * 100 +
+                    sentiment * 10 -
+                    latest_row.get("atr", 0.5) * 5 +
+                    (latest_row.get("Volume", 1) / df_volume_avg) * 2
+                )
+
+                sector = SECTOR_MAP.get(ticker, "Unknown")
+                prediction = int(proba_short > 0.5)
+                trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+
+            except Exception as e:
+                print(f"⚠️ Failed to process {ticker}: {e}")
+
+        trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
+
+        for cand in trade_candidates[:5]:
+            try:
+                ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+                df = get_data(ticker, days=2)
+
+                if df is None or latest_row is None:
+                    print(f"⚠️ Missing data for {ticker}, skipping.")
+                    continue
+
+                latest_row["vwap"] = calculate_vwap(df)
+
+                last_candles = df.tail(5)
+                green_candles = (last_candles["Close"] > last_candles["Open"]).sum()
+                if green_candles < 3:
+                    print(f"⛔ {ticker} lacks strong recent price action ({green_candles}/5 green). Skipping.")
+                    continue
+
+                recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
+                current_volume = latest_row["Volume"]
+                if current_volume < 1.5 * recent_volume:
+                    print(f"⏸️ {ticker} volume not spiking. Skipping.")
+                    continue
+
+                if latest_row.get("vwap") and latest_row["Close"] < latest_row["vwap"]:
+                    print(f"⏸️ {ticker} below VWAP. Skipping.")
+                    continue
+
+                last_ts = cooldown.get(ticker, {}).get("timestamp")
+                if last_ts:
+                    elapsed = (datetime.now() - datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                    if elapsed < 600:
+                        decay = 1 - (elapsed / 600)
+                        proba_short *= decay
+                        print(f"🕓 Cooldown decay for {ticker}: {proba_short:.2f}")
+
+                blended_proba = 0.6 * proba_short + 0.4 * proba_mid
+
+                if regime == "bear" and proba_short < 0.8:
+                    print(f"⚠️ Bear regime: skipping {ticker} (conf: {proba_short:.2f})")
+                    continue
+                elif regime == "sideways" and proba_short < 0.7:
+                    print(f"⏸️ Sideways regime: skipping {ticker} (conf: {proba_short:.2f})")
+                    continue
+
+                near_support, near_resistance = detect_support_resistance(df)
+                if prediction == 1 and near_resistance:
+                    print(f"⛔ {ticker} near resistance. Avoiding buy.")
+                    continue
+                elif prediction == 0 and near_support:
+                    print(f"⛔ {ticker} near support. Avoiding sell.")
+                    continue
+
+                price_change = latest_row["Close"] - latest_row["Open"]
+                if proba_short > 0.75 and price_change <= 0:
+                    print(f"⚠️ {ticker} lacks intraday momentum. Skipping.")
+                    continue
+
+                risks = get_risk_events(ticker)
+                if risks:
+                    print(f"⚠️ {ticker} risky ({', '.join(risks)}). Skipping.")
+                    continue
+
+                if blended_proba > 0.75:
+                    prediction = 1
+                elif blended_proba < 0.4:
+                    prediction = 0
+                else:
+                    print(f"⏸️ Uncertain signal for {ticker}. Skipping.")
+                    continue
+
+                sentiment = get_sentiment_score(ticker)
+                score = (
+                    proba_short * 100 +
+                    sentiment * 10 -
+                    latest_row["atr"] * 5 +
+                    (current_volume / recent_volume) * 2
+                )
+                if score < 20:
+                    print(f"⛔ Trade score too low ({score:.2f}) for {ticker}. Skipping.")
+                    continue
+
+                if sector in used_sectors:
+                    print(f"⛔ Already traded sector: {sector}. Skipping {ticker}.")
+                    continue
+
+                used_sectors.add(sector)
+
+                execute_trade(ticker, prediction, proba_short, proba_mid, latest_row, df)
+                trade_count += 1
+
+            except Exception as e:
+                msg = f"🚨 Trade logic error for {ticker}: {e}"
+                print(msg)
+                send_discord_message(msg)
+
+        if dt_time(12, 55) <= now < dt_time(12, 56):
+            print("⚠️ Approaching market close. Liquidating positions.")
+            liquidate_positions()
+            time.sleep(60)
+            continue
+
+        if dt_time(12, 56) <= now < dt_time(12, 58):
+            print("📊 Sending end-of-day summary before market close.")
+            send_end_of_day_summary()
+            time.sleep(120)
+            continue
+
+        if now >= dt_time(13, 0):
+            print("✅ Trading session complete. Exiting.")
+            break
+
+    else:
+        print("⏸️ Market is closed. Waiting...")
+        time.sleep(60)
+        continue
+
+    try:
+        save_trade_cache(cooldown)
+        with open(Q_TABLE_FILE, "w") as f:
+            json.dump(q_table, f)
+    except Exception as e:
+        print(f"⚠️ Failed to save cooldown cache or Q-table: {e}")
+
+    time.sleep(300)
+
+except Exception as e:
+    print(f"🚨 Fatal error in main trading loop: {e}")
+    send_discord_message(f"🚨 Fatal error in main trading loop: {e}")
+    time.sleep(60)
