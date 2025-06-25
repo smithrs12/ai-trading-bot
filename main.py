@@ -536,9 +536,10 @@ def is_medium_model_stale(ticker, max_age_hours=24):
         
 def train_medium_model(ticker):
     try:
-        end = datetime.now()
-        start = end - timedelta(days=180)
-        bars = api.get_bars(ticker, "1Day", start=start.isoformat(), end=end.isoformat(), adjustment='raw')
+        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw')
+
         df = bars.df
         df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
         df = df.rename(columns={
@@ -603,9 +604,9 @@ def predict_medium_term(ticker):
     try:
         model = joblib.load(model_path)
 
-        end = datetime.now()
-        start = end - timedelta(days=180)
-        bars = api.get_bars(ticker, timeframe="1Day", start=start.isoformat(), end=end.isoformat(), adjustment='raw')
+        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw')
         df = bars.df
 
         df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
@@ -614,6 +615,9 @@ def predict_medium_term(ticker):
         df.set_index("timestamp", inplace=True)
         df.sort_index(inplace=True)
         df.dropna(inplace=True)
+
+        if len(df) < 90:
+            return None
 
         features = ["Open", "High", "Low", "Close", "Volume"]
         X = df[features].iloc[-1:]
@@ -626,7 +630,6 @@ def predict_medium_term(ticker):
             proba = model.predict_proba(X)[0][1]
 
         return proba
-
     except Exception as e:
         print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
         return None
