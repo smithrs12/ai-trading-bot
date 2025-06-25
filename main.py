@@ -23,7 +23,6 @@ import joblib
 import json
 import random
 import pytz
-import yfinance as yf
 import finnhub
 from ta.trend import SMAIndicator, MACD
 from ta.momentum import RSIIndicator, StochasticOscillator
@@ -356,41 +355,39 @@ def calculate_vwap(df):
         print(f"⚠️ VWAP calculation failed: {e}")
         return df
 
-def get_data(ticker, days=3, interval="1m"):
+def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000):
     try:
-        end = datetime.now()
-        start = end - timedelta(days=days)
-        df = yf.download(ticker, start=start, end=end, interval=interval)
-        if df.empty or len(df) < 10:
-            return None
+        barset = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
+        df = barset.df[barset.df['symbol'] == ticker].copy()
 
-        df = df.rename(
-            columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close",
-                "volume": "Volume"
-            })
-        df["sma"] = SMAIndicator(close=df["Close"], window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(close=df["Close"], window=14).rsi()
-        macd = MACD(close=df["Close"])
+        df = df.rename(columns={
+            "t": "timestamp", "o": "Open", "h": "High",
+            "l": "Low", "c": "Close", "v": "Volume"
+        })
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df.set_index("timestamp", inplace=True)
+        df = df.sort_index()
+
+        # Add technical indicators
+        df["sma"] = SMAIndicator(df["Close"], window=14).sma_indicator()
+        df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
+        macd = MACD(df["Close"])
         df["macd"] = macd.macd()
         df["macd_diff"] = macd.macd_diff()
-        df["stoch"] = StochasticOscillator(high=df["High"],
-                                           low=df["Low"],
-                                           close=df["Close"]).stoch()
-        df["atr"] = AverageTrueRange(high=df["High"],
-                                     low=df["Low"],
-                                     close=df["Close"]).average_true_range()
-        df["bb_bbm"] = BollingerBands(close=df["Close"]).bollinger_mavg()
+        stoch = StochasticOscillator(df["High"], df["Low"], df["Close"])
+        df["stoch"] = stoch.stoch()
+        df["atr"] = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
+        df["bb_bbm"] = BollingerBands(df["Close"]).bollinger_mavg()
+
+        df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
         df["hour"] = df.index.hour
         df["minute"] = df.index.minute
         df["dayofweek"] = df.index.dayofweek
-        df = calculate_vwap(df)
-        return df.dropna() if len(df) > 50 else None
+
+        return df.dropna()
     except Exception as e:
-        print(f"❌ Data error for {ticker}: {e}", flush=True)
+        print(f"⚠️ Failed to get data for {ticker}: {e}")
         return None
 
 def detect_support_resistance(df, window=20, tolerance=0.01):
