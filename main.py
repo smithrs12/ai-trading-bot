@@ -157,16 +157,9 @@ def log_meta_model_metrics(ticker, acc, prec, rec, date_str=None):
     try:
         if not date_str:
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        sheet = gsheet_meta.open("meta_model_log").sheet1  # Make sure gsheet_meta is defined earlier
-        
-        # Append the row and confirm it worked
-        result = sheet.append_row([date_str, ticker, acc, prec, rec])
-
-        # Some environments return dicts, others return None — add optional validation
-        if result and isinstance(result, dict) and result.get("status") != 200:
-            raise Exception(f"Append failed with status: {result}")
-            
+        sheet = gsheet_meta.open("meta_model_log").sheet1
+        sheet.append_row([date_str, ticker, acc, prec, rec])
+        print(f"✅ Logged meta model metrics for {ticker}")
     except Exception as e:
         print(f"⚠️ Failed to log meta model metrics: {e}")
 
