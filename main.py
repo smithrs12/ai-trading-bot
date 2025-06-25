@@ -1176,7 +1176,7 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         # Add to candidate list
         sector = SECTOR_MAP.get(ticker, "Unknown")
         print(f"✅ {ticker} added as trade candidate (score: {score:.2f})", flush=True)
-                trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+        trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
         # Execute the trade
         execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
@@ -1184,10 +1184,12 @@ for cand in trade_candidates[:5]:  # Top 5 trades
         if sector:
             used_sectors.add(sector)
 
-        save_trade_cache(cooldown)
-        time.sleep(300)
+    # These two should be outside the FOR loop, but inside the WHILE loop
+    save_trade_cache(cooldown)
+    time.sleep(300)
 
-    except Exception as e:
-        msg = f"🚨 Bot crashed in market open loop for {ticker}: {e}"
-        print(msg, flush=True)
-        send_discord_message(msg)
+except Exception as e:
+    msg = f"🚨 Bot crashed in market open loop for {ticker}: {e}"
+    print(msg, flush=True)
+    send_discord_message(msg)
+
