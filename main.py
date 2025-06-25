@@ -355,14 +355,16 @@ def calculate_vwap(df):
         print(f"⚠️ VWAP calculation failed: {e}")
         return df
 
-def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000):
+def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=None):
     try:
-        barset = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
-        df = barset.df.copy()
-        
-        # Handle multi-indexed DataFrame for multiple tickers
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df[ticker].copy()
+        if days:
+            start = (datetime.now() - timedelta(days=days)).isoformat()
+            end = datetime.now().isoformat()
+            bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw')
+        else:
+            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
+
+        df = bars.df[bars.df['symbol'] == ticker].copy()
 
         df = df.rename(columns={
             "t": "timestamp", "o": "Open", "h": "High",
@@ -373,7 +375,7 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000):
         df.set_index("timestamp", inplace=True)
         df = df.sort_index()
 
-        # Add technical indicators
+        # Technical indicators
         df["sma"] = SMAIndicator(df["Close"], window=14).sma_indicator()
         df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
         macd = MACD(df["Close"])
@@ -390,6 +392,7 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000):
         df["dayofweek"] = df.index.dayofweek
 
         return df.dropna()
+
     except Exception as e:
         print(f"⚠️ Failed to get data for {ticker}: {e}")
         return None
