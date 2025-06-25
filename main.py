@@ -358,13 +358,17 @@ def calculate_vwap(df):
 def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=None):
     try:
         if days:
-            start = (datetime.now() - timedelta(days=days)).isoformat()
-            end = datetime.now().isoformat()
+            start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            end = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
             bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw')
         else:
             bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
 
-        df = bars.df[bars.df['symbol'] == ticker].copy()
+        df = bars.df
+
+        # ✅ Some Alpaca bar responses do not include 'symbol'
+        if 'symbol' in df.columns:
+            df = df[df['symbol'] == ticker]
 
         df = df.rename(columns={
             "t": "timestamp", "o": "Open", "h": "High",
