@@ -571,8 +571,13 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
             print(f"⚠️ {label} timeframe data for {ticker} missing required columns: {required_cols - set(df.columns)}")
             return None, None, None
 
-    X_short = df_short[features].iloc[-1:]
-    X_mid = df_mid[features].iloc[-1:]
+    # ✅ Convert inputs to float and reshape to 2D
+    try:
+        X_short = df_short[features].iloc[-1:].astype(float).values.reshape(1, -1)
+        X_mid = df_mid[features].iloc[-1:].astype(float).values.reshape(1, -1)
+    except Exception as e:
+        print(f"⚠️ Failed to preprocess input for {ticker}: {e}")
+        return None, None, None
 
     try:
         if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
