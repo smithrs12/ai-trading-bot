@@ -1180,51 +1180,47 @@ ensure_models_trained(TICKERS)
 
 from pytz import timezone
 
-while True:
-    print("🚀 Trading bot has started and is running.")
-    try:
-        now = datetime.now(timezone("US/Pacific")).time()
+if is_market_open():
+    print("🔁 Trading cycle...", flush=True)
 
-        if now >= dt_time(13, 0):  # 1:00 PM PT
-            print("✅ Trading session complete. Exiting.")
-            break
+    if dt_time(6, 30) <= now < dt_time(7, 0):
+        print("🛑 No trades allowed during first 30 minutes after market open.")
+        time.sleep(60)
+        continue
 
-        if is_market_open():
-            print("🔁 Trading cycle...", flush=True)
+    if is_premarket_risk_period():
+        print("🛑 Suppressing trades during first 10 minutes of market open.")
+        time.sleep(60)
+        continue
 
-            # 🚫 Block trades for first 30 minutes after market open (6:30–7:00 AM PT)
-            if dt_time(6, 30) <= now < dt_time(7, 0):
-                print("🛑 No trades allowed during first 30 minutes after market open.")
-                time.sleep(60)
+    if should_retrain_meta_model():
+        retrain_meta_model_from_sheet()
+
+    trade_count = 0
+    regime = get_market_regime()
+    used_sectors = set()
+    trade_candidates = []
+    model, features = None, None
+    TICKERS = get_dynamic_watchlist(limit=8)
+    print(f"🔎 Watchlist for this cycle: {TICKERS}")
+
+    # ✅ This block must be indented
+    for ticker in TICKERS:
+        try:
+            df = get_data(ticker, days=2)
+            if df is None:
                 continue
 
-            if is_premarket_risk_period():
-                print("🛑 Suppressing trades during first 10 minutes of market open.")
-                time.sleep(60)
+            # ✅ Check for news risk here
+            if is_high_risk_news_day(ticker):
+                print(f"⚠️ Skipping {ticker} due to high-risk news day")
                 continue
 
-            if should_retrain_meta_model():
-                retrain_meta_model_from_sheet()
-
-            trade_count = 0
-            regime = get_market_regime()
-            used_sectors = set()
-            trade_candidates = []
-            model, features = None, None
-            TICKERS = get_dynamic_watchlist(limit=8)
-            print(f"🔎 Watchlist for this cycle: {TICKERS}")
-
-            # ✅ PROPERLY INDENTED:
-            for ticker in TICKERS:
-                try:
-                    df = get_data(ticker, days=2)
-                    if df is None:
-                        continue
-
-                    if is_model_stale(ticker):
-                        model, features = train_model(ticker, df)
-                        if model is None:
-                            continue
+            if is_model_stale(ticker):
+                model, features = train_model(ticker, df)
+                if model is None:
+                    continue
+                
                         joblib.dump(model, os.path.join(MODEL_DIR, f"{ticker}.pkl"))
                     else:
                         model = joblib.load(os.path.join(MODEL_DIR, f"{ticker}.pkl"))
@@ -1253,7 +1249,7 @@ while True:
                 except Exception as e:
                     print(f"⚠️ Failed to process {ticker}: {e}")
 
-            # ✅ These also stay indented inside the same try block
+            # ✅ Must stay inside the is_market_open() block
             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
 
             for cand in trade_candidates[:5]:
@@ -1264,6 +1260,9 @@ while True:
                     if df is None or latest_row is None:
                         print(f"⚠️ Missing data for {ticker}, skipping.")
                         continue
+
+                    # ✅ INSERT VWAP LINE HERE
+                    latest_row["vwap"] = calculate_vwap(df)
 
                     last_candles = df.tail(5)
                     green_candles = (last_candles["Close"] > last_candles["Open"]).sum()
@@ -1276,7 +1275,7 @@ while True:
                     if current_volume < 1.5 * recent_volume:
                         print(f"⏸️ {ticker} volume not spiking. Skipping.")
                         continue
-
+                        
                     if latest_row.get("vwap") and latest_row["Close"] < latest_row["vwap"]:
                         print(f"⏸️ {ticker} below VWAP. Skipping.")
                         continue
