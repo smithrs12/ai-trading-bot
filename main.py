@@ -209,11 +209,14 @@ def log_pnl(ticker, qty, price, direction, entry_price, model_type):
     row.to_csv("pnl_tracker.csv", mode='a', header=not os.path.exists("pnl_tracker.csv"), index=False)
 
 def send_discord_message(msg):
-    if DISCORD_WEBHOOK_URL:
-        try:
+    try:
+        if DISCORD_WEBHOOK_URL:
             requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
+    except Exception as e:
+        try:
+            print(f"⚠️ Discord error: {e}")
         except:
-            pass
+            pass  # Fallback if even print fails (very rare)
 
 def retry_submit_order(symbol, qty, side, max_attempts=3, delay=3):
     attempt = 1
@@ -486,7 +489,11 @@ def load_trade_cache():
 
 
 def save_trade_cache(cache):
-    json.dump(cache, open(TRADE_CACHE_FILE, "w"))
+    try:
+        with open(TRADE_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"⚠️ Failed to save trade cache: {e}")
 
 def kelly_position_size(prob, price, equity, atr=None, ref_atr=0.5):
     edge = 2 * prob - 1
