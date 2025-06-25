@@ -496,7 +496,7 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
         return None, None, None
 
 def predict(ticker, model, features):
-    df = get_data(ticker, days=2)
+    df = get_data(ticker, limit=1000, timeframe="5Min")
     if df is None or len(df) < 10:
         return 0, None, None
     X = df[features].iloc[-1:]
@@ -913,7 +913,7 @@ def send_end_of_day_summary():
     candidates = []
     for ticker in UNIVERSE:
         try:
-            df = get_data(ticker, days=5)
+            df = get_data(ticker, limit=1000, timeframe="5Min")
             if df is None or len(df) < 5: continue
 
             ret = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
