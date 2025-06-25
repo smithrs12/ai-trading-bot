@@ -213,10 +213,7 @@ def send_discord_message(msg):
         if DISCORD_WEBHOOK_URL:
             requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
     except Exception as e:
-        try:
-            print(f"⚠️ Discord error: {e}")
-        except:
-            pass  # Fallback if even print fails (very rare)
+        print(f"⚠️ Discord error: {e}")
 
 def retry_submit_order(symbol, qty, side, max_attempts=3, delay=3):
     attempt = 1
