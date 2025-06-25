@@ -632,6 +632,7 @@ def predict_medium_term(ticker):
         return None
 
 def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_row, df):
+    print(f"🚀 Executing trade for {ticker}", flush=True)
     try:
         position = None
         try:
@@ -1174,7 +1175,8 @@ for cand in trade_candidates[:5]:  # Top 5 trades
 
         # Add to candidate list
         sector = SECTOR_MAP.get(ticker, "Unknown")
-        trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+        print(f"✅ {ticker} added as trade candidate (score: {score:.2f})", flush=True)
+                trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
 
         # Execute the trade
         execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
