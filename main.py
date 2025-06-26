@@ -1,4 +1,4 @@
- # ai_trading_bot.py
+q # ai_trading_bot.py
 
 # [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
 # Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
@@ -539,13 +539,23 @@ def train_medium_model(ticker):
         start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
         end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
-
         df = bars.df
-        df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
+
+        # Filter by symbol (if present)
+        if 'symbol' in df.columns:
+            df = df[df['symbol'] == ticker]
+
+        # ✅ Rename columns BEFORE any use of them
         df = df.rename(columns={
-            "t": "timestamp", "o": "Open", "h": "High",
-            "l": "Low", "c": "Close", "v": "Volume"
+            "t": "timestamp",
+            "o": "Open",
+            "h": "High",
+            "l": "Low",
+            "c": "Close",
+            "v": "Volume"
         })
+
+        # ✅ Now you're safe to use 'timestamp'
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df.set_index("timestamp", inplace=True)
         df.sort_index(inplace=True)
@@ -561,22 +571,24 @@ def train_medium_model(ticker):
 
         features = ["Open", "High", "Low", "Close", "Volume"]
         X, y = df[features], df["target"]
+
         if len(X) < 60 or y.nunique() < 2:
             print(f"⚠️ Insufficient or non-diverse data for {ticker} (medium-term).")
             return None, None
 
+        # Train ensemble model
         xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
         log_model = LogisticRegression(max_iter=1000)
         rf_model = RandomForestClassifier(n_estimators=100)
-        ensemble = VotingClassifier(estimators=[
-            ('xgb', xgb_model),
-            ('log', log_model),
-            ('rf', rf_model)
-        ], voting='soft', weights=[3, 1, 2])
+        ensemble = VotingClassifier(
+            estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
+            voting='soft',
+            weights=[3, 1, 2]
+        )
 
+        # Train with TimeSeriesSplit
         tscv = TimeSeriesSplit(n_splits=5)
         accs, precs, recs = [], [], []
-
         for train_idx, test_idx in tscv.split(X):
             ensemble.fit(X.iloc[train_idx], y.iloc[train_idx])
             y_pred = ensemble.predict(X.iloc[test_idx])
@@ -587,6 +599,7 @@ def train_medium_model(ticker):
         print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
         log_meta_model_metrics(ticker, np.mean(accs), np.mean(precs), np.mean(recs))
 
+        # Save model
         os.makedirs("models_medium", exist_ok=True)
         joblib.dump(ensemble, os.path.join("models_medium", f"{ticker}_medium.pkl"))
 
