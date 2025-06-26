@@ -968,6 +968,7 @@ while True:
 
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+                    model, features = None, None
 
                     if is_model_stale(ticker) or not os.path.exists(model_path):
                         print(f"🔁 Retraining short-term model for {ticker}...")
@@ -975,6 +976,9 @@ while True:
                         if model and features:
                             joblib.dump(model, model_path)
                             print(f"✅ Trained short-term model for {ticker} with {len(df)} samples")
+                            
+                            # 🔁 Reload the model to ensure full compatibility
+                            model = joblib.load(model_path)
                         else:
                             print(f"⚠️ Skipping {ticker}: No trained model.")
                             continue
