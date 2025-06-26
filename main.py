@@ -315,13 +315,13 @@ def get_risk_events(ticker):
         today = datetime.utcnow().strftime('%Y-%m-%d')
         events = []
 
-        # Earnings calendar
-        earnings = finnhub_client.earnings_calendar(_from=today, to=today)
+        # ✅ Earnings calendar (fixed: added symbol argument)
+        earnings = finnhub_client.earnings_calendar(symbol=ticker, _from=today, to=today)
         for event in earnings.get("earningsCalendar", []):
             if event.get("symbol") == ticker:
                 events.append("Earnings Today")
 
-        # Analyst ratings
+        # ✅ Analyst ratings
         ratings = finnhub_client.recommendation_trends(ticker)
         if ratings:
             latest = ratings[0]
