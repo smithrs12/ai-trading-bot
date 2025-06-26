@@ -1,4 +1,4 @@
-q # ai_trading_bot.py
+# ai_trading_bot.py
 
 # [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
 # Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
