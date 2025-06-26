@@ -532,20 +532,6 @@ def predict(ticker, model, features):
         return 0, None, None
 
 def is_medium_model_stale(ticker, max_age_hours=24):
-    path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-    if not os.path.exists(path):
-        return True
-    last_modified = os.path.getmtime(path)
-    age_hours = (time.time() - last_modified) / 3600
-    return age_hours > max_age_hours
-        
-def train_medium_model(ticker):
-    try:
-        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
-        df = bars.df
-
         if df.empty:
             print(f"⚠️ No data returned for {ticker}")
             return None, None
@@ -598,22 +584,12 @@ def train_medium_model(ticker):
             precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
             recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
 
-        print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
-
         # Save model
-        os.makedirs("models_medium", exist_ok=True)
-        joblib.dump(ensemble, os.path.join("models_medium", f"{ticker}_medium.pkl"))
-
         return ensemble, features
 
     except Exception as e:
         print(f"⚠️ Error training medium-term model for {ticker}: {e}")
         return None, None
-
-def predict_medium_term(ticker):
-    model_path = os.path.join("models_medium", f"{ticker}_medium.pkl")
-    if not os.path.exists(model_path):
-        return None
 
     try:
         model = joblib.load(model_path)
@@ -1073,9 +1049,6 @@ while True:
 
                     # Medium-term model
                     if is_medium_model_stale(ticker):
-                        print(f"🔁 Retraining medium-term model for {ticker}...")
-                        train_medium_model(ticker)
-
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
                     if is_model_stale(ticker) or not os.path.exists(model_path):
@@ -1095,8 +1068,6 @@ while True:
                         continue
 
                     prediction, latest_row, proba_short = predict(ticker, model, features)
-                    proba_mid = predict_medium_term(ticker)
-
                     if proba_short is None or proba_mid is None or latest_row is None:
                         print(f"⚠️ Prediction failure for {ticker}")
                         continue
