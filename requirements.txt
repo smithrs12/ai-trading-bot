@@ -4,7 +4,6 @@ numpy
 scikit-learn
 xgboost
 joblib
-yfinance
 pytz
 ta
 requests
