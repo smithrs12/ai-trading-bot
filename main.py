@@ -970,7 +970,6 @@ while True:
 
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
-                    model, features = None, None
 
                     if is_model_stale(ticker) or not os.path.exists(model_path):
                         print(f"🔁 Retraining short-term model for {ticker}...")
