@@ -457,30 +457,18 @@ def is_model_stale(ticker, max_age_hours=6):
 
 def train_model(ticker, df):
     try:
-        required_cols = [
-            "Close", "sma", "rsi", "macd", "macd_diff", "stoch",
-            "atr", "bb_bbm", "hour", "minute", "dayofweek"
-        ]
-        for col in required_cols:
-            if col not in df.columns:
-                print(f"⚠️ Missing column '{col}' in data for {ticker}")
-                return None, None
-
         df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
         df["target"] = (df["future_return"] > 0.01).astype(int)
         df.dropna(inplace=True)
 
         features = [
-            "sma", "rsi", "macd", "macd_diff", "stoch", "atr",
-            "bb_bbm", "hour", "minute", "dayofweek"
+            "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm",
+            "hour", "minute", "dayofweek"
         ]
         X, y = df[features], df["target"]
 
-        if len(X) < 60:
-            print(f"⚠️ Not enough samples to train model for {ticker} ({len(X)} rows)")
-            return None, None
-        if y.nunique() < 2:
-            print(f"⚠️ Only one class present in training data for {ticker}")
+        if len(X) < 60 or y.nunique() < 2:
+            print(f"⚠️ Only one class present or not enough data for {ticker}")
             return None, None
 
         model = VotingClassifier(estimators=[
@@ -490,11 +478,10 @@ def train_model(ticker, df):
         ], voting='soft', weights=[3, 1, 2])
 
         model.fit(X, y)
-        print(f"✅ Trained short-term model for {ticker} with {len(X)} samples")
         return model, features
 
     except Exception as e:
-        print(f"❌ Failed to train model for {ticker}: {e}")
+        print(f"⚠️ Error training model for {ticker}: {e}")
         return None, None
 
 def predict_weighted_proba(models, weights, X):
@@ -532,13 +519,19 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
         return None, None, None
 
 def predict(ticker, model, features):
-    df = get_data(ticker, limit=1000, timeframe="5Min")
-    if df is None or len(df) < 10:
-        return 0, None, None
-
-    X = df[features].iloc[-1:]
-
     try:
+        df = get_data(ticker, limit=1000, timeframe="5Min")
+        if df is None or len(df) < 10:
+            return 0, None, None
+
+        # Ensure all features exist
+        missing_features = [f for f in features if f not in df.columns]
+        if missing_features:
+            print(f"⚠️ Missing features in data for {ticker}: {missing_features}")
+            return 0, None, None
+
+        X = df[features].iloc[-1:]
+
         if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
             models = [est for _, est in model.estimators]
             weights = model.weights
@@ -547,6 +540,7 @@ def predict(ticker, model, features):
             proba = model.predict_proba(X)[0][1]
 
         return int(proba > 0.5), df.iloc[-1], proba
+
     except Exception as e:
         print(f"⚠️ Prediction failed for {ticker}: {e}")
         return 0, None, None
