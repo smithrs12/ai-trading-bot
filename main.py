@@ -538,7 +538,7 @@ def train_medium_model(ticker):
     try:
         start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
         end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw')
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
         df = bars.df
 
         if df.empty:
