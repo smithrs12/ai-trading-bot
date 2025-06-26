@@ -455,6 +455,8 @@ def is_model_stale(ticker, max_age_hours=6):
     age_hours = (time.time() - last_modified) / 3600
     return age_hours > max_age_hours
 
+from sklearn.utils.validation import check_is_fitted  # ✅ Add this import at the top of your file
+
 def train_model(ticker, df):
     try:
         df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
@@ -478,6 +480,8 @@ def train_model(ticker, df):
         ], voting='soft', weights=[3, 1, 2])
 
         model.fit(X, y)
+        check_is_fitted(model)  # ✅ Ensure model is actually fitted
+        print(f"✅ Model for {ticker} successfully trained and validated.")
         return model, features
 
     except Exception as e:
