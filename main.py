@@ -456,27 +456,46 @@ def is_model_stale(ticker, max_age_hours=6):
     return age_hours > max_age_hours
 
 def train_model(ticker, df):
-    df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
-    df["target"] = (df["future_return"] > 0.01).astype(int)
-    df.dropna(inplace=True)
+    try:
+        required_cols = [
+            "Close", "sma", "rsi", "macd", "macd_diff", "stoch",
+            "atr", "bb_bbm", "hour", "minute", "dayofweek"
+        ]
+        for col in required_cols:
+            if col not in df.columns:
+                print(f"⚠️ Missing column '{col}' in data for {ticker}")
+                return None, None
 
-    features = [
-        "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm",
-        "hour", "minute", "dayofweek"
-    ]
-    X, y = df[features], df["target"]
+        df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
+        df["target"] = (df["future_return"] > 0.01).astype(int)
+        df.dropna(inplace=True)
 
-    if len(X) < 60 or y.nunique() < 2:
+        features = [
+            "sma", "rsi", "macd", "macd_diff", "stoch", "atr",
+            "bb_bbm", "hour", "minute", "dayofweek"
+        ]
+        X, y = df[features], df["target"]
+
+        if len(X) < 60:
+            print(f"⚠️ Not enough samples to train model for {ticker} ({len(X)} rows)")
+            return None, None
+        if y.nunique() < 2:
+            print(f"⚠️ Only one class present in training data for {ticker}")
+            return None, None
+
+        model = VotingClassifier(estimators=[
+            ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
+            ('log', LogisticRegression(max_iter=1000)),
+            ('rf', RandomForestClassifier(n_estimators=100))
+        ], voting='soft', weights=[3, 1, 2])
+
+        model.fit(X, y)
+        print(f"✅ Trained short-term model for {ticker} with {len(X)} samples")
+        return model, features
+
+    except Exception as e:
+        print(f"❌ Failed to train model for {ticker}: {e}")
         return None, None
-
-    model = VotingClassifier(estimators=[
-        ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
-        ('log', LogisticRegression(max_iter=1000)),
-        ('rf', RandomForestClassifier(n_estimators=100))
-    ], voting='soft', weights=[3, 1, 2])
-
-    model.fit(X, y)
-    return model, features
 
 def predict_weighted_proba(models, weights, X):
     total_weight = sum(weights)
