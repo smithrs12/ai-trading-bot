@@ -381,6 +381,11 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=No
         }
         df.rename(columns=rename_map, inplace=True)
 
+        # ✅ Ensure required columns exist
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(col in df.columns for col in required_cols):
+            raise ValueError(f"Missing required columns in data for {ticker}")
+
         df.index.name = "timestamp"
         df = df.sort_index()
 
@@ -550,7 +555,15 @@ def train_medium_model(ticker):
             return None, None
 
         df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
-        df = df.rename(columns={"t": "timestamp", "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
+        df = df.rename(columns={
+            "t": "timestamp", "o": "Open", "h": "High",
+            "l": "Low", "c": "Close", "v": "Volume"
+        })
+
+        # ✅ Ensure all required columns exist
+        required_cols = ["timestamp", "Open", "High", "Low", "Close", "Volume"]
+        if not all(col in df.columns for col in required_cols):
+            raise ValueError(f"Missing required columns in data for {ticker}")
 
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df.set_index("timestamp", inplace=True)
@@ -617,6 +630,11 @@ def predict_medium_term(ticker):
         df.sort_index(inplace=True)
         df.dropna(inplace=True)
 
+        # ✅ Ensure required columns exist
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(col in df.columns for col in required_cols):
+            raise ValueError(f"Missing required columns in data for {ticker}")
+
         if len(df) < 90:
             return None
 
@@ -631,6 +649,7 @@ def predict_medium_term(ticker):
             proba = model.predict_proba(X)[0][1]
 
         return proba
+
     except Exception as e:
         print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
         return None
