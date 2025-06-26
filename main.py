@@ -970,17 +970,27 @@ while True:
 
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
+                    model, features = None, None
+
                     if is_model_stale(ticker) or not os.path.exists(model_path):
                         print(f"🔁 Retraining short-term model for {ticker}...")
                         model, features = train_model(ticker, df)
                         if model and features:
                             joblib.dump(model, model_path)
+                            print(f"✅ Trained short-term model for {ticker} with {len(df)} samples")
+                        else:
+                            print(f"⚠️ Skipping {ticker}: No trained model.")
+                            continue
                     else:
-                        model = joblib.load(model_path)
-                        features = df.columns.intersection([
-                            "sma", "rsi", "macd", "macd_diff", "stoch",
-                            "atr", "bb_bbm", "hour", "minute", "dayofweek"
-                        ]).tolist()
+                        try:
+                            model = joblib.load(model_path)
+                            features = df.columns.intersection([
+                                "sma", "rsi", "macd", "macd_diff", "stoch",
+                                "atr", "bb_bbm", "hour", "minute", "dayofweek"
+                            ]).tolist()
+                        except Exception as e:
+                            print(f"⚠️ Failed to load model for {ticker}: {e}")
+                            continue
 
                     if model is None or features is None:
                         print(f"⚠️ Skipping {ticker}: No trained model.")
