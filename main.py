@@ -360,9 +360,9 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=No
         if days:
             start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
             end = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-            bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw')
+            bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw', feed='iex')
         else:
-            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw')
+            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw' feed='iex')
 
         # Convert to dataframe
         df = bars.df if hasattr(bars, "df") else pd.DataFrame(bars)
@@ -538,7 +538,7 @@ def train_medium_model(ticker):
     try:
         start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
         end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw')
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
 
         df = bars.df
         df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
@@ -606,7 +606,7 @@ def predict_medium_term(ticker):
 
         start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
         end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw')
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
         df = bars.df
 
         df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
