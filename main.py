@@ -516,6 +516,7 @@ def predict(ticker, model, features):
     df = get_data(ticker, limit=1000, timeframe="5Min")
     if df is None or len(df) < 10:
         return 0, None, None
+
     X = df[features].iloc[-1:]
 
     try:
@@ -530,122 +531,6 @@ def predict(ticker, model, features):
     except Exception as e:
         print(f"⚠️ Prediction failed for {ticker}: {e}")
         return 0, None, None
-
-    path = os.path.join("    if not os.path.exists(path):
-        return True
-    last_modified = os.path.getmtime(path)
-    age_hours = (time.time() - last_modified) / 3600
-    return age_hours > max_age_hours
-        
-    try:
-        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
-        df = bars.df
-
-        if df.empty:
-            print(f"⚠️ No data returned for {ticker}")
-            return None, None
-
-        if 't' not in df.columns or 'c' not in df.columns:
-            print(f"⚠️ Missing required columns in data for {ticker}")
-            return None, None
-
-        df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
-        df = df.rename(columns={
-            "t": "timestamp", "o": "Open", "h": "High",
-            "l": "Low", "c": "Close", "v": "Volume"
-        })
-
-        # ✅ Ensure all required columns exist
-        required_cols = ["timestamp", "Open", "High", "Low", "Close", "Volume"]
-        if not all(col in df.columns for col in required_cols):
-            raise ValueError(f"Missing required columns in data for {ticker}")
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df.set_index("timestamp", inplace=True)
-        df.sort_index(inplace=True)
-
-        df["return_5d"] = df["Close"].pct_change(5).shift(-5)
-        df["target"] = (df["return_5d"] > 0.02).astype(int)
-        df.dropna(inplace=True)
-
-        features = ["Open", "High", "Low", "Close", "Volume"]
-        X, y = df[features], df["target"]
-        if len(X) < 60 or y.nunique() < 2:
-            print(f"⚠️ Insufficient or non-diverse data for {ticker} (medium-term).")
-            return None, None
-
-        xgb_model = xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)
-        log_model = LogisticRegression(max_iter=1000)
-        rf_model = RandomForestClassifier(n_estimators=100)
-
-        ensemble = VotingClassifier(
-            estimators=[('xgb', xgb_model), ('log', log_model), ('rf', rf_model)],
-            voting='soft', weights=[3, 1, 2]
-        )
-
-        tscv = TimeSeriesSplit(n_splits=5)
-        accs, precs, recs = [], [], []
-
-        for train_idx, test_idx in tscv.split(X):
-            ensemble.fit(X.iloc[train_idx], y.iloc[train_idx])
-            y_pred = ensemble.predict(X.iloc[test_idx])
-            accs.append(accuracy_score(y.iloc[test_idx], y_pred))
-            precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
-            recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
-
-        print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
-
-        # Save model
-        os.makedirs("        joblib.dump(ensemble, os.path.join("
-        return ensemble, features
-
-    except Exception as e:
-        print(f"⚠️ Error training medium-term model for {ticker}: {e}")
-        return None, None
-
-        if not os.path.exists(model_path):
-        return None
-
-    try:
-        model = joblib.load(model_path)
-
-        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
-        df = bars.df
-
-        df = df[df['symbol'] == ticker] if 'symbol' in df.columns else df
-        df = df.rename(columns={"t": "timestamp", "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df.set_index("timestamp", inplace=True)
-        df.sort_index(inplace=True)
-        df.dropna(inplace=True)
-
-        # ✅ Ensure required columns exist
-        required_cols = ["Open", "High", "Low", "Close", "Volume"]
-        if not all(col in df.columns for col in required_cols):
-            raise ValueError(f"Missing required columns in data for {ticker}")
-
-        if len(df) < 90:
-            return None
-
-        features = ["Open", "High", "Low", "Close", "Volume"]
-        X = df[features].iloc[-1:]
-
-        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
-            models = [est for name, est in model.estimators]
-            weights = model.weights
-            proba = predict_weighted_proba(models, weights, X)
-        else:
-            proba = model.predict_proba(X)[0][1]
-
-        return proba
-
-    except Exception as e:
-        print(f"⚠️ Medium-term prediction error for {ticker}: {e}")
-        return None
 
 def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_row, df):
     print(f"🚀 Executing trade for {ticker}", flush=True)
@@ -1064,10 +949,6 @@ while True:
                         print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
                         continue
 
-                    # Medium-term model
-                    if is_medium_model_stale(ticker):
-                        print(f"                        train_medium_model(ticker)
-
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
                     if is_model_stale(ticker) or not os.path.exists(model_path):
@@ -1087,13 +968,11 @@ while True:
                         continue
 
                     prediction, latest_row, proba_short = predict(ticker, model, features)
-                    proba_mid = predict_medium_term(ticker)
-
-                    if proba_short is None or proba_mid is None or latest_row is None:
+                    if proba_short is None or latest_row is None:
                         print(f"⚠️ Prediction failure for {ticker}")
                         continue
 
-                    print(f"🤖 Predictions for {ticker}: Short={proba_short:.2f}, Mid={proba_mid:.2f}", flush=True)
+                    print(f"🤖 Prediction for {ticker}: {proba_short:.2f}", flush=True)
 
                     # Cooldown adjustment
                     last_ts = cooldown.get(ticker, {}).get("timestamp")
@@ -1104,11 +983,6 @@ while True:
                             proba_short *= decay_factor
                             proba_short = min(max(proba_short, 0), 1)
                             print(f"🕓 Cooldown active. Confidence adjusted to {proba_short:.2f}")
-
-                    # HOLD logic
-                    if 0.6 <= proba_short < 0.75 and proba_mid >= 0.75:
-                        print(f"⏸️ HOLDING {ticker}")
-                        continue
 
                     # VWAP filter
                     if latest_row["Close"] < latest_row["vwap"]:
@@ -1137,8 +1011,7 @@ while True:
                         print(f"⚠️ {ticker} lacks momentum")
                         continue
 
-                    # Blended signal
-                    blended_proba = 0.6 * proba_short + 0.4 * proba_mid
+                    # Regime-based thresholds
                     if regime == "bear" and proba_short < 0.8:
                         print(f"⚠️ Bear market. Skipping {ticker}")
                         continue
@@ -1146,12 +1019,12 @@ while True:
                         print(f"⏸️ Sideways market. Skipping {ticker}")
                         continue
 
-                    if blended_proba > 0.75:
+                    if proba_short > 0.75:
                         prediction = 1
-                    elif blended_proba < 0.4:
+                    elif proba_short < 0.4:
                         prediction = 0
                     else:
-                        print(f"⏸️ Blended signal too uncertain for {ticker}")
+                        print(f"⏸️ Signal too uncertain for {ticker}")
                         continue
 
                     # Score trade
@@ -1164,7 +1037,7 @@ while True:
                     )
 
                     print(f"✅ {ticker} added as trade candidate (score: {score:.2f})", flush=True)
-                    trade_candidates.append((ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector))
+                    trade_candidates.append((ticker, score, model, features, latest_row, proba_short, prediction, sector))
 
                 except Exception as e:
                     print(f"⚠️ Error analyzing {ticker}: {e}", flush=True)
