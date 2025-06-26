@@ -974,27 +974,20 @@ while True:
                         print(f"🔁 Retraining short-term model for {ticker}...")
                         model, features = train_model(ticker, df)
                         if model and features:
-                            joblib.dump(model, model_path)
+                            joblib.dump((model, features), model_path)
                             print(f"✅ Trained short-term model for {ticker} with {len(df)} samples")
-                            
-                            # 🔁 Reload the model to ensure full compatibility
-                            model = joblib.load(model_path)
                         else:
                             print(f"⚠️ Skipping {ticker}: No trained model.")
                             continue
                     else:
                         try:
-                            model = joblib.load(model_path)
-                            features = df.columns.intersection([
-                                "sma", "rsi", "macd", "macd_diff", "stoch",
-                                "atr", "bb_bbm", "hour", "minute", "dayofweek"
-                            ]).tolist()
+                            model, features = joblib.load(model_path)
                         except Exception as e:
                             print(f"⚠️ Failed to load model for {ticker}: {e}")
                             continue
 
                     if model is None or features is None:
-                        print(f"⚠️ Skipping {ticker}: No trained model.")
+                        print(f"⚠️ Skipping {ticker}: Model or features missing.")
                         continue
 
                     prediction, latest_row, proba_short = predict(ticker, model, features)
