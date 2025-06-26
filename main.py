@@ -362,7 +362,7 @@ def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=No
             end = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
             bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw', feed='iex')
         else:
-            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw' feed='iex')
+            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw', feed='iex')
 
         # Convert to dataframe
         df = bars.df if hasattr(bars, "df") else pd.DataFrame(bars)
