@@ -531,7 +531,18 @@ def predict(ticker, model, features):
         print(f"⚠️ Prediction failed for {ticker}: {e}")
         return 0, None, None
 
-def is_medium_model_stale(ticker, max_age_hours=24):
+    path = os.path.join("    if not os.path.exists(path):
+        return True
+    last_modified = os.path.getmtime(path)
+    age_hours = (time.time() - last_modified) / 3600
+    return age_hours > max_age_hours
+        
+    try:
+        start = (datetime.utcnow() - timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        bars = api.get_bars(ticker, "1Day", start=start, end=end, adjustment='raw', feed='iex')
+        df = bars.df
+
         if df.empty:
             print(f"⚠️ No data returned for {ticker}")
             return None, None
@@ -584,12 +595,18 @@ def is_medium_model_stale(ticker, max_age_hours=24):
             precs.append(precision_score(y.iloc[test_idx], y_pred, zero_division=0))
             recs.append(recall_score(y.iloc[test_idx], y_pred, zero_division=0))
 
+        print(f"📈 [MEDIUM] {ticker} | Acc: {np.mean(accs):.3f} | Prec: {np.mean(precs):.3f} | Rec: {np.mean(recs):.3f}")
+
         # Save model
+        os.makedirs("        joblib.dump(ensemble, os.path.join("
         return ensemble, features
 
     except Exception as e:
         print(f"⚠️ Error training medium-term model for {ticker}: {e}")
         return None, None
+
+        if not os.path.exists(model_path):
+        return None
 
     try:
         model = joblib.load(model_path)
@@ -1049,6 +1066,8 @@ while True:
 
                     # Medium-term model
                     if is_medium_model_stale(ticker):
+                        print(f"                        train_medium_model(ticker)
+
                     # Short-term model
                     model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
                     if is_model_stale(ticker) or not os.path.exists(model_path):
@@ -1068,6 +1087,8 @@ while True:
                         continue
 
                     prediction, latest_row, proba_short = predict(ticker, model, features)
+                    proba_mid = predict_medium_term(ticker)
+
                     if proba_short is None or proba_mid is None or latest_row is None:
                         print(f"⚠️ Prediction failure for {ticker}")
                         continue
