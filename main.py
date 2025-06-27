@@ -580,7 +580,7 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
         qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
         sentiment = get_sentiment_score(ticker)
         price_change = latest_row["Close"] - latest_row["Open"]
-volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
+        volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
 
         # ---- Safe volume_ratio ----
         if len(df) >= 22:
