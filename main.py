@@ -545,11 +545,11 @@ def predict(ticker, model, features):
 def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
     print(f"🚀 Executing trade for {ticker}", flush=True)
     try:
-        position = None
+        # Get current position if exists
         try:
             position = api.get_position(ticker)
         except:
-            pass
+            position = None
 
         current_price = api.get_latest_bar(ticker).c
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -577,10 +577,8 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
         equity = float(api.get_account().equity)
         max_dollars = equity * MAX_POSITION_PCT
         atr = latest_row.get("atr", 0.5)
-        qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
         sentiment = get_sentiment_score(ticker)
         price_change = latest_row["Close"] - latest_row["Open"]
-        volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
 
         # ---- Safe volume_ratio ----
         if len(df) >= 22:
@@ -589,8 +587,13 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
             volume_mean = max(df["Volume"].mean(), 1)
         volume_ratio = latest_row["Volume"] / volume_mean
 
+        qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
+        if qty <= 0:
+            print(f"❌ Position size for {ticker} is 0. Skipping trade.")
+            return
+
         # ---- BUY logic ----
-        if prediction == 1 and qty > 0 and (not position or float(position.market_value) < max_dollars):
+        if prediction == 1 and (not position or float(position.market_value) < max_dollars):
             try:
                 if os.path.exists("meta_model.pkl"):
                     import xgboost as xgb
@@ -605,93 +608,31 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
                     }])
                     meta_pred = meta_model.predict(meta_features)[0]
                     if meta_pred == 0:
-                        print(f"⛔ Meta model vetoed the trade for {ticker}. Skipping.")
+                        print(f"⛔ Meta model vetoed the trade for {ticker}.")
+                        send_discord_message(f"⛔ Meta model vetoed trade for {ticker}")
                         return
             except Exception as e:
                 print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
-            api.submit_order(
-                symbol=ticker,
-                qty=qty,
-                side="buy",
-                type="market",
-                time_in_force="gtc"
-            )
-            send_discord_message(
-                f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f} Sentiment: {sentiment:+.2f})"
-            )
-            log_trade(timestamp, ticker, "BUY", qty, current_price)
-            cooldown_cache[ticker] = {
-                "timestamp": timestamp,
-                "confidence": float(min(proba + 0.1, 1.0))
-            }
-            log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
-            update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
-
             try:
-                meta_log = {
-                    "proba_short": proba,
-                    "sentiment": sentiment,
-                    "price_change": price_change,
-                    "atr": atr,
-                    "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                    "volume_ratio": volume_ratio,
-                    "final_outcome": 1
-                }
-                log_meta_training_row(meta_log)
-            except Exception as e:
-                print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
-
-        # ---- Pyramiding logic ----
-        pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
-
-        if (
-            prediction == 1 and
-            position and
-            float(position.market_value) < max_dollars and
-            proba > 0.8 and
-            price_change > 0 and
-            pyramiding_count < 2
-        ):
-            additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
-            if additional_qty > 0:
-                try:
-                    if os.path.exists("meta_model.pkl"):
-                        import xgboost as xgb
-                        meta_model = joblib.load("meta_model.pkl")
-                        meta_features = pd.DataFrame([{
-                            "proba_short": proba,
-                            "sentiment": sentiment,
-                            "price_change": price_change,
-                            "atr": atr,
-                            "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                            "volume_ratio": volume_ratio,
-                        }])
-                        meta_pred = meta_model.predict(meta_features)[0]
-                        if meta_pred == 0:
-                            print(f"⛔ Meta model vetoed the trade for {ticker}. Skipping.")
-                            return
-                except Exception as e:
-                    print(f"⚠️ Meta model check failed for {ticker}: {e}")
-
+                print(f"📥 Placing BUY order for {qty} shares of {ticker} at ${current_price:.2f}")
                 api.submit_order(
                     symbol=ticker,
-                    qty=additional_qty,
+                    qty=qty,
                     side="buy",
                     type="market",
                     time_in_force="gtc"
                 )
                 send_discord_message(
-                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Signal)"
+                    f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f}, Sentiment: {sentiment:+.2f})"
                 )
-                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
-                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
+                log_trade(timestamp, ticker, "BUY", qty, current_price)
                 cooldown_cache[ticker] = {
                     "timestamp": timestamp,
-                    "confidence": float(min(proba + 0.1, 1.0)),
-                    "adds": pyramiding_count + 1
+                    "confidence": float(min(proba + 0.1, 1.0))
                 }
-                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
+                log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
+                update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
 
                 try:
                     meta_log = {
@@ -706,11 +647,83 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
                     log_meta_training_row(meta_log)
                 except Exception as e:
                     print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
-            return
+            except Exception as e:
+                print(f"🚨 Order placement failed for {ticker}: {e}")
+                send_discord_message(f"🚨 Order failed for {ticker}: {e}")
+                return
+
+        # ---- ADDITIONAL BUY (Pyramiding) ----
+        pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
+        if (
+            prediction == 1 and position and
+            float(position.market_value) < max_dollars and
+            proba > 0.8 and price_change > 0 and
+            pyramiding_count < 2
+        ):
+            additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
+            if additional_qty <= 0:
+                print(f"❌ Additional qty is 0 for {ticker}. Skipping.")
+                return
+
+            try:
+                if os.path.exists("meta_model.pkl"):
+                    meta_model = joblib.load("meta_model.pkl")
+                    meta_features = pd.DataFrame([{
+                        "proba_short": proba,
+                        "sentiment": sentiment,
+                        "price_change": price_change,
+                        "atr": atr,
+                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                        "volume_ratio": volume_ratio,
+                    }])
+                    meta_pred = meta_model.predict(meta_features)[0]
+                    if meta_pred == 0:
+                        print(f"⛔ Meta model vetoed pyramiding for {ticker}.")
+                        send_discord_message(f"⛔ Meta model vetoed pyramiding for {ticker}")
+                        return
+            except Exception as e:
+                print(f"⚠️ Meta model check failed for {ticker}: {e}")
+
+            try:
+                api.submit_order(
+                    symbol=ticker,
+                    qty=additional_qty,
+                    side="buy",
+                    type="market",
+                    time_in_force="gtc"
+                )
+                send_discord_message(
+                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong signal)"
+                )
+                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
+                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
+                cooldown_cache[ticker] = {
+                    "timestamp": timestamp,
+                    "confidence": float(min(proba + 0.1, 1.0)),
+                    "adds": pyramiding_count + 1
+                }
+                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
+                try:
+                    meta_log = {
+                        "proba_short": proba,
+                        "sentiment": sentiment,
+                        "price_change": price_change,
+                        "atr": atr,
+                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                        "volume_ratio": volume_ratio,
+                        "final_outcome": 1
+                    }
+                    log_meta_training_row(meta_log)
+                except Exception as e:
+                    print(f"⚠️ Failed to log pyramiding meta row for {ticker}: {e}")
+            except Exception as e:
+                print(f"🚨 Order placement failed for pyramiding {ticker}: {e}")
+                send_discord_message(f"🚨 Pyramiding order failed for {ticker}: {e}")
+                return
 
     except Exception as e:
         print(f"🚨 execute_trade crashed for {ticker}: {e}")
-        send_discord_message(f"🚨 Trade failed for {ticker}: {e}")
+        send_discord_message(f"🚨 execute_trade crashed for {ticker}: {e}")
 
         # ---- SELL logic ----
         if prediction == 0 and position:
