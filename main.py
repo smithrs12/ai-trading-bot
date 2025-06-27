@@ -524,31 +524,34 @@ def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
 
 def predict(ticker, model, features):
     try:
-        df = get_data(ticker, limit=1000, timeframe="5Min")
-        if df is None or len(df) < 10:
+        df = get_data(ticker, days=5, timeframe="5Min")
+        if df is None or len(df) < 50:
             print(f"⚠️ Not enough data to make prediction for {ticker}")
             return 0, None, None
 
-        # Make sure all expected features are present
         missing = [f for f in features if f not in df.columns]
         if missing:
             print(f"⚠️ Missing features in {ticker} data: {missing}")
             return 0, None, None
 
-        X = df[features].iloc[-1:]
+        if df[features].dropna().empty:
+            print(f"⚠️ Feature data is empty after dropping NA for {ticker}")
+            return 0, None, None
 
-        # 🧠 If VotingClassifier, use custom weighted logic
+        X = df[features].iloc[-1:].fillna(0)
+
         if isinstance(model, VotingClassifier):
-            # Make sure all base models are fitted
             for name, est in model.estimators:
-                if not hasattr(est, "predict_proba"):
-                    print(f"⚠️ Estimator {name} in model for {ticker} lacks predict_proba.")
+                if not hasattr(est, "predict_proba") or not hasattr(est, "classes_"):
+                    print(f"⚠️ Estimator {name} not ready for {ticker}")
                     return 0, None, None
             weights = model.weights if hasattr(model, "weights") else [1] * len(model.estimators)
             probs = np.array([est.predict_proba(X)[0][1] for _, est in model.estimators])
-            weighted = np.average(probs, weights=weights)
-            proba = weighted
+            proba = np.average(probs, weights=weights)
         else:
+            if not hasattr(model, "predict_proba") or not hasattr(model, "classes_"):
+                print(f"⚠️ Model not fitted or invalid for {ticker}")
+                return 0, None, None
             proba = model.predict_proba(X)[0][1]
 
         return int(proba > 0.5), df.iloc[-1], proba
