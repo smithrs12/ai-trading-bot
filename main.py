@@ -526,34 +526,29 @@ def predict(ticker, model, features):
     try:
         df = get_data(ticker, limit=1000, timeframe="5Min")
         if df is None or len(df) < 10:
+            print(f"⚠️ Not enough data to make prediction for {ticker}")
             return 0, None, None
 
-        # Ensure all features exist
-        missing_features = [f for f in features if f not in df.columns]
-        if missing_features:
-            print(f"⚠️ Missing features in data for {ticker}: {missing_features}")
+        # Make sure all expected features are present
+        missing = [f for f in features if f not in df.columns]
+        if missing:
+            print(f"⚠️ Missing features in {ticker} data: {missing}")
             return 0, None, None
 
         X = df[features].iloc[-1:]
 
-        # Safety check for VotingClassifier
+        # 🧠 If VotingClassifier, use custom weighted logic
         if isinstance(model, VotingClassifier):
-            if not hasattr(model, "estimators_"):
-                print(f"⚠️ VotingClassifier for {ticker} is not fitted properly. Refitting on dummy data.")
-                dummy_X = pd.DataFrame([0] * len(features), index=features).T
-                dummy_y = [0]
-                model.fit(dummy_X, dummy_y)
-
-            models = [est for _, est in model.estimators]
-            weights = model.weights
-            proba = predict_weighted_proba(models, weights, X)
+            # Make sure all base models are fitted
+            for name, est in model.estimators:
+                if not hasattr(est, "predict_proba"):
+                    print(f"⚠️ Estimator {name} in model for {ticker} lacks predict_proba.")
+                    return 0, None, None
+            weights = model.weights if hasattr(model, "weights") else [1] * len(model.estimators)
+            probs = np.array([est.predict_proba(X)[0][1] for _, est in model.estimators])
+            weighted = np.average(probs, weights=weights)
+            proba = weighted
         else:
-            if not hasattr(model, "classes_"):
-                print(f"⚠️ Model for {ticker} appears unfitted. Refitting on dummy data.")
-                dummy_X = pd.DataFrame([0] * len(features), index=features).T
-                dummy_y = [0]
-                model.fit(dummy_X, dummy_y)
-
             proba = model.predict_proba(X)[0][1]
 
         return int(proba > 0.5), df.iloc[-1], proba
