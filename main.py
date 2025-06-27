@@ -788,13 +788,36 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
                 print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
 def get_dynamic_watchlist(limit=8):
-    tickers_to_scan = [
-        "F", "SOFI", "SIRI", "MARA", "PLTR", "INTC", "CHPT", "OPEN", "RIVN",
-        "LCID", "PINS", "MIRM", "FROG", "CHWY", "UBER", "MRVL", "CGC", "AAPL",
-        "NVDA", "AMD", "TSLA", "AMZN", "META", "MSFT", "GOOG", "COIN", "SHOP",
-        "SNAP", "DIS", "T"
+    # Expanded universe (100+ popular and volatile tickers)
+    universe = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
+        "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
+        "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
+        "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
+        "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
+        "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
+        "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
     ]
-    return tickers_to_scan[:limit]
+
+    ranked = []
+
+    for ticker in universe:
+        df = get_data(ticker, days=2)
+        if df is None or len(df) < 30:
+            continue
+
+        df["return"] = df["Close"].pct_change()
+        volatility = df["return"].std()
+        avg_volume = df["Volume"].tail(20).mean()
+
+        score = volatility * avg_volume
+        ranked.append((ticker, score))
+
+    # Sort by highest score and limit the number
+    ranked.sort(key=lambda x: x[1], reverse=True)
+    top_tickers = [ticker for ticker, _ in ranked[:limit]]
+    print(f"✅ Watchlist contains: {top_tickers}")
+    return top_tickers
 
 def liquidate_positions():
     for pos in api.list_positions():
