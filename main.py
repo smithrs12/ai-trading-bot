@@ -536,11 +536,24 @@ def predict(ticker, model, features):
 
         X = df[features].iloc[-1:]
 
-        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
+        # Safety check for VotingClassifier
+        if isinstance(model, VotingClassifier):
+            if not hasattr(model, "estimators_"):
+                print(f"⚠️ VotingClassifier for {ticker} is not fitted properly. Refitting on dummy data.")
+                dummy_X = pd.DataFrame([0] * len(features), index=features).T
+                dummy_y = [0]
+                model.fit(dummy_X, dummy_y)
+
             models = [est for _, est in model.estimators]
             weights = model.weights
             proba = predict_weighted_proba(models, weights, X)
         else:
+            if not hasattr(model, "classes_"):
+                print(f"⚠️ Model for {ticker} appears unfitted. Refitting on dummy data.")
+                dummy_X = pd.DataFrame([0] * len(features), index=features).T
+                dummy_y = [0]
+                model.fit(dummy_X, dummy_y)
+
             proba = model.predict_proba(X)[0][1]
 
         return int(proba > 0.5), df.iloc[-1], proba
