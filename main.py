@@ -85,16 +85,6 @@ if os.path.exists(".env"):
 
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
-TICKER_UNIVERSE = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
-    "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
-    "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
-    "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
-    "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
-    "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
-    "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
-]
-
 SECTOR_MAP = {
     "AAPL": "Technology", "MSFT": "Technology", "GOOG": "Technology", "NVDA": "Technology", "AMD": "Technology",
     "META": "Communication", "SNAP": "Communication", "DIS": "Communication",
@@ -150,8 +140,6 @@ def log_meta_training_row(features_dict):
         sheet.append_row([features_dict[k] for k in features_dict])
     except Exception as e:
         print(f"⚠️ Failed to log meta training row: {e}")
-
-import xgboost as xgb
 
 def train_meta_model(df):
     features = df.drop(columns=["final_outcome"])
@@ -612,7 +600,6 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
         if prediction == 1 and (not position or float(position.market_value) < max_dollars):
             try:
                 if os.path.exists("meta_model.pkl"):
-                    import xgboost as xgb
                     meta_model = joblib.load("meta_model.pkl")
                     meta_features = pd.DataFrame([{
                         "proba_short": proba,
@@ -816,6 +803,16 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
             except Exception as e:
                 print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
+TICKER_UNIVERSE = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
+    "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
+    "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
+    "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
+    "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
+    "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
+    "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
+]
+
 def generate_watchlist(limit=8):
     final_scores = {}
 
@@ -831,47 +828,34 @@ def generate_watchlist(limit=8):
 
             df["sma_20"] = df["Close"].rolling(20).mean()
             df["rsi"] = compute_rsi(df["Close"])
-            df["atr"] = ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
+            df["atr"] = ta.volatility.AverageTrueRange(
+                df["High"], df["Low"], df["Close"], window=14
+            ).average_true_range()
 
             latest = df.iloc[-1]
             prev = df.iloc[-2]
 
-            # ✅ Momentum Check: Upward price move
             if latest["Close"] <= prev["Close"]:
                 continue
-
-            # ✅ Above SMA
             if latest["Close"] < latest["sma_20"]:
                 continue
-
-            # ✅ Volume Spike
             avg_volume = df["Volume"].rolling(20).mean().iloc[-2]
             if latest["Volume"] < 1.2 * avg_volume:
                 continue
-
-            # ✅ Sentiment Positive
             sentiment = get_sentiment_score(ticker)
             if sentiment < 0:
                 continue
-
-            # ✅ RSI Filter
             if not (30 < latest["rsi"] < 70):
                 continue
-
-            # ✅ Volatility Filter
             atr_ratio = latest["atr"] / latest["Close"]
             if not (0.005 < atr_ratio < 0.15):
                 continue
-
-            # ✅ Penny Stock Filter
             if latest["Close"] < 1:
                 continue
 
-            # Scoring logic
             rsi_score = 100 - abs(latest["rsi"] - 50)
             volume_score = latest["Volume"] / (avg_volume + 1)
             momentum_score = latest["Close"] - prev["Close"]
-
             total_score = (rsi_score * 0.4) + (volume_score * 20) + (momentum_score * 3)
             final_scores[ticker] = total_score
 
@@ -880,10 +864,9 @@ def generate_watchlist(limit=8):
             continue
 
     sorted_tickers = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
-    return [t[0] for t in sorted_tickers[:limit]]
-
-    print(f"✅ Watchlist contains: {final_watchlist}")
-    return final_watchlist
+    top_tickers = [t[0] for t in sorted_tickers[:limit]]
+    print(f"✅ Watchlist contains: {top_tickers}")
+    return top_tickers
 
 def liquidate_positions():
     for pos in api.list_positions():
@@ -1017,11 +1000,11 @@ while True:
             used_sectors = set()
             trade_candidates = []
             model, features = None, None
-            tickers = generate_watchlist(limit=8)
+            TICKER_UNIVERSE = generate_watchlist(limit=8)
 
-            print(f"✅ Watchlist contains: {TICKERS}", flush=True)
+            print(f"✅ Watchlist contains: {TICKER_UNIVERSE}", flush=True)
 
-            for ticker in TICKERS:
+            for ticker in TICKER_UNIVERSE:
                 try:
                     print(f"📊 Analyzing: {ticker}", flush=True)
                     df = get_data(ticker, days=5)
