@@ -446,6 +446,18 @@ def kelly_position_size(prob, price, equity, atr=None, ref_atr=0.5):
     atr_adjustment = ref_atr / atr
     adjusted_size = int(base_size * atr_adjustment)
     return max(adjusted_size, 0)
+
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
     
 def is_model_stale(ticker, max_age_hours=6):
     path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
@@ -992,7 +1004,7 @@ while True:
             used_sectors = set()
             trade_candidates = []
             model, features = None, None
-            TICKERS = get_dynamic_watchlist(limit=8)
+            tickers = generate_watchlist(limit=8)
 
             print(f"✅ Watchlist contains: {TICKERS}", flush=True)
 
