@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import ta
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, time as dt_time
