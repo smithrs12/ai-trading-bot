@@ -479,8 +479,16 @@ def train_model(ticker, df):
             ('rf', RandomForestClassifier(n_estimators=100))
         ], voting='soft', weights=[3, 1, 2])
 
+        # 🔁 Train the ensemble
         model.fit(X, y)
-        check_is_fitted(model)  # ✅ Ensure model is actually fitted
+
+        # 🔁 Manually fit each sub-model (important for XGB)
+        for name, est in model.estimators:
+            if hasattr(est, "fit") and not hasattr(est, "classes_"):
+                est.fit(X, y)
+
+        # ✅ Validate that model is fitted
+        check_is_fitted(model)
         print(f"✅ Model for {ticker} successfully trained and validated.")
         return model, features
 
@@ -495,32 +503,6 @@ def predict_weighted_proba(models, weights, X):
     probs = [model.predict_proba(X)[0][1] for model in models]
     weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
     return weighted_avg
-
-def dual_horizon_predict(ticker, model, features, short_days=2, mid_days=15):
-    df_short = get_data(ticker, days=short_days)
-    df_mid = get_data(ticker, days=mid_days)
-
-    if df_short is None or df_mid is None or len(df_short) < 10 or len(df_mid) < 10:
-        return None, None, None
-
-    X_short = df_short[features].iloc[-1:]
-    X_mid = df_mid[features].iloc[-1:]
-
-    try:
-        if isinstance(model, VotingClassifier) and hasattr(model, "estimators") and hasattr(model, "weights"):
-            models = [est for _, est in model.estimators]
-            weights = model.weights
-            proba_short = predict_weighted_proba(models, weights, X_short)
-            proba_mid = predict_weighted_proba(models, weights, X_mid)
-        else:
-            proba_short = model.predict_proba()[0][1]
-            proba_mid = model.predict_proba(X_mid)[0][1]
-
-        return proba_short, proba_mid, df_short.iloc[-1]
-
-    except Exception as e:
-        print(f"⚠️ Dual horizon prediction failed for {ticker}: {e}")
-        return None, None, None
 
 def predict(ticker, model, features):
     try:
@@ -560,7 +542,7 @@ def predict(ticker, model, features):
         print(f"⚠️ Prediction failed for {ticker}: {e}")
         return 0, None, None
 
-def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_row, df):
+def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
     print(f"🚀 Executing trade for {ticker}", flush=True)
     try:
         position = None
@@ -582,6 +564,7 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
                 return
 
+        # ---- Cooldown Check ----
         if ticker in cooldown_cache:
             last_trade = cooldown_cache[ticker]
             last_time = datetime.strptime(last_trade["timestamp"], "%Y-%m-%d %H:%M:%S")
@@ -598,22 +581,26 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
         sentiment = get_sentiment_score(ticker)
         price_change = latest_row["Close"] - latest_row["Open"]
 
+        # ---- Safe volume_ratio ----
+        if len(df) >= 22:
+            volume_mean = df["Volume"].rolling(20).mean().iloc[-2]
+        else:
+            volume_mean = max(df["Volume"].mean(), 1)
+        volume_ratio = latest_row["Volume"] / volume_mean
+
         # ---- BUY logic ----
         if prediction == 1 and qty > 0 and (not position or float(position.market_value) < max_dollars):
-
-            # ---- Meta Model Approval ----
             try:
                 if os.path.exists("meta_model.pkl"):
                     import xgboost as xgb
                     meta_model = joblib.load("meta_model.pkl")
                     meta_features = pd.DataFrame([{
                         "proba_short": proba,
-                        "proba_mid": proba_mid,
                         "sentiment": sentiment,
                         "price_change": price_change,
                         "atr": atr,
                         "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                        "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                        "volume_ratio": volume_ratio,
                     }])
                     meta_pred = meta_model.predict(meta_features)[0]
                     if meta_pred == 0:
@@ -622,12 +609,13 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             except Exception as e:
                 print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
-            # ✅ Only runs if no veto or exception
-            api.submit_order(symbol=ticker,
-                             qty=qty,
-                             side="buy",
-                             type="market",
-                             time_in_force="gtc")
+            api.submit_order(
+                symbol=ticker,
+                qty=qty,
+                side="buy",
+                type="market",
+                time_in_force="gtc"
+            )
             send_discord_message(
                 f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f} Sentiment: {sentiment:+.2f})"
             )
@@ -638,52 +626,45 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
             }
             log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
             update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
-         
-            # ---- Meta Model Logging ----
+
             try:
-                outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
                 meta_log = {
                     "proba_short": proba,
-                    "proba_mid": proba_mid,
                     "sentiment": sentiment,
                     "price_change": price_change,
                     "atr": atr,
                     "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                    "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
-                    "final_outcome": outcome
+                    "volume_ratio": volume_ratio,
+                    "final_outcome": 1
                 }
                 log_meta_training_row(meta_log)
             except Exception as e:
                 print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
 
-        # ---- ADDITIONAL BUY logic (Pyramiding) ----
+        # ---- Pyramiding logic ----
         pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
 
         if (
-            prediction == 1 and 
-            position and 
-            float(position.market_value) < max_dollars and 
-            proba > 0.8 and 
-            proba_mid > 0.8 and 
-            price_change > 0 and 
+            prediction == 1 and
+            position and
+            float(position.market_value) < max_dollars and
+            proba > 0.8 and
+            price_change > 0 and
             pyramiding_count < 2
         ):
             additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
             if additional_qty > 0:
-
-                # ---- Meta Model Approval ----
                 try:
                     if os.path.exists("meta_model.pkl"):
                         import xgboost as xgb
                         meta_model = joblib.load("meta_model.pkl")
                         meta_features = pd.DataFrame([{
                             "proba_short": proba,
-                            "proba_mid": proba_mid,
                             "sentiment": sentiment,
                             "price_change": price_change,
                             "atr": atr,
                             "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                            "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
+                            "volume_ratio": volume_ratio,
                         }])
                         meta_pred = meta_model.predict(meta_features)[0]
                         if meta_pred == 0:
@@ -692,13 +673,15 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                 except Exception as e:
                     print(f"⚠️ Meta model check failed for {ticker}: {e}")
 
-                api.submit_order(symbol=ticker,
-                                 qty=additional_qty,
-                                 side="buy",
-                                 type="market",
-                                 time_in_force="gtc")
+                api.submit_order(
+                    symbol=ticker,
+                    qty=additional_qty,
+                    side="buy",
+                    type="market",
+                    time_in_force="gtc"
+                )
                 send_discord_message(
-                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Dual Horizon Signal)"
+                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong Signal)"
                 )
                 log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
                 log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
@@ -708,24 +691,20 @@ def execute_trade(ticker, prediction, proba, proba_mid, cooldown_cache, latest_r
                     "adds": pyramiding_count + 1
                 }
                 update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
-             
-            # ---- Meta Model Logging ----
-            try:
-                outcome = 1 if prediction == 1 else 0  # This could later be replaced by true PnL outcome
-                meta_log = {
-                    "proba_short": proba,
-                    "proba_mid": proba_mid,
-                    "sentiment": sentiment,
-                    "price_change": price_change,
-                    "atr": atr,
-                    "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                    "volume_ratio": latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2],
-                    "final_outcome": outcome
-                }
-                log_meta_training_row(meta_log)
-            except Exception as e:
-                print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
 
+                try:
+                    meta_log = {
+                        "proba_short": proba,
+                        "sentiment": sentiment,
+                        "price_change": price_change,
+                        "atr": atr,
+                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
+                        "volume_ratio": volume_ratio,
+                        "final_outcome": 1
+                    }
+                    log_meta_training_row(meta_log)
+                except Exception as e:
+                    print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
             return
 
     except Exception as e:
@@ -1079,9 +1058,9 @@ while True:
             # Sort and execute top trades
             trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
             for cand in trade_candidates[:5]:
-                ticker, score, model, features, latest_row, proba_short, proba_mid, prediction, sector = cand
+                ticker, score, model, features, latest_row, proba_short, prediction, sector = cand
                 print(f"🚀 Executing trade for {ticker}", flush=True)
-                execute_trade(ticker, prediction, proba_short, proba_mid, cooldown, latest_row, df)
+                execute_trade(ticker, prediction, proba_short, cooldown, latest_row, df)
                 trade_count += 1
                 if sector:
                     used_sectors.add(sector)
