@@ -84,11 +84,14 @@ if os.path.exists(".env"):
 
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
-UNIVERSE = [
-    "AAPL", "MSFT", "GOOG", "NVDA", "AMD",
-    "META", "SNAP", "DIS", "TSLA", "F", "RIVN", "CHWY",
-    "PLTR", "UBER", "COIN", "SHOP", "INTC", "MARA", "SOFI", "SIRI",
-    "CHPT", "OPEN", "PINS", "LCID", "CGC"
+TICKER_UNIVERSE = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
+    "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
+    "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
+    "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
+    "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
+    "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
+    "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
 ]
 
 SECTOR_MAP = {
@@ -812,8 +815,8 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
             except Exception as e:
                 print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
-def generate_watchlist():
-    final_watchlist = []
+def generate_watchlist(limit=8):
+    final_scores = {}
 
     for ticker in TICKER_UNIVERSE:
         try:
@@ -854,20 +857,29 @@ def generate_watchlist():
             if not (30 < latest["rsi"] < 70):
                 continue
 
-            # ✅ Volatility Filter (ATR must be reasonable fraction of price)
+            # ✅ Volatility Filter
             atr_ratio = latest["atr"] / latest["Close"]
             if not (0.005 < atr_ratio < 0.15):
                 continue
 
-            # ✅ Penny Stock Filter (skip < $1)
+            # ✅ Penny Stock Filter
             if latest["Close"] < 1:
                 continue
 
-            final_watchlist.append(ticker)
+            # Scoring logic
+            rsi_score = 100 - abs(latest["rsi"] - 50)
+            volume_score = latest["Volume"] / (avg_volume + 1)
+            momentum_score = latest["Close"] - prev["Close"]
+
+            total_score = (rsi_score * 0.4) + (volume_score * 20) + (momentum_score * 3)
+            final_scores[ticker] = total_score
 
         except Exception as e:
             print(f"⚠️ Error evaluating {ticker}: {e}")
             continue
+
+    sorted_tickers = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+    return [t[0] for t in sorted_tickers[:limit]]
 
     print(f"✅ Watchlist contains: {final_watchlist}")
     return final_watchlist
