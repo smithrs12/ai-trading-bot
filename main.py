@@ -1020,7 +1020,7 @@ while True:
 
                     # Momentum check
                     price_change = latest_row["Close"] - latest_row["Open"]
-volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
+                    volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
                     if proba_short > 0.75 and price_change <= 0:
                         print(f"⚠️ {ticker} lacks momentum")
                         continue
