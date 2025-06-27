@@ -800,37 +800,65 @@ def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
             except Exception as e:
                 print(f"⚠️ Sell logic failed for {ticker}: {e}")
 
-def get_dynamic_watchlist(limit=8):
-    # Expanded universe (100+ popular and volatile tickers)
-    universe = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
-        "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
-        "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
-        "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
-        "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
-        "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
-        "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
-    ]
+def generate_watchlist():
+    final_watchlist = []
 
-    ranked = []
+    for ticker in TICKER_UNIVERSE:
+        try:
+            df = get_data(ticker, days=5)
+            if df is None or len(df) < 50:
+                continue
 
-    for ticker in universe:
-        df = get_data(ticker, days=2)
-        if df is None or len(df) < 30:
+            required_cols = {"Close", "Volume", "High", "Low", "Open"}
+            if not required_cols.issubset(df.columns):
+                continue
+
+            df["sma_20"] = df["Close"].rolling(20).mean()
+            df["rsi"] = compute_rsi(df["Close"])
+            df["atr"] = ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
+
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+
+            # ✅ Momentum Check: Upward price move
+            if latest["Close"] <= prev["Close"]:
+                continue
+
+            # ✅ Above SMA
+            if latest["Close"] < latest["sma_20"]:
+                continue
+
+            # ✅ Volume Spike
+            avg_volume = df["Volume"].rolling(20).mean().iloc[-2]
+            if latest["Volume"] < 1.2 * avg_volume:
+                continue
+
+            # ✅ Sentiment Positive
+            sentiment = get_sentiment_score(ticker)
+            if sentiment < 0:
+                continue
+
+            # ✅ RSI Filter
+            if not (30 < latest["rsi"] < 70):
+                continue
+
+            # ✅ Volatility Filter (ATR must be reasonable fraction of price)
+            atr_ratio = latest["atr"] / latest["Close"]
+            if not (0.005 < atr_ratio < 0.15):
+                continue
+
+            # ✅ Penny Stock Filter (skip < $1)
+            if latest["Close"] < 1:
+                continue
+
+            final_watchlist.append(ticker)
+
+        except Exception as e:
+            print(f"⚠️ Error evaluating {ticker}: {e}")
             continue
 
-        df["return"] = df["Close"].pct_change()
-        volatility = df["return"].std()
-        avg_volume = df["Volume"].tail(20).mean()
-
-        score = volatility * avg_volume
-        ranked.append((ticker, score))
-
-    # Sort by highest score and limit the number
-    ranked.sort(key=lambda x: x[1], reverse=True)
-    top_tickers = [ticker for ticker, _ in ranked[:limit]]
-    print(f"✅ Watchlist contains: {top_tickers}")
-    return top_tickers
+    print(f"✅ Watchlist contains: {final_watchlist}")
+    return final_watchlist
 
 def liquidate_positions():
     for pos in api.list_positions():
