@@ -949,10 +949,13 @@ while True:
             for ticker in TICKERS:
                 try:
                     print(f"📊 Analyzing: {ticker}", flush=True)
-                    df = get_data(ticker)
+                    df = get_data(ticker, days=5)
+                    
                     if df is None or len(df) < 30:
                         print(f"❌ Not enough data for {ticker}")
                         continue
+                        
+                    print(f"📈 Retrieved {len(df)} rows for {ticker}")
 
                     # Risk events
                     risks = get_risk_events(ticker)
