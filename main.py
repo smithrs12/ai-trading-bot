@@ -27,6 +27,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 from transformers import pipeline
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import asyncio
+from sklearn.model_selection import TimeSeriesSplit
+
+# === DEBUG Mode Toggle ===
+DEBUG = True
+
+def log(msg):
+    if DEBUG:
+        print(f"[DEBUG] {msg}")
 
 # === Initialization ===
 load_dotenv()
@@ -88,33 +96,50 @@ def q_state(ticker, position):
     except:
         return torch.zeros(4)
 
-# === Model Training ===
-def train_model(df, horizon, ticker):
+def train_model(ticker, df, model_class, model_path):
     try:
-        if df is None or len(df) < 30:
-            print(f"⚠️ Not enough data to train {ticker} ({horizon})")
+        X = df.drop("target", axis=1)
+        y = df["target"]
+        model = model_class()
+        try:
+            model.fit(X, y)
+        except Exception as e:
+            handle_model_training_failure(ticker)
+            print(f"❌ Model training failed for {ticker}: {e}")
+            send_discord_alert(f"⚠️ Training failed for {ticker}: {e}")
             return None
 
-        X = df.drop(columns=["Target"])
-        y = df["Target"]
-
-        model = VotingClassifier(estimators=[
-            ('lr', LogisticRegression(max_iter=1000)),
-            ('rf', RandomForestClassifier(n_estimators=100)),
-            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
-        ], voting='soft')
-
-        model.fit(X, y)
-
-        os.makedirs(f"models/{horizon}", exist_ok=True)
-        joblib.dump(model, f"models/{horizon}/{ticker}.pkl")
-
+        joblib.dump(model, model_path)
+        log(f"✅ Trained model for {ticker}")
         return model
 
     except Exception as e:
-        print(f"❌ Training failed for {ticker} ({horizon}): {e}")
-        send_discord_alert(f"❌ Training failed for {ticker} ({horizon}): {e}")
+        handle_model_training_failure(ticker)
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Training failed for {ticker}: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Model training failed for {ticker}")
         return None
+
+def walk_forward_validation(X, y, model):
+    try:
+        tscv = TimeSeriesSplit(n_splits=5)
+        scores = []
+
+        for train_index, test_index in tscv.split(X):
+            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+            model.fit(X_train, y_train)
+            score = model.score(X_test, y_test)
+            scores.append(score)
+
+        return sum(scores) / len(scores)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"⚠️ Walk-forward validation error: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Walk-forward validation error: {e}")
+        return 0
 
 # === Data Fetching ===
 def get_data(ticker, days=2):
@@ -303,6 +328,26 @@ def passes_volume_vwap_filter(ticker):
         print(f"❌ VWAP/Volume check error for {ticker}: {e}\n{tb}")
         send_discord_alert(f"⚠️ VWAP/Volume check error for {ticker}: {e}")
         return False
+
+# === Sector Rotation Limits ===
+sector_allocations = {}
+MAX_SECTOR_EXPOSURE = 3
+
+def check_sector_allocation(ticker):
+    try:
+        sector = get_sector(ticker)
+        count = sector_allocations.get(sector, 0)
+        if count >= MAX_SECTOR_EXPOSURE:
+            print(f"🛑 Sector limit reached for {sector}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Sector check failed for {ticker}: {e}")
+        return True
+
+def update_sector_allocation(ticker):
+    sector = get_sector(ticker)
+    sector_allocations[sector] = sector_allocations.get(sector, 0) + 1
 
 # === Market Regime Detection ===
 def get_market_regime():
@@ -537,16 +582,44 @@ def send_end_of_day_summary(trades, q_logs):
     except Exception as e:
         print(f"❌ Failed to send Discord summary: {e}")
 
+# === Sector Allocation State ===
+sector_allocations = {}
+MAX_SECTOR_EXPOSURE = 3  # max number of positions per sector
+
 # === End of Day Handler ===
 def end_of_day_cleanup():
+    global sector_allocations
     print("🌙 Running end-of-day cleanup...")
+    sector_allocations = {}
+    print("🔁 Sector allocations reset for new trading day.")
+    
     trades, q_logs = update_q_network_from_log()
     send_end_of_day_summary(trades, q_logs)
+
+def check_sector_allocation(ticker):
+    try:
+        sector = get_sector(ticker)
+        count = sector_allocations.get(sector, 0)
+        if count >= MAX_SECTOR_EXPOSURE:
+            print(f"🛑 Sector limit reached for {sector}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Sector check failed for {ticker}: {e}")
+        return True  # fail-safe
+
+def update_sector_allocation(ticker):
+    sector = get_sector(ticker)
+    sector_allocations[sector] = sector_allocations.get(sector, 0) + 1
 
 # === Trade Execution Logic (Completed with Logging and Sentiment) ===
 def execute_trade(ticker, score):
     if not passes_volume_vwap_filter(ticker):
         print(f"⚠️ Skipping {ticker}: does not pass VWAP/Volume filter.")
+        return
+
+    if not check_sector_allocation(ticker):
+        print(f"⚠️ Skipping {ticker}: exceeds sector allocation limit.")
         return
 
     df = get_data_alpaca(ticker)
@@ -643,6 +716,7 @@ def execute_trade(ticker, score):
             qty = 1
 
         if not has_position:
+            update_sector_allocation(ticker)
             api.submit_order(symbol=ticker, qty=qty, side="buy", type="market", time_in_force="gtc")
             print(f"✅ Bought {qty} of {ticker} at ${current_price:.2f} | Confidence: {score:.2f}")
             send_discord_alert(f"✅ Bought {qty} of {ticker} at ${current_price:.2f} | Confidence: {score:.2f}")
