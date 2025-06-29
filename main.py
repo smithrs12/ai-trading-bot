@@ -1,1152 +1,735 @@
-# ai_trading_bot.py
-
-# [FULLY INTEGRATED WITH ALL REQUESTED ENHANCEMENTS]
-# Includes: Reinforcement Learning, Market Regime Detection, Sentiment Scoring (Reddit + News),
-# Trade Cooldown, Position Sizing, Walk-forward Validation, Persistent Q-table, Discord Alerts,
-# Trade Logging, Backtesting Switch (manual), Feature Importance Logging
-# -*- coding: utf-8 -*-
+# main.py
 
 import os
-import ta
+import time
+import pytz
+import torch
+import joblib
+import random
+import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, time as dt_time
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volume import OnBalanceVolumeIndicator
+from datetime import datetime, timedelta
+from pytz import timezone
 from dotenv import load_dotenv
-import alpaca_trade_api as tradeapi
-import xgboost as xgb
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-import time
-import requests
-import warnings
-import stat
-import joblib
-import json
-import random
-import pytz
-import finnhub
-from ta.trend import SMAIndicator, MACD
-from ta.momentum import RSIIndicator, StochasticOscillator
-from ta.volatility import AverageTrueRange, BollingerBands
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+from alpaca_trade_api.rest import REST, TimeFrame
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from newsapi import NewsApiClient
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from transformers import pipeline
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import asyncio
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-def should_retrain_meta_model(max_age_hours=24):
-    model_path = "meta_model.pkl"
-    if not os.path.exists(model_path):
-        return True
-    last_modified = os.path.getmtime(model_path)
-    age_hours = (time.time() - last_modified) / 3600
-    return age_hours > max_age_hours
-
-def retrain_meta_model_from_sheet():
-    try:
-        sheet = gsheet_meta.open("meta_model_training").sheet1
-        records = sheet.get_all_records()
-        if len(records) < 10:
-            print("⚠️ Not enough data to retrain meta model.")
-            return
-        df = pd.DataFrame(records)
-        train_meta_model(df)
-        print("✅ Meta model retrained successfully.")
-        send_discord_message("🧠 Meta model retrained.")
-    except Exception as e:
-        print(f"❌ Failed to retrain meta model: {e}")
-        send_discord_message(f"❌ Meta model retraining failed: {e}")
-
-# Trade log credentials
-creds_trade = ServiceAccountCredentials.from_json_keyfile_name("trade_log_credentials.json", scope)
-gsheet_trade = gspread.authorize(creds_trade)
-
-# Meta model credentials
-creds_meta = ServiceAccountCredentials.from_json_keyfile_name("meta_credentials.json", scope)
-gsheet_meta = gspread.authorize(creds_meta)
-
-warnings.filterwarnings("ignore")
+# === Initialization ===
 load_dotenv()
+pacific = timezone('US/Pacific')
 
-DEBUG = True
-API_KEY = os.getenv("ALPACA_API_KEY")
-SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-BASE_URL = os.getenv("ALPACA_BASE_URL")
+# === API Keys & Setup ===
+ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL")
+api = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, base_url=ALPACA_BASE_URL)
+
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
-REDDIT_SECRET = os.getenv("REDDIT_SECRET")
-REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT")
-finnhub_client = finnhub.Client(api_key=os.getenv("FINNHUB_API_KEY"))
+newsapi = NewsApiClient(api_key=NEWS_API_KEY)
+analyzer = SentimentIntensityAnalyzer()
 
-if os.path.exists(".env"):
-    os.chmod(".env", stat.S_IRUSR | stat.S_IWUSR)
+# Google Sheets Setup
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials = ServiceAccountCredentials.from_json_keyfile_name("gspread.json", scope)
+gc = gspread.authorize(credentials)
+sheet = gc.open("MetaModelLog").sheet1
 
-api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
-
-SECTOR_MAP = {
-    "AAPL": "Technology", "MSFT": "Technology", "GOOG": "Technology", "NVDA": "Technology", "AMD": "Technology",
-    "META": "Communication", "SNAP": "Communication", "DIS": "Communication",
-    "TSLA": "Consumer", "F": "Consumer", "RIVN": "Consumer", "CHWY": "Consumer",
-    "PLTR": "Tech", "UBER": "Transport", "COIN": "Finance", "SHOP": "Tech",
-    "INTC": "Semiconductors", "MARA": "Crypto", "SOFI": "Finance", "SIRI": "Media",
-    "CHPT": "Energy", "OPEN": "RealEstate", "PINS": "Social", "LCID": "EV", "CGC": "Cannabis"
-}
-
-MAX_POSITION_PCT = 0.2
-CONFIDENCE_THRESHOLD = 0.8
-STOP_LOSS_THRESHOLD = 0.05
-TRADE_LOG_FILE = "trade_history.csv"
-MODEL_DIR = "models"
-FEATURE_DIR = "feature_importance"
-TRADE_CACHE_FILE = "last_trades.json"
-Q_TABLE_FILE = "q_table.json"
-BACKTESTING = False
-
-def is_market_open():
+# === Utility ===
+def send_discord_alert(message):
     try:
-        clock = api.get_clock()
-        return clock.is_open
-    except Exception as e:
-        print(f"⚠️ Market status check failed: {e}")
-        return False
-     
-if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
-if not os.path.exists(FEATURE_DIR): os.makedirs(FEATURE_DIR)
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    except:
+        pass
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-
-def log_trade_to_gsheet(ts, ticker, action, qty, price):
-    try:
-        sheet = gsheet_trade.open("trade_history").sheet1  # Update sheet name if needed
-        sheet.append_row([ts, ticker, action, qty, price])
-    except Exception as e:
-        print(f"⚠️ Failed to log trade to Google Sheets: {e}")
-
-def log_meta_model_metrics(ticker, acc, prec, rec, date_str=None):
-    try:
-        if not date_str:
-            date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet = gsheet_meta.open("meta_model_log").sheet1  # Update sheet name if needed
-        sheet.append_row([date_str, ticker, acc, prec, rec])
-    except Exception as e:
-        print(f"⚠️ Failed to log meta model metrics: {e}")
-
-def log_meta_training_row(features_dict):
-    try:
-        sheet = gsheet_meta.open("meta_model_training").sheet1
-        sheet.append_row([features_dict[k] for k in features_dict])
-    except Exception as e:
-        print(f"⚠️ Failed to log meta training row: {e}")
-
-def train_meta_model(df):
-    features = df.drop(columns=["final_outcome"])
-    labels = df["final_outcome"]
-    model = xgb.XGBClassifier(eval_metric="logloss")
-    model.fit(features, labels)
-    joblib.dump(model, "meta_model.pkl")
-
-def log_trade(ts, ticker, action, qty, price):
-    account = api.get_account()
-    row = pd.DataFrame([[
-        ts, ticker, action, qty, price, account.buying_power, account.equity
-    ]], columns=[
-        "timestamp", "ticker", "action", "qty", "price", "buying_power", "equity"
-    ])
-    row.to_csv(TRADE_LOG_FILE,
-               mode='a',
-               header=not os.path.exists(TRADE_LOG_FILE),
-               index=False)
-
-    # Also log to Google Sheet
-    log_trade_to_gsheet(ts, ticker, action, qty, price)
-
-def log_pnl(ticker, qty, price, direction, entry_price, model_type):
-    pnl = (price - entry_price) * qty if direction == "SELL" else 0
-    row = pd.DataFrame([[
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ticker,
-        direction,
-        qty,
-        price,
-        entry_price,
-        pnl,
-        model_type
-    ]], columns=[
-        "timestamp", "ticker", "direction", "qty", "price", "entry_price", "pnl", "model_type"
-    ])
-    row.to_csv("pnl_tracker.csv", mode='a', header=not os.path.exists("pnl_tracker.csv"), index=False)
-
-def send_discord_message(msg):
-    if DISCORD_WEBHOOK_URL:
-        try:
-            requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
-        except:
-            pass
-
-def get_market_regime():
-    spy = get_data("SPY", days=10)
-    if spy is None: return regime_cache["type"]
-    ma20 = spy["Close"].rolling(20).mean()
-    volatility = spy["Close"].pct_change().rolling(20).std()
-    if spy.Close.iloc[-1] > ma20.iloc[-1] and volatility.iloc[-1] < 0.02:
-        regime = "bull"
-    elif spy.Close.iloc[-1] < ma20.iloc[-1] and volatility.iloc[-1] > 0.03:
-        regime = "bear"
-    else:
-        regime = "sideways"
-    regime_cache["last"] = datetime.now()
-    regime_cache["type"] = regime
-    return regime
-
-# Q-Table Logic
-q_table = json.load(open(Q_TABLE_FILE)) if os.path.exists(Q_TABLE_FILE) else {}
-
-def reward_function(action, entry_price=None, exit_price=None):
-    if action == 1:
-        return 0  # No reward at buy time
-    elif action == 0 and entry_price is not None and exit_price is not None:
-        return (exit_price - entry_price) / entry_price
-    return -1  # Penalty for invalid input
-    
-import torch
-import torch.nn as nn
-import torch.optim as optim
-
-class QNetwork(nn.Module):
-    def __init__(self, input_dim=2, hidden_dim=16):
+# === Reinforcement Learning ===
+class QNetwork(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim=64):
         super(QNetwork, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
-        )
+        self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
+        self.relu = torch.nn.ReLU()
+        self.fc2 = torch.nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
-        return self.net(x)
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        return x
 
-q_net = QNetwork()
-q_optimizer = optim.Adam(q_net.parameters(), lr=0.001)
-loss_fn = nn.MSELoss()
+q_net = QNetwork(input_dim=4)  # adjust input_dim based on q_state features
+q_net.load_state_dict(torch.load("q_net.pth"))
+q_net.eval()
 
-def q_state(ticker, action):
-    return torch.tensor([
-        hash(ticker) % 100000 / 100000.0,  # Normalize ticker hash
-        float(action)
-    ], dtype=torch.float32)
-
-def update_q_nn(ticker, action, reward):
-    state = q_state(ticker, action).unsqueeze(0)
-    predicted = q_net(state)
-    target = torch.tensor([[reward]], dtype=torch.float32)
-    loss = loss_fn(predicted, target)
-    q_optimizer.zero_grad()
-    loss.backward()
-    q_optimizer.step()
-
-# Regime Detection
-regime_cache = {"last": None, "type": "unknown"}
-from newsapi import NewsApiClient
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import praw
-
-# Set up the sentiment analyzer and News API client (these must come first)
-analyzer = SentimentIntensityAnalyzer()
-newsapi = NewsApiClient(api_key=NEWS_API_KEY)
-reddit = praw.Reddit(client_id=os.getenv("REDDIT_CLIENT_ID"),
-                     client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                     user_agent=os.getenv("REDDIT_USER_AGENT"))
-
-
-# ✅ Add this new helper function BEFORE get_sentiment_score()
-def get_news_sentiment(ticker):
+def q_state(ticker, position):
     try:
-        url = f"https://newsapi.org/v2/everything?q={ticker}&apiKey={NEWS_API_KEY}"
-        response = requests.get(url)
-        data = response.json()
-        headlines = [article['title'] for article in data.get('articles', [])]
-        if not headlines:
-            raise ValueError("No headlines found.")
-        scores = [
-            analyzer.polarity_scores(title)["compound"] for title in headlines
-        ]
-        return np.mean(scores)
-    except Exception as e:
-        if "No headlines found." not in str(e):
-            print(f"⚠️ News sentiment error for {ticker}: {e}")
-    return 0
+        barset = api.get_bars(ticker, TimeFrame.Minute, limit=5).df
+        if barset.empty:
+            return torch.zeros(4)
+        change = (barset.close.iloc[-1] - barset.close.iloc[0]) / barset.close.iloc[0]
+        avg_volume = barset.volume.mean()
+        last_volume = barset.volume.iloc[-1]
+        rsi = RSIIndicator(close=barset.close).rsi().iloc[-1] / 100.0
+        state = torch.tensor([change, avg_volume / 1e6, last_volume / 1e6, rsi], dtype=torch.float32)
+        return state
+    except:
+        return torch.zeros(4)
 
-
-# ✅ Your existing combined sentiment scoring function
-def get_sentiment_score(ticker):
-    score = 0
-    count = 0
-
-    # --- News Sentiment ---
+# === Model Training ===
+def train_model(df, horizon, ticker):
     try:
-        score += get_news_sentiment(ticker)
-        count += 1
-    except Exception as e:
-        print(f"⚠️ News sentiment error for {ticker}: {e}")
+        if df is None or len(df) < 30:
+            print(f"⚠️ Not enough data to train {ticker} ({horizon})")
+            return None
 
-    # --- Reddit Sentiment ---
-    try:
-        subreddit = reddit.subreddit("stocks")
-        for submission in subreddit.search(ticker, limit=5):
-            score += analyzer.polarity_scores(submission.title)["compound"]
-            count += 1
-    except Exception as e:
-        print(f"⚠️ Reddit sentiment error for {ticker}: {e}")
-
-    return score / count if count > 0 else 0
-
-def get_risk_events(ticker):
-    try:
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        events = []
-
-        # ✅ Earnings calendar (fixed: added symbol argument)
-        earnings = finnhub_client.earnings_calendar(symbol=ticker, _from=today, to=today)
-        for event in earnings.get("earningsCalendar", []):
-            if event.get("symbol") == ticker:
-                events.append("Earnings Today")
-
-        # ✅ Analyst ratings
-        ratings = finnhub_client.recommendation_trends(ticker)
-        if ratings:
-            latest = ratings[0]
-            if latest.get("sell", 0) > latest.get("buy", 0):
-                events.append("Bearish Analyst Rating")
-
-        return events
-    except Exception as e:
-        print(f"⚠️ Risk event check failed for {ticker}: {e}")
-        return []
-
-def is_high_risk_news_day():
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    try:
-        if os.path.exists("risk_events.json"):
-            with open("risk_events.json") as f:
-                data = json.load(f)
-            return today in data.get("high_risk_days", [])
-    except Exception as e:
-        print(f"⚠️ Failed to check news suppression: {e}")
-    return False
-        
-def calculate_vwap(df):
-    try:
-        pv = df["Close"] * df["Volume"]
-        cumulative_pv = pv.cumsum()
-        cumulative_volume = df["Volume"].cumsum()
-        df["vwap"] = cumulative_pv / cumulative_volume
-        return df
-    except Exception as e:
-        print(f"⚠️ VWAP calculation failed: {e}")
-        return df
-
-def get_data(ticker, start=None, end=None, timeframe="1Min", limit=1000, days=None):
-    try:
-        if days:
-            start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            end = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-            bars = api.get_bars(ticker, timeframe, start=start, end=end, adjustment='raw', feed='iex')
-        else:
-            bars = api.get_bars(ticker, timeframe, limit=limit, adjustment='raw', feed='iex')
-
-        # Convert to dataframe
-        df = bars.df if hasattr(bars, "df") else pd.DataFrame(bars)
-
-        # ✅ Fix multi-index (symbol, timestamp)
-        if isinstance(df.index, pd.MultiIndex):
-            df = df.xs(ticker, level="symbol")
-
-        # ✅ Rename columns if needed
-        rename_map = {
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume"
-        }
-        df.rename(columns=rename_map, inplace=True)
-
-        # ✅ Ensure required columns exist
-        required_cols = ["Open", "High", "Low", "Close", "Volume"]
-        if not all(col in df.columns for col in required_cols):
-            raise ValueError(f"Missing required columns in data for {ticker}")
-
-        df.index.name = "timestamp"
-        df = df.sort_index()
-
-        # ✅ Add indicators
-        df["sma"] = SMAIndicator(df["Close"], window=14).sma_indicator()
-        df["rsi"] = RSIIndicator(df["Close"], window=14).rsi()
-        macd = MACD(df["Close"])
-        df["macd"] = macd.macd()
-        df["macd_diff"] = macd.macd_diff()
-        stoch = StochasticOscillator(df["High"], df["Low"], df["Close"])
-        df["stoch"] = stoch.stoch()
-        df["atr"] = AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
-        df["bb_bbm"] = BollingerBands(df["Close"]).bollinger_mavg()
-
-        df["vwap"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
-        df["hour"] = df.index.hour
-        df["minute"] = df.index.minute
-        df["dayofweek"] = df.index.dayofweek
-
-        return df.dropna()
-
-    except Exception as e:
-        print(f"⚠️ Failed to get data for {ticker}: {e}")
-        return None
-
-def detect_support_resistance(df, window=20, tolerance=0.01):
-    try:
-        recent_high = df["High"].rolling(window).max().iloc[-1]
-        recent_low = df["Low"].rolling(window).min().iloc[-1]
-        current_price = df["Close"].iloc[-1]
-        
-        near_resistance = abs(current_price - recent_high) / recent_high < tolerance
-        near_support = abs(current_price - recent_low) / recent_low < tolerance
-
-        return near_support, near_resistance
-    except Exception as e:
-        print(f"⚠️ Support/resistance detection failed: {e}")
-        return False, False
-
-def load_trade_cache():
-    return json.load(
-        open(TRADE_CACHE_FILE)) if os.path.exists(TRADE_CACHE_FILE) else {}
-
-
-def save_trade_cache(cache):
-    json.dump(cache, open(TRADE_CACHE_FILE, "w"))
-
-def kelly_position_size(prob, price, equity, atr=None, ref_atr=0.5):
-    edge = 2 * prob - 1
-    if edge <= 0 or atr is None or atr == 0:
-        return 0
-
-    kelly_fraction = min(edge, MAX_POSITION_PCT)
-    base_allocation = equity * kelly_fraction
-    base_size = base_allocation // price
-
-    # Volatility adjustment (scale down if ATR is high)
-    atr_adjustment = ref_atr / atr
-    adjusted_size = int(base_size * atr_adjustment)
-    return max(adjusted_size, 0)
-
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-    
-def is_model_stale(ticker, max_age_hours=6):
-    path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
-    if not os.path.exists(path):
-        return True
-    last_modified = os.path.getmtime(path)
-    age_hours = (time.time() - last_modified) / 3600
-    return age_hours > max_age_hours
-
-from sklearn.utils.validation import check_is_fitted  # ✅ Add this import at the top of your file
-
-def train_model(ticker, df):
-    try:
-        df["future_return"] = df["Close"].shift(-3) / df["Close"] - 1
-        df["target"] = (df["future_return"] > 0.01).astype(int)
-        df.dropna(inplace=True)
-
-        features = [
-            "sma", "rsi", "macd", "macd_diff", "stoch", "atr", "bb_bbm",
-            "hour", "minute", "dayofweek"
-        ]
-        X, y = df[features], df["target"]
-
-        if len(X) < 60 or y.nunique() < 2:
-            print(f"⚠️ Only one class present or not enough data for {ticker}")
-            return None, None
+        X = df.drop(columns=["Target"])
+        y = df["Target"]
 
         model = VotingClassifier(estimators=[
-            ('xgb', xgb.XGBClassifier(eval_metric='logloss', use_label_encoder=False)),
-            ('log', LogisticRegression(max_iter=1000)),
-            ('rf', RandomForestClassifier(n_estimators=100))
-        ], voting='soft', weights=[3, 1, 2])
+            ('lr', LogisticRegression(max_iter=1000)),
+            ('rf', RandomForestClassifier(n_estimators=100)),
+            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
+        ], voting='soft')
 
-        # 🔁 Train the ensemble
         model.fit(X, y)
 
-        # 🔁 Manually fit each sub-model (important for XGB)
-        for name, est in model.estimators:
-            if hasattr(est, "fit") and not hasattr(est, "classes_"):
-                est.fit(X, y)
+        os.makedirs(f"models/{horizon}", exist_ok=True)
+        joblib.dump(model, f"models/{horizon}/{ticker}.pkl")
 
-        # ✅ Validate that model is fitted
-        check_is_fitted(model)
-        print(f"✅ Model for {ticker} successfully trained and validated.")
-        return model, features
+        return model
 
     except Exception as e:
-        print(f"⚠️ Error training model for {ticker}: {e}")
+        print(f"❌ Training failed for {ticker} ({horizon}): {e}")
+        send_discord_alert(f"❌ Training failed for {ticker} ({horizon}): {e}")
+        return None
+
+# === Data Fetching ===
+def get_data(ticker, days=2):
+    try:
+        end_dt = datetime.now(pytz.utc)
+        start_dt = end_dt - timedelta(days=days)
+        bars = api.get_bars(ticker, TimeFrame.Minute, start=start_dt.isoformat(), end=end_dt.isoformat()).df
+        if bars.empty:
+            return None
+
+        bars = bars[bars['volume'] > 0].copy()
+        bars["RSI"] = RSIIndicator(close=bars["close"], window=14).rsi()
+        bars["MACD"] = MACD(close=bars["close"]).macd_diff()
+        bars["OBV"] = OnBalanceVolumeIndicator(close=bars["close"], volume=bars["volume"]).on_balance_volume()
+        bars["Target"] = (bars["close"].shift(-5) > bars["close"]).astype(int)
+        bars = bars.dropna()
+
+        return bars
+    except Exception as e:
+        print(f"Data fetch failed for {ticker}: {e}")
+        return None
+
+# === Prediction ===
+def dual_horizon_predict(ticker, df):
+    try:
+        if df is None or df.empty:
+            return None, None
+        X = df.drop(columns=["Target"])
+
+        short_model_path = f"models/short/{ticker}.pkl"
+        mid_model_path = f"models/medium/{ticker}.pkl"
+
+        if not os.path.exists(short_model_path) or not os.path.exists(mid_model_path):
+            return None, None
+
+        short_model = joblib.load(short_model_path)
+        mid_model = joblib.load(mid_model_path)
+
+        short_proba = short_model.predict_proba([X.iloc[-1]])[0][1]
+        mid_proba = mid_model.predict_proba([X.iloc[-1]])[0][1]
+        return short_proba, mid_proba
+    except Exception as e:
+        print(f"Prediction failed for {ticker}: {e}")
         return None, None
 
-def predict_weighted_proba(models, weights, X):
-    total_weight = sum(weights)
-    if total_weight == 0:
-        return 0.5  # fallback
-    probs = [model.predict_proba(X)[0][1] for model in models]
-    weighted_avg = sum(w * p for w, p in zip(weights, probs)) / total_weight
-    return weighted_avg
+# === Main Loop ===
+def is_market_open():
+    clock = api.get_clock()
+    return clock.is_open
 
-def predict(ticker, model, features):
-    try:
-        df = get_data(ticker, days=5, timeframe="5Min")
-        if df is None or len(df) < 50:
-            print(f"⚠️ Not enough data to make prediction for {ticker}")
-            return 0, None, None
+def run_trading_loop():
+    used_sectors = set()
+    cooldown = {}
 
-        missing = [f for f in features if f not in df.columns]
-        if missing:
-            print(f"⚠️ Missing features in {ticker} data: {missing}")
-            return 0, None, None
+    while True:
+        now = datetime.now(pacific)
+        if now.hour == 13 and now.minute >= 0:
+            print("⏹️ Market closing soon, stopping bot.")
+            send_discord_alert("📉 End of trading day.")
+            break
 
-        if df[features].dropna().empty:
-            print(f"⚠️ Feature data is empty after dropping NA for {ticker}")
-            return 0, None, None
-
-        X = df[features].iloc[-1:].fillna(0)
-
-        if isinstance(model, VotingClassifier):
-            for name, est in model.estimators:
-                if not hasattr(est, "predict_proba") or not hasattr(est, "classes_"):
-                    print(f"⚠️ Estimator {name} not ready for {ticker}")
-                    return 0, None, None
-            weights = model.weights if hasattr(model, "weights") else [1] * len(model.estimators)
-            probs = np.array([est.predict_proba(X)[0][1] for _, est in model.estimators])
-            proba = np.average(probs, weights=weights)
-        else:
-            if not hasattr(model, "predict_proba") or not hasattr(model, "classes_"):
-                print(f"⚠️ Model not fitted or invalid for {ticker}")
-                return 0, None, None
-            proba = model.predict_proba(X)[0][1]
-
-        return int(proba > 0.5), df.iloc[-1], proba
-
-    except Exception as e:
-        print(f"⚠️ Prediction failed for {ticker}: {e}")
-        return 0, None, None
-
-def execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df):
-    print(f"🚀 Executing trade for {ticker}", flush=True)
-    try:
-        # Get current position if exists
-        try:
-            position = api.get_position(ticker)
-        except:
-            position = None
-
-        current_price = api.get_latest_bar(ticker).c
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # ---- RL-driven HOLD logic ----
-        if position:
-            _price = float(position.avg_entry_price)
-            gain = (current_price - _price) / _price
-            state = q_state(ticker, 1).unsqueeze(0)
-            hold_value = q_net(state).item()
-            if hold_value > 0.3 and gain > 0 and proba > 0.55:
-                print(f"⏸️ RL prefers to hold {ticker} (Q={hold_value:.2f})")
-                return
-
-        # ---- Cooldown Check ----
-        if ticker in cooldown_cache:
-            last_trade = cooldown_cache[ticker]
-            last_time = datetime.strptime(last_trade["timestamp"], "%Y-%m-%d %H:%M:%S")
-            last_conf = last_trade.get("confidence", 0.5)
-            cooldown_secs = int(600 + 600 * last_conf)
-            if (datetime.now() - last_time).seconds < cooldown_secs:
-                print(f"⏳ Adaptive cooldown active for {ticker} ({cooldown_secs//60} min)")
-                return
-
-        equity = float(api.get_account().equity)
-        max_dollars = equity * MAX_POSITION_PCT
-        atr = latest_row.get("atr", 0.5)
-        sentiment = get_sentiment_score(ticker)
-        price_change = latest_row["Close"] - latest_row["Open"]
-
-        # ---- Safe volume_ratio ----
-        if len(df) >= 22:
-            volume_mean = df["Volume"].rolling(20).mean().iloc[-2]
-        else:
-            volume_mean = max(df["Volume"].mean(), 1)
-        volume_ratio = latest_row["Volume"] / volume_mean
-
-        qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
-        if qty <= 0:
-            print(f"❌ Position size for {ticker} is 0. Skipping trade.")
-            return
-
-        # ---- BUY logic ----
-        if prediction == 1 and (not position or float(position.market_value) < max_dollars):
-            try:
-                if os.path.exists("meta_model.pkl"):
-                    meta_model = joblib.load("meta_model.pkl")
-                    meta_features = pd.DataFrame([{
-                        "proba_short": proba,
-                        "sentiment": sentiment,
-                        "price_change": price_change,
-                        "atr": atr,
-                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                        "volume_ratio": volume_ratio,
-                    }])
-                    meta_pred = meta_model.predict(meta_features)[0]
-                    if meta_pred == 0:
-                        print(f"⛔ Meta model vetoed the trade for {ticker}.")
-                        send_discord_message(f"⛔ Meta model vetoed trade for {ticker}")
-                        return
-            except Exception as e:
-                print(f"⚠️ Meta model check failed for {ticker}: {e}")
-
-            try:
-                print(f"📥 Placing BUY order for {qty} shares of {ticker} at ${current_price:.2f}")
-                api.submit_order(
-                    symbol=ticker,
-                    qty=qty,
-                    side="buy",
-                    type="market",
-                    time_in_force="gtc"
-                )
-                send_discord_message(
-                    f"🟢 Bought {qty} shares of {ticker} at ${current_price:.2f} (Conf: {proba:.2f}, Sentiment: {sentiment:+.2f})"
-                )
-                log_trade(timestamp, ticker, "BUY", qty, current_price)
-                cooldown_cache[ticker] = {
-                    "timestamp": timestamp,
-                    "confidence": float(min(proba + 0.1, 1.0))
-                }
-                log_pnl(ticker, qty, current_price, "BUY", current_price, "short")
-                update_q_nn(ticker, 1, reward_function(1, proba - 0.5))
-
-                try:
-                    meta_log = {
-                        "proba_short": proba,
-                        "sentiment": sentiment,
-                        "price_change": price_change,
-                        "atr": atr,
-                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                        "volume_ratio": volume_ratio,
-                        "final_outcome": 1
-                    }
-                    log_meta_training_row(meta_log)
-                except Exception as e:
-                    print(f"⚠️ Failed to log meta training row for {ticker}: {e}")
-            except Exception as e:
-                print(f"🚨 Order placement failed for {ticker}: {e}")
-                send_discord_message(f"🚨 Order failed for {ticker}: {e}")
-                return
-
-        # ---- ADDITIONAL BUY (Pyramiding) ----
-        pyramiding_count = cooldown_cache.get(ticker, {}).get("adds", 0)
-        if (
-            prediction == 1 and position and
-            float(position.market_value) < max_dollars and
-            proba > 0.8 and price_change > 0 and
-            pyramiding_count < 2
-        ):
-            additional_qty = kelly_position_size(proba, current_price, equity, atr=atr, ref_atr=0.5)
-            if additional_qty <= 0:
-                print(f"❌ Additional qty is 0 for {ticker}. Skipping.")
-                return
-
-            try:
-                if os.path.exists("meta_model.pkl"):
-                    meta_model = joblib.load("meta_model.pkl")
-                    meta_features = pd.DataFrame([{
-                        "proba_short": proba,
-                        "sentiment": sentiment,
-                        "price_change": price_change,
-                        "atr": atr,
-                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                        "volume_ratio": volume_ratio,
-                    }])
-                    meta_pred = meta_model.predict(meta_features)[0]
-                    if meta_pred == 0:
-                        print(f"⛔ Meta model vetoed pyramiding for {ticker}.")
-                        send_discord_message(f"⛔ Meta model vetoed pyramiding for {ticker}")
-                        return
-            except Exception as e:
-                print(f"⚠️ Meta model check failed for {ticker}: {e}")
-
-            try:
-                api.submit_order(
-                    symbol=ticker,
-                    qty=additional_qty,
-                    side="buy",
-                    type="market",
-                    time_in_force="gtc"
-                )
-                send_discord_message(
-                    f"🔼 Added {additional_qty} more shares to {ticker} at ${current_price:.2f} (Strong signal)"
-                )
-                log_trade(timestamp, ticker, "BUY_MORE", additional_qty, current_price)
-                log_pnl(ticker, additional_qty, current_price, "BUY", current_price, "short")
-                cooldown_cache[ticker] = {
-                    "timestamp": timestamp,
-                    "confidence": float(min(proba + 0.1, 1.0)),
-                    "adds": pyramiding_count + 1
-                }
-                update_q_nn(ticker, 1, reward_function(1, (proba - 0.5) * 1.5))
-                try:
-                    meta_log = {
-                        "proba_short": proba,
-                        "sentiment": sentiment,
-                        "price_change": price_change,
-                        "atr": atr,
-                        "vwap_diff": latest_row["Close"] - latest_row["vwap"],
-                        "volume_ratio": volume_ratio,
-                        "final_outcome": 1
-                    }
-                    log_meta_training_row(meta_log)
-                except Exception as e:
-                    print(f"⚠️ Failed to log pyramiding meta row for {ticker}: {e}")
-            except Exception as e:
-                print(f"🚨 Order placement failed for pyramiding {ticker}: {e}")
-                send_discord_message(f"🚨 Pyramiding order failed for {ticker}: {e}")
-                return
-
-    except Exception as e:
-        print(f"🚨 execute_trade crashed for {ticker}: {e}")
-        send_discord_message(f"🚨 execute_trade crashed for {ticker}: {e}")
-
-        # ---- SELL logic ----
-        if prediction == 0 and position:
-            try:
-                _price = float(position.avg_entry_price)
-                regime = get_market_regime()
-                volatility = latest_row.get("atr", 0.5)
-                confidence_factor = proba
-
-                base_stop_loss = 1.2 * volatility / current_price
-                base_profit_target = 2.5 * volatility / current_price
-
-                if regime == "bull":
-                    stop_loss_pct = base_stop_loss * (1 - confidence_factor * 0.3)
-                    profit_take_pct = base_profit_target * (1 + confidence_factor * 0.5)
-                elif regime == "bear":
-                    stop_loss_pct = base_stop_loss * (1 + (1 - confidence_factor) * 0.4)
-                    profit_take_pct = base_profit_target * (1 - (1 - confidence_factor) * 0.3)
-                else:
-                    stop_loss_pct = base_stop_loss
-                    profit_take_pct = base_profit_target
-
-                stop_loss_pct = min(max(stop_loss_pct, 0.01), 0.07)
-                profit_take_pct = min(max(profit_take_pct, 0.03), 0.12)
-
-                stop_loss_price = _price * (1 - stop_loss_pct)
-                profit_target_price = _price * (1 + profit_take_pct)
-                gain = (current_price - _price) / _price
-
-                # Profit target reached
-                if current_price >= profit_target_price and proba < 0.6:
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    send_discord_message(f"💰 Took profit on {position.qty} shares of {ticker} at ${current_price:.2f} (Gain: {gain:.2%})")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
-
-                # Dynamic Trailing Stop
-                trailing_atr_factor = 1.5 if gain < 0.05 else 2.5
-                trailing_stop_price = current_price - (volatility * trailing_atr_factor)
-                if current_price < trailing_stop_price:
-                    send_discord_message(f"🔻 {ticker} hit dynamic trailing stop at ${current_price:.2f}.")
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
-
-                # Profit Decay
-                time_held_minutes = 0
-                entry_time_str = cooldown_cache.get(ticker, {}).get("timestamp")
-                if entry_time_str:
-                    time_held_minutes = (datetime.now() - datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
-
-                gain_pct = (current_price - _price) / _price
-                if 0 < gain_pct < 0.02 and time_held_minutes > 60:
-                    send_discord_message(f"📉 Exiting {ticker} due to fading profits ({gain_pct:.2%}) after {time_held_minutes:.0f} mins.")
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, _price, current_price))
-                    return
-
-                # Stop-loss or confidence drop
-                if current_price <= stop_loss_price or proba < 0.4:
-                    api.submit_order(symbol=ticker, qty=int(position.qty), side="sell", type="market", time_in_force="gtc")
-                    send_discord_message(f"🔴 Sold {position.qty} of {ticker} at ${current_price:.2f} (SL or Sell Signal)")
-                    log_trade(timestamp, ticker, "SELL", int(position.qty), current_price)
-                    log_pnl(ticker, int(position.qty), current_price, "SELL", _price, "short")
-                    update_q_nn(ticker, 0, reward_function(0, 0.5 - proba))
-                    return
-
-            except Exception as e:
-                print(f"⚠️ Sell logic failed for {ticker}: {e}")
-
-TICKER_UNIVERSE = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "NFLX", "BABA",
-    "JPM", "BAC", "WFC", "C", "GS", "PYPL", "SQ", "SHOP", "COIN", "RIOT", "MARA",
-    "PLTR", "SNAP", "UBER", "LYFT", "F", "GM", "XOM", "CVX", "OXY", "CCL", "UAL",
-    "DAL", "AAL", "BA", "NCLH", "INTC", "QCOM", "TSM", "SPY", "QQQ", "SOFI", "SIRI",
-    "OPEN", "CHPT", "RUN", "NIO", "LCID", "RIVN", "T", "VZ", "DIS", "TGT", "WMT",
-    "BBBYQ", "GME", "AMC", "DKNG", "ROKU", "ZM", "PINS", "CRWD", "NET", "ZS", "DOCU",
-    "TWLO", "FSLR", "ENPH", "NEE", "TLRY", "CGC", "SNDL", "ARKK", "SPWR", "BB", "MVIS"
-]
-
-def generate_watchlist(limit=8):
-    final_scores = {}
-
-    for ticker in TICKER_UNIVERSE:
-        try:
-            df = get_data(ticker, days=5)
-            if df is None or len(df) < 50:
-                continue
-
-            required_cols = {"Close", "Volume", "High", "Low", "Open"}
-            if not required_cols.issubset(df.columns):
-                continue
-
-            df["sma_20"] = df["Close"].rolling(20).mean()
-            df["rsi"] = compute_rsi(df["Close"])
-            df["atr"] = ta.volatility.AverageTrueRange(
-                df["High"], df["Low"], df["Close"], window=14
-            ).average_true_range()
-
-            latest = df.iloc[-1]
-            prev = df.iloc[-2]
-
-            if latest["Close"] <= prev["Close"]:
-                continue
-            if latest["Close"] < latest["sma_20"]:
-                continue
-            avg_volume = df["Volume"].rolling(20).mean().iloc[-2]
-            if latest["Volume"] < 1.2 * avg_volume:
-                continue
-            sentiment = get_sentiment_score(ticker)
-            if sentiment < 0:
-                continue
-            if not (30 < latest["rsi"] < 70):
-                continue
-            atr_ratio = latest["atr"] / latest["Close"]
-            if not (0.005 < atr_ratio < 0.15):
-                continue
-            if latest["Close"] < 1:
-                continue
-
-            rsi_score = 100 - abs(latest["rsi"] - 50)
-            volume_score = latest["Volume"] / (avg_volume + 1)
-            momentum_score = latest["Close"] - prev["Close"]
-            total_score = (rsi_score * 0.4) + (volume_score * 20) + (momentum_score * 3)
-            final_scores[ticker] = total_score
-
-        except Exception as e:
-            print(f"⚠️ Error evaluating {ticker}: {e}")
+        if now.hour < 6 or (now.hour == 6 and now.minute < 30):
+            print("⏳ Waiting for market to open...")
+            time.sleep(60)
             continue
 
-    sorted_tickers = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
-    top_tickers = [t[0] for t in sorted_tickers[:limit]]
-    print(f"✅ Watchlist contains: {top_tickers}")
-    return top_tickers
-
-def liquidate_positions():
-    for pos in api.list_positions():
-        try:
-            qty = int(float(pos.qty))
-            if qty > 0:
-                api.submit_order(
-                    symbol=pos.symbol,
-                    qty=qty,
-                    side="sell",
-                    type="market",
-                    time_in_force="gtc"
-                )
-                log_trade(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pos.symbol, "SELL", qty, float(pos.market_value) / qty)
-                send_discord_message(f"⏳ Auto-liquidated {qty} shares of {pos.symbol} before close.")
-        except Exception as e:
-            print(f"❌ Error liquidating {pos.symbol}: {e}")
+        tickers = get_dynamic_watchlist()
+        for ticker in tickers:
+            df_short = get_data(ticker, days=2)
+            df_mid = get_data(ticker, days=15)
             
-def send_end_of_day_summary():
-    # ⏳ Only run after 3 PM Eastern (adjust timezone if needed)
-    now = datetime.utcnow()
-    if now.hour < 19:  # 19 UTC = 3 PM Eastern
-        print("⏳ Market still open. Skipping end-of-day summary.")
-        return
+            if not os.path.exists(f"models/short/{ticker}.pkl"):
+                train_model(df_short, "short", ticker)
+            if not os.path.exists(f"models/medium/{ticker}.pkl"):
+                train_model(df_mid, "medium", ticker)
 
-    if not os.path.exists(TRADE_LOG_FILE):
-        send_discord_message("📉 No trades executed today.")
-        return
+            short_proba, mid_proba = dual_horizon_predict(ticker, df_short)
+            if short_proba and mid_proba:
+                score = (short_proba + mid_proba) / 2
+                if score > 0.6:
+                    state = q_state(ticker, 1).unsqueeze(0)
+                    q_val = q_net(state).item()
+                    if q_val > 0.3:
+                        print(f"🧠 RL approves {ticker} (Q={q_val:.2f})")
+                        execute_trade(ticker, score)
+                    else:
+                        print(f"🛑 RL rejects {ticker} (Q={q_val:.2f})")
 
-    df = pd.read_csv(TRADE_LOG_FILE)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    today = datetime.utcnow().date()
-    df_today = df[df["timestamp"].dt.date == today]
+        time.sleep(300)
 
-    if df_today.empty:
-        send_discord_message("📉 No trades executed today.")
-        return
-            
-    candidates = []
-    for ticker in UNIVERSE:
+# === Q-Learning Update ===
+def update_q_network_from_log():
+    try:
+        if not os.path.exists("trade_outcomes.csv"):
+            print("📭 No trade outcome log found.")
+            return [], []
+
+        df = pd.read_csv("trade_outcomes.csv", header=None)
+        df.columns = ["timestamp", "ticker", "price", "score", "action", "result", "sentiment", "regime"]
+        df = df.dropna(subset=["ticker", "price", "action"])
+
+        rewards = {
+            "profit": 1.0,
+            "loss": -1.0,
+            "decay": -0.3,
+            "": 0.0
+        }
+
+        learning_rate = 0.01
+        gamma = 0.95
+
+        log_q_values = []
+        trade_summary = []
+        meta_data = []
+
+        for _, row in df.iterrows():
+            state = q_state(row["ticker"], 1).unsqueeze(0)
+            old_q = q_net(state)
+            reward = rewards.get(row["result"], 0.0)
+            new_q = old_q + learning_rate * (reward + gamma * old_q.detach() - old_q)
+            q_net.zero_grad()
+            loss = torch.nn.functional.mse_loss(old_q, new_q.detach())
+            loss.backward()
+            for param in q_net.parameters():
+                param.data -= learning_rate * param.grad
+
+            log_q_values.append((row["timestamp"], row["ticker"], old_q.item(), reward))
+            trade_summary.append((row["ticker"], row["price"], row["result"]))
+
+            meta_data.append([
+                row["ticker"],
+                row["score"],
+                row["sentiment"],
+                row["regime"],
+                1 if row["result"] == "profit" else 0
+            ])
+
+        torch.save(q_net.state_dict(), "q_net.pth")
+        print("✅ Q-network updated from trade outcomes.")
+
+        with open("q_evolution_log.csv", "a") as f:
+            for ts, ticker, q_val, r in log_q_values:
+                f.write(f"{ts},{ticker},{q_val:.4f},{r}\n")
+
+        # Save meta training data
+        meta_df = pd.DataFrame(meta_data, columns=["ticker", "score", "sentiment", "regime", "label"])
+        meta_df.to_csv("meta_training_data.csv", mode="a", index=False, header=not os.path.exists("meta_training_data.csv"))
+
+        # Auto-train meta model
         try:
-            df = get_data(ticker, limit=1000, timeframe="5Min")
-            if df is None or len(df) < 5: continue
-
-            ret = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
-            sentiment = get_sentiment_score(ticker)
-            atr = df["atr"].iloc[-1]
-            volume = df["Volume"].rolling(5).mean().iloc[-1]
-
-            regime = get_market_regime()
-            if regime == "bull":
-                score = (ret * 120) + (sentiment * 4) + np.log(volume)
-            elif regime == "bear":
-                score = (sentiment * 6) + (atr * 3) + np.log(volume)
-            else:
-                score = (ret * 60) + (sentiment * 4) + np.log(volume)
-
-            candidates.append((ticker, score))
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.model_selection import train_test_split
+            if len(meta_df) >= 10:
+                X = meta_df[["score", "sentiment", "regime"]]
+                y = meta_df["label"]
+                model = RandomForestClassifier(n_estimators=100)
+                model.fit(X, y)
+                joblib.dump(model, "meta_model.pkl")
+                print("✅ Meta model retrained.")
         except Exception as e:
-            print(f"⚠️ Skipping {ticker}: {e}")
+            print(f"⚠️ Meta model training failed: {e}")
 
-    ranked = sorted(candidates, key=lambda x: x[1], reverse=True)
-    selected = [t[0] for t in ranked[:limit]]
+        os.remove("trade_outcomes.csv")
+        print("🧹 trade_outcomes.csv purged after update.")
 
-    print(f"📈 Dynamic watchlist selected: {selected}", flush=True)
-    send_discord_message(f"📈 Dynamic Watchlist: {', '.join(selected)}")
-
-    # ✅ P&L and trade log summary
-    profit = 0
-    wins = 0
-    losses = 0
-    trades = []
-
-    for ticker in df_today["ticker"].unique():
-        buys = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "BUY")]
-        sells = df_today[(df_today["ticker"] == ticker) & (df_today["action"] == "SELL")]
-
-        if not buys.empty and not sells.empty:
-            avg_buy = (buys["qty"] * buys["price"]).sum() / buys["qty"].sum()
-            avg_sell = (sells["qty"] * sells["price"]).sum() / sells["qty"].sum()
-            qty_sold = sells["qty"].sum()
-            pl = (avg_sell - avg_buy) * qty_sold
-            profit += pl
-            trades.append(f"{ticker}: ${pl:.2f}")
-
-            if pl > 0:
-                wins += 1
-            else:
-                losses += 1
-
-    try:
-        account = api.get_account()
-        portfolio_value = float(account.portfolio_value)
-    except:
-        portfolio_value = "N/A"
-
-    total_trades = wins + losses
-    win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-
-    summary = f"📊 End of Day Summary ({today}):\n"
-    summary += "\n".join(trades) + "\n"
-    summary += f"\n💰 Total P/L: ${profit:.2f}"
-    summary += f"\n📈 Portfolio Value: ${portfolio_value}"
-    summary += f"\n✅ Win Rate: {wins}/{total_trades} ({win_rate:.1f}%)"
-
-    send_discord_message(summary)
-
-try:
-    cooldown = load_trade_cache()
-except Exception as e:
-    print(f"⚠️ Failed to load cooldown cache: {e}")
-    cooldown = {}
-
-try:
-    cooldown = load_trade_cache()
-except Exception as e:
-    print(f"⚠️ Failed to load cooldown cache: {e}")
-    cooldown = {}
-
-while True:
-    try:
-        if is_market_open():
-            print("🔁 Trading cycle...", flush=True)
-
-            # 🔁 Auto-retrain meta model daily
-            if should_retrain_meta_model():
-                retrain_meta_model_from_sheet()
-
-            trade_count = 0
-            regime = get_market_regime()
-            used_sectors = set()
-            trade_candidates = []
-            model, features = None, None
-            TICKER_UNIVERSE = generate_watchlist(limit=8)
-
-            print(f"✅ Watchlist contains: {TICKER_UNIVERSE}", flush=True)
-
-            for ticker in TICKER_UNIVERSE:
-                try:
-                    print(f"📊 Analyzing: {ticker}", flush=True)
-                    df = get_data(ticker, days=5)
-                    
-                    if df is None or len(df) < 30:
-                        print(f"❌ Not enough data for {ticker}")
-                        continue
-                        
-                    print(f"📈 Retrieved {len(df)} rows for {ticker}")
-
-                    # Risk events
-                    risks = get_risk_events(ticker)
-                    if risks:
-                        print(f"⚠️ Skipping {ticker} due to risk events: {', '.join(risks)}")
-                        continue
-
-                    # Avoid same sector
-                    sector = SECTOR_MAP.get(ticker, None)
-                    if sector in used_sectors:
-                        print(f"⏸️ Skipping {ticker} due to sector concentration: {sector}")
-                        continue
-
-                    # Short-term model
-                    model_path = os.path.join(MODEL_DIR, f"{ticker}.pkl")
-                    model, features = None, None
-
-                    if is_model_stale(ticker) or not os.path.exists(model_path):
-                        print(f"🔁 Retraining short-term model for {ticker}...")
-                        model, features = train_model(ticker, df)
-                        if model and features:
-                            print(f"✅ Trained short-term model for {ticker} with {len(df)} samples")
-                            # Remove joblib.save/load during dev
-                            # joblib.dump((model, features), model_path)
-                        else:
-                            print(f"⚠️ Skipping {ticker}: No trained model.")
-                            continue
-                    else:
-                        try:
-                            model, features = joblib.load(model_path)
-                        except Exception as e:
-                            print(f"⚠️ Failed to load model for {ticker}: {e}")
-                            continue
-
-                    if model is None or features is None:
-                        print(f"⚠️ Skipping {ticker}: Model or features missing.")
-                        continue
-
-                    prediction, latest_row, proba_short = predict(ticker, model, features)
-                    if proba_short is None or latest_row is None:
-                        print(f"⚠️ Prediction failure for {ticker}")
-                        continue
-
-                    print(f"🤖 Prediction for {ticker}: {proba_short:.2f}", flush=True)
-
-                    # Cooldown adjustment
-                    last_ts = cooldown.get(ticker, {}).get("timestamp")
-                    if last_ts:
-                        seconds_elapsed = (datetime.now() - datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S")).total_seconds()
-                        if seconds_elapsed < 600:
-                            decay_factor = 1 - (seconds_elapsed / 600)
-                            proba_short *= decay_factor
-                            proba_short = min(max(proba_short, 0), 1)
-                            print(f"🕓 Cooldown active. Confidence adjusted to {proba_short:.2f}")
-
-                    # VWAP filter
-                    if latest_row["Close"] < latest_row["vwap"]:
-                        print(f"⏸️ Price below VWAP for {ticker}")
-                        continue
-
-                    # Volume spike
-                    recent_volume = df["Volume"].rolling(20).mean().iloc[-2]
-                    current_volume = latest_row["Volume"]
-                    if current_volume < 1.5 * recent_volume:
-                        print(f"⏸️ {ticker} volume not spiking")
-                        continue
-
-                    # Support/resistance
-                    near_support, near_resistance = detect_support_resistance(df)
-                    if prediction == 1 and near_resistance:
-                        print(f"⏸️ {ticker} near resistance. Avoiding buy.")
-                        continue
-                    elif prediction == 0 and near_support:
-                        print(f"⏸️ {ticker} near support. Avoiding sell.")
-                        continue
-
-                    # Momentum check
-                    price_change = latest_row["Close"] - latest_row["Open"]
-                    volume_ratio = latest_row["Volume"] / df["Volume"].rolling(20).mean().iloc[-2]
-                    if proba_short > 0.75 and price_change <= 0:
-                        print(f"⚠️ {ticker} lacks momentum")
-                        continue
-
-                    # Regime-based thresholds
-                    if regime == "bear" and proba_short < 0.8:
-                        print(f"⚠️ Bear market. Skipping {ticker}")
-                        continue
-                    elif regime == "sideways" and proba_short < 0.7:
-                        print(f"⏸️ Sideways market. Skipping {ticker}")
-                        continue
-
-                    if proba_short > 0.75:
-                        prediction = 1
-                    elif proba_short < 0.4:
-                        prediction = 0
-                    else:
-                        print(f"⏸️ Signal too uncertain for {ticker}")
-                        continue
-
-                    # Score trade
-                    sentiment = get_sentiment_score(ticker)
-                    score = (
-                        proba_short * 100 +
-                        sentiment * 10 -
-                        latest_row["atr"] * 5 +
-                        (current_volume / recent_volume) * 2
-                    )
-
-                    print(f"✅ {ticker} added as trade candidate (score: {score:.2f})", flush=True)
-                    trade_candidates.append((ticker, score, model, features, latest_row, proba_short, prediction, sector))
-
-                except Exception as e:
-                    print(f"⚠️ Error analyzing {ticker}: {e}", flush=True)
-                    continue
-
-            # Sort and execute top trades
-            trade_candidates = sorted(trade_candidates, key=lambda x: x[1], reverse=True)
-            for cand in trade_candidates[:5]:
-                ticker, score, model, features, latest_row, proba_short, prediction, sector = cand
-                print(f"🚀 Executing trade for {ticker}", flush=True)
-                execute_trade(ticker, prediction, proba_short, cooldown, latest_row, df)
-                trade_count += 1
-                if sector:
-                    used_sectors.add(sector)
-
-            save_trade_cache(cooldown)
-            time.sleep(300)
-
-        else:
-            print("⏸️ Market is closed. Waiting...")
-            time.sleep(60)
+        return trade_summary, log_q_values
 
     except Exception as e:
-        print(f"🚨 Fatal error in trading loop: {e}")
-        send_discord_message(f"🚨 Fatal error: {e}")
-        time.sleep(60)
+        print(f"❌ Failed to update Q-network: {e}")
+        return [], []
+
+# === VWAP + Volume Filter ===
+def passes_volume_vwap_filter(ticker):
+    try:
+        df = api.get_bars(ticker, TimeFrame.Minute, limit=20).df
+        if df.empty or len(df) < 5:
+            return False
+        vwap = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
+        current_close = df["close"].iloc[-1]
+        current_volume = df["volume"].iloc[-1]
+        avg_volume = df["volume"].mean()
+        return current_close >= vwap.iloc[-1] and current_volume >= 1.5 * avg_volume
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ VWAP/Volume check error for {ticker}: {e}\n{tb}")
+        send_discord_alert(f"⚠️ VWAP/Volume check error for {ticker}: {e}")
+        return False
+
+# === Market Regime Detection ===
+def get_market_regime():
+    try:
+        spy = api.get_bars("SPY", TimeFrame.Day, limit=20).df
+        if spy is None or spy.empty or len(spy) < 10:
+            return 0  # neutral
+
+        recent_returns = (spy.close.pct_change().dropna()[-5:]).mean()
+
+        if recent_returns > 0.005:
+            return 1  # bull
+        elif recent_returns < -0.005:
+            return -1  # bear
+        else:
+            return 0  # sideways
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Failed to determine market regime: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Market regime detection error: {e}")
+        return 0
+
+# === Data Fetching Utilities ===
+def calculate_support_resistance(df, window=20):
+    try:
+        if df is None or df.empty or len(df) < window:
+            return None, None
+
+        df = df.tail(window)
+        support = df['low'].min()
+        resistance = df['high'].max()
+        return support, resistance
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Failed to calculate support/resistance: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Support/Resistance calc error: {e}")
+        return None, None
+        
+def get_sector(symbol):
+    try:
+        asset = api.get_asset(symbol)
+        if hasattr(asset, 'sector') and asset.sector:
+            return asset.sector
+    except:
+        pass
+
+    try:
+        if os.path.exists("sector_lookup.csv"):
+            df = pd.read_csv("sector_lookup.csv")
+            match = df[df["symbol"] == symbol.upper()]
+            if not match.empty:
+                return match.iloc[0]["sector"]
+    except Exception as e:
+        print(f"❌ Sector fallback failed for {symbol}: {e}")
+
+    return "Unknown"
+    
+def get_data_alpaca(ticker, timeframe=TimeFrame.Minute, limit=100):
+    try:
+        bars = api.get_bars(ticker, timeframe, limit=limit).df
+        return bars if not bars.empty else None
+    except Exception as e:
+        print(f"❌ Failed to get Alpaca data for {ticker}: {e}")
+        return None
+
+# === Sentiment Using FinBERT (Async with Caching + Fallback) ===
+finbert_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+sentiment_cache = {}
+
+async def analyze_sentiment_async(titles):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: finbert_pipeline(titles))
+
+def fallback_vader_score(titles):
+    analyzer = SentimentIntensityAnalyzer()
+    scores = [analyzer.polarity_scores(title)['compound'] for title in titles]
+    return sum(scores) / len(scores) if scores else 0
+
+def get_news_sentiment(ticker):
+    try:
+        if ticker in sentiment_cache:
+            return sentiment_cache[ticker]["news"]
+
+        url = f"https://newsapi.org/v2/everything?q={ticker}&apiKey={NEWS_API_KEY}"
+        response = requests.get(url)
+        articles = response.json().get("articles", [])
+        titles = [article["title"] for article in articles if article.get("title")]
+        if not titles:
+            return 0
+
+        try:
+            sentiments = finbert_pipeline(titles)
+            scores = [1 if s['label'] == 'positive' else -1 if s['label'] == 'negative' else 0 for s in sentiments]
+            score = sum(scores) / len(scores)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"⚠️ FinBERT failed for NewsAPI: {e}\n{tb}")
+            send_discord_alert(f"⚠️ FinBERT fallback to VADER (News): {e}")
+            score = fallback_vader_score(titles)
+
+        sentiment_cache.setdefault(ticker, {})["news"] = score
+        return score
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ News sentiment error for {ticker}: {e}\n{tb}")
+        send_discord_alert(f"⚠️ News sentiment error for {ticker}: {e}")
+        return 0
+
+def get_reddit_sentiment(ticker):
+    try:
+        if ticker in sentiment_cache:
+            return sentiment_cache[ticker].get("reddit", 0)
+
+        import praw
+        reddit = praw.Reddit(
+            client_id=os.getenv("REDDIT_CLIENT_ID"),
+            client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+            user_agent=os.getenv("REDDIT_USER_AGENT")
+        )
+        titles = [submission.title for submission in reddit.subreddit("stocks").search(ticker, limit=10)]
+        if not titles:
+            return 0
+
+        try:
+            sentiments = finbert_pipeline(titles)
+            scores = [1 if s['label'] == 'positive' else -1 if s['label'] == 'negative' else 0 for s in sentiments]
+            score = sum(scores) / len(scores)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"⚠️ FinBERT failed for Reddit: {e}\n{tb}")
+            send_discord_alert(f"⚠️ FinBERT fallback to VADER (Reddit): {e}")
+            score = fallback_vader_score(titles)
+
+        sentiment_cache.setdefault(ticker, {})["reddit"] = score
+        return score
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Reddit sentiment error for {ticker}: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Reddit sentiment error for {ticker}: {e}")
+        return 0
+
+# === Push Meta Logs to Google Sheets ===
+def push_meta_logs_to_sheets(meta_data):
+    try:
+        import gspread
+        from oauth2client.service_account import ServiceAccountCredentials
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("google-credentials.json", scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GSHEET_ID).worksheet("MetaModelLog")
+
+        formatted = [
+            [d["timestamp"], d["ticker"], d["score"], d["sentiment"], d["regime"], d["label"]]
+            for d in meta_data
+        ]
+        sheet.append_rows(formatted, value_input_option="RAW")
+        print("✅ Meta logs pushed to Google Sheets.")
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Failed to push meta logs to Sheets: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Google Sheets push failed: {e}")
+
+# === Model Failure Retry Queue ===
+model_failure_queue = []
+blacklisted_tickers = set()
+
+def handle_model_training_failure(ticker):
+    if ticker not in blacklisted_tickers:
+        model_failure_queue.append(ticker)
+        print(f"🔁 Queued {ticker} for model retraining retry.")
+    else:
+        print(f"🚫 Skipping {ticker}: blacklisted due to repeated failures.")
+
+def blacklist_ticker(ticker):
+    blacklisted_tickers.add(ticker)
+    print(f"⛔ Blacklisted {ticker} after repeated failures.")
+        
+# === Model Staleness and Retraining Logic ===
+def needs_retraining(model_path, max_age_hours=24):
+    if not os.path.exists(model_path):
+        return True
+    mod_time = datetime.fromtimestamp(os.path.getmtime(model_path))
+    return (datetime.now() - mod_time).total_seconds() > max_age_hours * 3600
+
+# === Model Training (Placeholder Example) ===
+def train_model(ticker, X, y, model_path):
+    if not needs_retraining(model_path):
+        print(f"✅ {ticker} model is fresh. Skipping retrain.")
+        return joblib.load(model_path)
+    try:
+        clf = VotingClassifier(estimators=[
+            ("lr", LogisticRegression(max_iter=1000)),
+            ("rf", RandomForestClassifier(n_estimators=100)),
+            ("xgb", XGBClassifier(eval_metric='logloss'))
+        ], voting='soft')
+        clf.fit(X, y)
+        joblib.dump(clf, model_path)
+        print(f"✅ Trained and saved model for {ticker}")
+        return clf
+    except Exception as e:
+        print(f"❌ Failed to train model for {ticker}: {e}")
+        return None
+
+# === Discord Summary ===
+def send_end_of_day_summary(trades, q_logs):
+    try:
+        account = api.get_account()
+        cash = float(account.cash)
+
+        summary = ["📊 **End of Day Summary**"]
+        summary.append(f"💰 Account Cash: ${cash:,.2f}")
+
+        if trades:
+            summary.append("\n**Top Trades:**")
+            for ticker, price, result in trades[:5]:
+                summary.append(f"• {ticker} at ${price} ➝ {result}")
+
+        if q_logs:
+            avg_q = sum(q for _, _, q, _ in q_logs) / len(q_logs)
+            summary.append(f"\n🧠 Avg Q-Value: {avg_q:.4f} from {len(q_logs)} updates")
+
+        payload = {"content": "\n".join(summary)}
+        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        print("📬 End of day summary sent to Discord.")
+    except Exception as e:
+        print(f"❌ Failed to send Discord summary: {e}")
+
+# === End of Day Handler ===
+def end_of_day_cleanup():
+    print("🌙 Running end-of-day cleanup...")
+    trades, q_logs = update_q_network_from_log()
+    send_end_of_day_summary(trades, q_logs)
+
+# === Trade Execution Logic (Completed with Logging and Sentiment) ===
+def execute_trade(ticker, score):
+    if not passes_volume_vwap_filter(ticker):
+        print(f"⚠️ Skipping {ticker}: does not pass VWAP/Volume filter.")
+        return
+
+    df = get_data_alpaca(ticker)
+    support, resistance = calculate_support_resistance(df)
+    if support and resistance:
+        current_price = df['close'].iloc[-1]
+        if current_price < support * 0.98 or current_price > resistance * 1.02:
+            print(f"⚠️ {ticker} price outside support/resistance bounds. Skipping.")
+            return
+    try:
+        sentiment_news = get_news_sentiment(ticker)
+        sentiment_reddit = get_reddit_sentiment(ticker)
+        sentiment_score = (sentiment_news + sentiment_reddit) / 2
+        regime = get_market_regime()
+
+        # Meta Model Approval Gate
+        meta_features = {
+            "ticker": ticker,
+            "score": score,
+            "sentiment": sentiment_score,
+            "regime": regime,
+            "hour": datetime.now().hour,
+            "dayofweek": datetime.now().weekday(),
+        }
+        meta_df = pd.DataFrame([meta_features])
+        if os.path.exists("meta_model.pkl"):
+            try:
+                meta_model = joblib.load("meta_model.pkl")
+                approve = meta_model.predict(meta_df)[0]
+                if approve == 0:
+                    print(f"🛑 Meta model rejected trade for {ticker}")
+                    return
+                else:
+                    print(f"🧠 Meta model approved trade for {ticker}")
+            except Exception as e:
+                print(f"⚠️ Meta model error: {e}")
+
+        try:
+            position = api.get_position(ticker)
+            has_position = True
+        except:
+            position = None
+            has_position = False
+
+        bar = api.get_latest_bar(ticker)
+        current_price = bar.c
+
+        if has_position:
+            avg_price = float(position.avg_entry_price)
+            gain = (current_price - avg_price) / avg_price
+            qty_held = int(position.qty)
+            held_duration = (datetime.now() - datetime.strptime(position.lastday_price, "%Y-%m-%dT%H:%M:%S.%fZ")).total_seconds() / 60
+
+            if gain >= 0.05:
+                api.submit_order(symbol=ticker, qty=qty_held, side="sell", type="market", time_in_force="gtc")
+                print(f"🏁 Sold {ticker} at +5% profit | Gain: {gain:.2%}")
+                send_discord_alert(f"🏁 Sold {ticker} at +5% profit | Gain: {gain:.2%}")
+                with open("trade_outcomes.csv", "a") as f:
+                    f.write(f"{datetime.now().isoformat()},{ticker},{current_price},{score},sell,profit,{sentiment_score},{regime}\n")
+                return
+
+            if gain <= -0.03:
+                api.submit_order(symbol=ticker, qty=qty_held, side="sell", type="market", time_in_force="gtc")
+                print(f"🛑 Stop loss hit on {ticker} | Loss: {gain:.2%}")
+                send_discord_alert(f"🛑 Stop loss hit on {ticker} | Loss: {gain:.2%}")
+                with open("trade_outcomes.csv", "a") as f:
+                    f.write(f"{datetime.now().isoformat()},{ticker},{current_price},{score},sell,loss,{sentiment_score},{regime}\n")
+                return
+
+            if gain < 0.01 and held_duration > 60:
+                api.submit_order(symbol=ticker, qty=qty_held, side="sell", type="market", time_in_force="gtc")
+                print(f"💸 Sold {ticker} due to profit decay | Gain: {gain:.2%} | Held: {held_duration:.0f} min")
+                send_discord_alert(f"💸 Sold {ticker} due to profit decay | Gain: {gain:.2%} | Held: {held_duration:.0f} min")
+                with open("trade_outcomes.csv", "a") as f:
+                    f.write(f"{datetime.now().isoformat()},{ticker},{current_price},{score},sell,decay,{sentiment_score},{regime}\n")
+                return
+
+            state = q_state(ticker, 1).unsqueeze(0)
+            q_val = q_net(state).item()
+            if q_val > 0.3 and gain > 0 and score > 0.6:
+                print(f"⏸️ RL prefers to hold {ticker} (Q={q_val:.2f}, Gain={gain:.2%})")
+                return
+
+        try:
+            capital = float(api.get_account().cash)
+            win_rate = 0.6
+            reward_risk = 1.5
+            kelly_fraction = win_rate - (1 - win_rate) / reward_risk
+            kelly_fraction = max(0.01, min(kelly_fraction, 1.0))
+            dollar_position = capital * kelly_fraction
+            qty = max(1, int(dollar_position / current_price))
+        except Exception as e:
+            print(f"⚠️ Kelly sizing failed, defaulting to 1 share: {e}")
+            qty = 1
+
+        if not has_position:
+            api.submit_order(symbol=ticker, qty=qty, side="buy", type="market", time_in_force="gtc")
+            print(f"✅ Bought {qty} of {ticker} at ${current_price:.2f} | Confidence: {score:.2f}")
+            send_discord_alert(f"✅ Bought {qty} of {ticker} at ${current_price:.2f} | Confidence: {score:.2f}")
+            with open("trade_outcomes.csv", "a") as f:
+                f.write(f"{datetime.now().isoformat()},{ticker},{current_price},{score},buy,,{sentiment_score},{regime}\n")
+        else:
+            print(f"📌 Already holding {ticker}, skipping buy.")
+
+    except Exception as e:
+        print(f"❌ Trade execution failed for {ticker}: {e}")
+        send_discord_alert(f"❌ Trade execution failed for {ticker}: {e}")
+        
+# === Dynamic Watchlist Selection (Updated) ===
+def get_dynamic_watchlist():
+    try:
+        assets = api.list_assets(status="active")
+        tradable = [a.symbol for a in assets if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]]
+
+        top = []
+        for symbol in random.sample(tradable, 50):
+            try:
+                df = get_data_alpaca(symbol, limit=30)
+                if df is None or df.empty:
+                    continue
+
+                change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+                volume_avg = df['volume'].mean()
+                support, resistance = calculate_support_resistance(df)
+                current_price = df['close'].iloc[-1]
+
+                if (
+                    change > 0.01
+                    and volume_avg > 500000
+                    and passes_volume_vwap_filter(symbol)
+                    and support and resistance
+                    and support * 0.98 <= current_price <= resistance * 1.02
+                ):
+                    top.append((symbol, change))
+            except:
+                continue
+
+        top.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in top[:5]]
+    except Exception as e:
+        print(f"❌ Watchlist generation failed: {e}")
+        return ["AAPL", "MSFT", "NVDA"]  # fallback tickers
+
+# === Main Loop with Integrated Retraining ===
+def run_trading_loop():
+    used_sectors = set()
+    cooldown = {}
+
+    while True:
+        now = datetime.now(pacific)
+        if now.hour == 13 and now.minute >= 0:
+            print("⏹️ Market closing soon, stopping bot.")
+            send_discord_alert("📉 End of trading day.")
+            break
+
+        if now.hour < 6 or (now.hour == 6 and now.minute < 30):
+            print("⏳ Waiting for market to open...")
+            time.sleep(60)
+            continue
+
+        tickers = get_dynamic_watchlist()
+        for ticker in tickers:
+            df_short = get_data(ticker, days=2)
+            df_mid = get_data(ticker, days=15)
+
+            if df_short is not None and not df_short.empty:
+                X_short = df_short.drop(columns=["Target"])
+                y_short = df_short["Target"]
+                short_model_path = f"models/short/{ticker}.pkl"
+                train_model(ticker, X_short, y_short, short_model_path)
+
+            if df_mid is not None and not df_mid.empty:
+                X_mid = df_mid.drop(columns=["Target"])
+                y_mid = df_mid["Target"]
+                mid_model_path = f"models/medium/{ticker}.pkl"
+                train_model(ticker, X_mid, y_mid, mid_model_path)
+
+        time.sleep(300)
+
+# Call this at the end of trading loop or script
+if __name__ == "__main__":
+    if is_market_open():
+        run_trading_loop()
+        end_of_day_cleanup()
+    else:
+        print("Market is closed.")
