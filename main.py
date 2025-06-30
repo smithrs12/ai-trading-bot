@@ -25,7 +25,6 @@ from newsapi import NewsApiClient
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from transformers import pipeline
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import asyncio
 from sklearn.model_selection import TimeSeriesSplit
 
@@ -256,6 +255,8 @@ def update_q_network_from_log():
                 row["score"],
                 row["sentiment"],
                 row["regime"],
+                datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%S.%f").hour,
+                datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%S.%f").weekday(),
                 1 if row["result"] == "profit" else 0
             ])
 
@@ -533,7 +534,7 @@ def train_model(ticker, X, y, model_path):
             ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
         ], voting='soft')
         model.fit(X, y)
-        acc = walk_forward_validate(RandomForestClassifier, X, y)
+        acc = walk_forward_validation(X, y, RandomForestClassifier())
         if acc < 0.5:
             print(f"⚠️ Low validation accuracy for {ticker}: {acc:.2f}")
             handle_model_training_failure(ticker)
@@ -595,13 +596,12 @@ def end_of_day_cleanup():
     sector_allocations = {}
     print("🔁 Sector allocations reset for new trading day.")
     print("🌙 Running end-of-day cleanup...")
+
     trades, q_logs = update_q_network_from_log()
     send_end_of_day_summary(trades, q_logs)
     train_meta_model()
+
     print("📤 Cleanup complete.")
-    
-    trades, q_logs = update_q_network_from_log()
-    send_end_of_day_summary(trades, q_logs)
 
 def check_sector_allocation(ticker):
     try:
@@ -652,18 +652,24 @@ def execute_trade(ticker, score):
             "dayofweek": datetime.now().weekday(),
         }
         meta_df = pd.DataFrame([meta_features])
+
         if os.path.exists("meta_model.pkl"):
             try:
                 meta_model = joblib.load("meta_model.pkl")
                 approve = meta_model.predict(meta_df)[0]
+                label = "approved" if approve == 1 else "rejected"
+
                 if approve == 0:
                     print(f"🛑 Meta model rejected trade for {ticker}")
-                    log_meta_decision(ticker, score, sentiment_score, regime, "approved")
+                    log_meta_decision(ticker, score, sentiment_score, regime, label)
                     return
                 else:
                     print(f"🧠 Meta model approved trade for {ticker}")
+                    log_meta_decision(ticker, score, sentiment_score, regime, label)
+
             except Exception as e:
                 print(f"⚠️ Meta model error: {e}")
+                # In case of error, assume "approved" to be conservative
                 log_meta_decision(ticker, score, sentiment_score, regime, "approved")
 
         try:
@@ -773,6 +779,35 @@ def get_dynamic_watchlist():
         print(f"❌ Watchlist generation failed: {e}")
         return ["AAPL", "MSFT", "NVDA"]  # fallback tickers
 
+def auto_liquidate():
+    try:
+        positions = api.list_positions()
+        if not positions:
+            print("📭 No positions to liquidate.")
+            return
+
+        for pos in positions:
+            ticker = pos.symbol
+            qty = int(pos.qty)
+            current_price = float(pos.current_price)
+            avg_entry_price = float(pos.avg_entry_price)
+            gain = (current_price - avg_entry_price) / avg_entry_price
+            sentiment = get_news_sentiment(ticker)
+            regime = get_market_regime()
+
+            api.submit_order(symbol=ticker, qty=qty, side="sell", type="market", time_in_force="gtc")
+            print(f"🔻 Liquidated {qty} shares of {ticker} at ${current_price:.2f}")
+
+            result = "profit" if gain > 0 else "loss"
+            with open("trade_outcomes.csv", "a") as f:
+                f.write(f"{datetime.now().isoformat()},{ticker},{current_price},AUTO,sell,{result},{sentiment},{regime}\n")
+
+            send_discord_alert(f"🔻 Auto-liquidated {qty} of {ticker} at ${current_price:.2f} | {result.upper()}")
+
+    except Exception as e:
+        print(f"❌ Auto-liquidation failed: {e}")
+        send_discord_alert(f"❌ Auto-liquidation failed: {e}")
+
 # === Main Loop with Integrated Retraining ===
 def run_trading_loop():
     if is_near_market_close():
@@ -796,9 +831,18 @@ def run_trading_loop():
             continue
 
         tickers = get_dynamic_watchlist()
+        ticker_data_cache = {}
+
         for ticker in tickers:
             df_short = get_data(ticker, days=2)
             df_mid = get_data(ticker, days=15)
+            df_alpaca = get_data_alpaca(ticker, limit=100)
+
+            ticker_data_cache[ticker] = {
+                "df_short": df_short,
+                "df_mid": df_mid,
+                "df_alpaca": df_alpaca,
+            }
 
             if df_short is not None and not df_short.empty:
                 X_short = df_short.drop(columns=["Target"])
