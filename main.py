@@ -803,14 +803,13 @@ def get_dynamic_watchlist():
             volume_avg = df['volume'].mean()
             support, resistance = calculate_support_resistance(df)
             current_price = df['close'].iloc[-1]
-            
+
             print(f"🔍 Trying {symbol} | Change: {change:.2%} | Volume: {volume_avg:.0f}")
 
             if (
-                change > 0.005  # lowered threshold for more matches
-                and volume_avg > 100000  # lowered volume for IEX
+                change > 0.002
+                and volume_avg > 100000
                 and support and resistance
-                and support * 0.98 <= current_price <= resistance * 1.02
             ):
                 sector = get_sector(symbol)
                 if sector_counts.get(sector, 0) >= MAX_PER_SECTOR_WATCHLIST:
@@ -821,8 +820,9 @@ def get_dynamic_watchlist():
 
                 if len(top) >= 5:
                     break
+
         except Exception as e:
-            print(f"❌ Error with {symbol}: {e}")
+            print(f"⚠️ Error processing {symbol}: {e}")
             continue
 
     top.sort(key=lambda x: x[1], reverse=True)
