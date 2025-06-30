@@ -407,12 +407,20 @@ def get_data_alpaca(ticker, timeframe=TimeFrame.Minute, limit=100):
         return None
 
 # === Sentiment Using FinBERT (Async with Caching + Fallback) ===
-finbert_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+_finbert_pipeline = None
+
+def get_finbert_pipeline():
+    global _finbert_pipeline
+    if _finbert_pipeline is None:
+        print("🧠 Loading FinBERT model (first-time)...")
+        _finbert_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    return _finbert_pipeline
+
 sentiment_cache = {}
 
 async def analyze_sentiment_async(titles):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: finbert_pipeline(titles))
+    return await loop.run_in_executor(None, lambda: get_finbert_pipeline()(titles))
 
 def fallback_vader_score(titles):
     analyzer = SentimentIntensityAnalyzer()
