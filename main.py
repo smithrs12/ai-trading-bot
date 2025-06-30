@@ -723,7 +723,7 @@ def execute_trade(ticker, score):
             win_rate = 0.6
             reward_risk = 1.5
             kelly_fraction = win_rate - (1 - win_rate) / reward_risk
-            kelly_fraction = max(0.01, min(kelly_fraction, 1.0))
+            kelly_fraction = max(0.01, min(kelly_fraction, 0.2))
             dollar_position = capital * kelly_fraction
             qty = max(1, int(dollar_position / current_price))
         except Exception as e:
