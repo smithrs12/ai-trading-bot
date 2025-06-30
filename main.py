@@ -807,8 +807,8 @@ def get_dynamic_watchlist():
             print(f"🔍 Trying {symbol} | Change: {change:.2%} | Volume: {volume_avg:.0f}")
 
             if (
-                change > 0.002
-                and volume_avg > 100000
+                change > 0
+                and volume_avg > 500
                 and support and resistance
             ):
                 sector = get_sector(symbol)
