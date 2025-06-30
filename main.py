@@ -43,6 +43,10 @@ pacific = timezone('US/Pacific')
 GSPREAD_JSON_PATH = os.getenv("GSPREAD_JSON_PATH")
 GSHEET_ID = os.getenv("GSHEET_ID")
 
+# === Ensure model directories exist ===
+os.makedirs("models/short", exist_ok=True)
+os.makedirs("models/medium", exist_ok=True)
+
 # === API Keys & Setup ===
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
