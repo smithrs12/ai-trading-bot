@@ -39,6 +39,10 @@ def log(msg):
 load_dotenv()
 pacific = timezone('US/Pacific')
 
+# === Load Environment Variables ===
+GSPREAD_JSON_PATH = os.getenv("GSPREAD_JSON_PATH")
+GSHEET_ID = os.getenv("GSHEET_ID")
+
 # === API Keys & Setup ===
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
