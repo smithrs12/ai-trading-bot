@@ -845,6 +845,7 @@ def auto_liquidate():
 
 # === Main Loop with Integrated Retraining ===
 def run_trading_loop():
+    print("🚀 Entered run_trading_loop", flush=True)
     if is_near_market_close():
         print("⏱️ Near market close — skipping trade cycle.")
         auto_liquidate()
@@ -866,6 +867,7 @@ def run_trading_loop():
             continue
 
         tickers = get_dynamic_watchlist()
+        print(f"🎯 Evaluating tickers: {tickers}", flush=True)
         ticker_data_cache = {}
 
         for ticker in tickers:
@@ -892,6 +894,7 @@ def run_trading_loop():
                 train_model(ticker, X_mid, y_mid, mid_model_path)
 
         time.sleep(300)
+        print("🔄 Looping after 5 min sleep...", flush=True)
 
 if __name__ == "__main__":
     print("🟢 main.py started")
