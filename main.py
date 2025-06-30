@@ -96,6 +96,23 @@ def q_state(ticker, position):
     except:
         return torch.zeros(4)
 
+# === Meta Model Trainer ===
+def train_meta_model():
+    try:
+        df = pd.read_csv("meta_model_log.csv")
+        if len(df) < 50:
+            print("⚠️ Not enough data to train meta model.")
+            return
+        X = df.drop(["timestamp", "ticker", "label"], axis=1)
+        y = df["label"].map({"approved": 1, "rejected": 0})
+        model = RandomForestClassifier()
+        model.fit(X, y)
+        joblib.dump(model, "meta_model.pkl")
+        print("✅ Trained and saved meta model.")
+    except Exception as e:
+        print(f"❌ Meta model training failed: {e}")
+        send_discord_alert(f"⚠️ Meta model training failed: {e}")
+
 def train_model(ticker, df, model_class, model_path):
     try:
         X = df.drop("target", axis=1)
@@ -189,8 +206,16 @@ def dual_horizon_predict(ticker, df):
 def is_market_open():
     clock = api.get_clock()
     return clock.is_open
+    
+def is_near_market_close():
+    now = datetime.now(pytz.timezone("US/Eastern"))
+    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    return (market_close - now).total_seconds() <= 300  # 5 minutes
 
 def run_trading_loop():
+    if is_near_market_close():
+    print("⏱️ Near market close — skipping trade cycle.")
+    return  # Or break if in a while loop
     used_sectors = set()
     cooldown = {}
 
@@ -539,24 +564,45 @@ def needs_retraining(model_path, max_age_hours=24):
     mod_time = datetime.fromtimestamp(os.path.getmtime(model_path))
     return (datetime.now() - mod_time).total_seconds() > max_age_hours * 3600
 
-# === Model Training (Placeholder Example) ===
+# === Updated train_model() ===
 def train_model(ticker, X, y, model_path):
-    if not needs_retraining(model_path):
-        print(f"✅ {ticker} model is fresh. Skipping retrain.")
-        return joblib.load(model_path)
     try:
-        clf = VotingClassifier(estimators=[
-            ("lr", LogisticRegression(max_iter=1000)),
-            ("rf", RandomForestClassifier(n_estimators=100)),
-            ("xgb", XGBClassifier(eval_metric='logloss'))
+        if len(X) < 50:
+            print(f"⚠️ Not enough data to train {ticker}")
+            return None
+        model = VotingClassifier(estimators=[
+            ('rf', RandomForestClassifier()),
+            ('lr', LogisticRegression()),
+            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
         ], voting='soft')
-        clf.fit(X, y)
-        joblib.dump(clf, model_path)
-        print(f"✅ Trained and saved model for {ticker}")
-        return clf
+        model.fit(X, y)
+        acc = walk_forward_validate(RandomForestClassifier, X, y)
+        if acc < 0.5:
+            print(f"⚠️ Low validation accuracy for {ticker}: {acc:.2f}")
+            handle_model_training_failure(ticker)
+            return None
+        joblib.dump(model, model_path)
+        log(f"✅ Trained model for {ticker} with acc={acc:.2f}")
+        return model
     except Exception as e:
-        print(f"❌ Failed to train model for {ticker}: {e}")
+        handle_model_training_failure(ticker)
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Training failed for {ticker}: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Model training failed for {ticker}")
         return None
+
+# === Append Meta Logs After Trade Decision ===
+def log_meta_decision(ticker, score, sentiment, regime, label):
+    meta_data = [{
+        "timestamp": datetime.now().isoformat(),
+        "ticker": ticker,
+        "score": score,
+        "sentiment": sentiment,
+        "regime": regime,
+        "label": label
+    }]
+    push_meta_logs_to_sheets(meta_data)
 
 # === Discord Summary ===
 def send_end_of_day_summary(trades, q_logs):
@@ -586,12 +632,16 @@ def send_end_of_day_summary(trades, q_logs):
 sector_allocations = {}
 MAX_SECTOR_EXPOSURE = 3  # max number of positions per sector
 
-# === End of Day Handler ===
+# === End-of-Day Handler ===
 def end_of_day_cleanup():
     global sector_allocations
-    print("🌙 Running end-of-day cleanup...")
     sector_allocations = {}
     print("🔁 Sector allocations reset for new trading day.")
+    print("🌙 Running end-of-day cleanup...")
+    trades, q_logs = update_q_network_from_log()
+    send_end_of_day_summary(trades, q_logs)
+    train_meta_model()
+    print("📤 Cleanup complete.")
     
     trades, q_logs = update_q_network_from_log()
     send_end_of_day_summary(trades, q_logs)
@@ -651,11 +701,13 @@ def execute_trade(ticker, score):
                 approve = meta_model.predict(meta_df)[0]
                 if approve == 0:
                     print(f"🛑 Meta model rejected trade for {ticker}")
+                    log_meta_decision(ticker, score, sentiment_score, regime, "approved")
                     return
                 else:
                     print(f"🧠 Meta model approved trade for {ticker}")
             except Exception as e:
                 print(f"⚠️ Meta model error: {e}")
+                log_meta_decision(ticker, score, sentiment_score, regime, "approved")
 
         try:
             position = api.get_position(ticker)
@@ -766,6 +818,11 @@ def get_dynamic_watchlist():
 
 # === Main Loop with Integrated Retraining ===
 def run_trading_loop():
+    if is_near_market_close():
+        print("⏱️ Near market close — skipping trade cycle.")
+        auto_liquidate()
+        return  # Or break if in a while loop
+
     used_sectors = set()
     cooldown = {}
 
