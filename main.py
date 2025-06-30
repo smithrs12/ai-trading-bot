@@ -894,13 +894,13 @@ def run_trading_loop():
 if __name__ == "__main__":
     send_discord_alert("✅ Trading bot launched on Render.")
 
-    if is_market_open():
-        run_trading_loop()
-        end_of_day_cleanup()
-    else:
-        print("Market is closed.")
+    # Wait until market opens
+    while not is_market_open():
+        print("⏳ Market is closed. Waiting to start trading...")
+        time.sleep(60)
 
-        # Debug loop to simulate work
-        while True:
-            print("🕒 Waiting for market to open...")
-            time.sleep(300)
+    # Run bot while market is open
+    run_trading_loop()
+    
+    # After market close
+    end_of_day_cleanup()
