@@ -767,37 +767,57 @@ def execute_trade(ticker, score):
 # === Dynamic Watchlist Selection (Updated) ===
 def get_dynamic_watchlist():
     try:
+        print("🔍 Building intelligent watchlist...")
         assets = api.list_assets(status="active")
-        tradable = [a.symbol for a in assets if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]]
+        tradable = [
+            a.symbol for a in assets
+            if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]
+        ]
 
-        top = []
-        for symbol in random.sample(tradable, 50):
+        stock_scores = []
+
+        for symbol in tradable:
             try:
                 df = get_data_alpaca(symbol, limit=30)
                 if df is None or df.empty:
                     continue
 
+                # Momentum
                 change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+
+                # Volume check
                 volume_avg = df['volume'].mean()
+                if volume_avg < 500_000:
+                    continue
+
+                # VWAP & S/R filters
+                if not passes_volume_vwap_filter(symbol):
+                    continue
+
                 support, resistance = calculate_support_resistance(df)
                 current_price = df['close'].iloc[-1]
+                if support is None or resistance is None:
+                    continue
+                if not (support * 0.98 <= current_price <= resistance * 1.02):
+                    continue
 
-                if (
-                    change > 0.01
-                    and volume_avg > 500000
-                    and passes_volume_vwap_filter(symbol)
-                    and support and resistance
-                    and support * 0.98 <= current_price <= resistance * 1.02
-                ):
-                    top.append((symbol, change))
+                # Score = momentum x volume
+                score = change * volume_avg
+                stock_scores.append((symbol, score))
             except:
                 continue
 
-        top.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, _ in top[:5]]
+        stock_scores.sort(key=lambda x: x[1], reverse=True)
+        top = [sym for sym, _ in stock_scores[:50]]
+        print(f"✅ Watchlist selected: {top}")
+        return top if top else ["AAPL", "MSFT", "NVDA"]
+
     except Exception as e:
-        print(f"❌ Watchlist generation failed: {e}")
-        return ["AAPL", "MSFT", "NVDA"]  # fallback tickers
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Watchlist generation failed: {e}\n{tb}")
+        send_discord_alert(f"⚠️ Watchlist generation failed: {e}")
+        return ["AAPL", "MSFT", "NVDA"]
 
 def auto_liquidate():
     try:
