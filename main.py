@@ -863,7 +863,7 @@ def run_trading_loop():
     if is_near_market_close():
         print("⏱️ Near market close — skipping trade cycle.")
         auto_liquidate()
-        return  # Or break if in a while loop
+        return
 
     used_sectors = set()
     cooldown = {}
@@ -885,9 +885,13 @@ def run_trading_loop():
         ticker_data_cache = {}
 
         for ticker in tickers:
+            print(f"📊 Processing {ticker}", flush=True)
             df_short = get_data(ticker, days=2)
             df_mid = get_data(ticker, days=15)
             df_alpaca = get_data_alpaca(ticker, limit=100)
+
+            print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}")
+            print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}"
 
             ticker_data_cache[ticker] = {
                 "df_short": df_short,
@@ -896,12 +900,14 @@ def run_trading_loop():
             }
 
             if df_short is not None and not df_short.empty:
+                print(f"🧠 Training short model for {ticker}")
                 X_short = df_short.drop(columns=["Target"])
                 y_short = df_short["Target"]
                 short_model_path = f"models/short/{ticker}.pkl"
                 train_model(ticker, X_short, y_short, short_model_path)
 
             if df_mid is not None and not df_mid.empty:
+                print(f"🧠 Training medium model for {ticker}")
                 X_mid = df_mid.drop(columns=["Target"])
                 y_mid = df_mid["Target"]
                 mid_model_path = f"models/medium/{ticker}.pkl"
