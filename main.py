@@ -39,8 +39,6 @@ def log(msg):
 load_dotenv()
 pacific = timezone('US/Pacific')
 
-send_discord_alert("✅ Trading bot launched on Render.")
-
 # === Load Environment Variables ===
 GSPREAD_JSON_PATH = os.getenv("GSPREAD_JSON_PATH")
 GSHEET_ID = os.getenv("GSHEET_ID")
@@ -893,13 +891,15 @@ def run_trading_loop():
 
         time.sleep(300)
 
-# Call this at the end of trading loop or script
 if __name__ == "__main__":
+    send_discord_alert("✅ Trading bot launched on Render.")
+
     if is_market_open():
         run_trading_loop()
         end_of_day_cleanup()
     else:
         print("Market is closed.")
+
         # Debug loop to simulate work
         while True:
             print("🕒 Waiting for market to open...")
