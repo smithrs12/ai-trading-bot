@@ -891,7 +891,7 @@ def run_trading_loop():
             df_alpaca = get_data_alpaca(ticker, limit=100)
 
             print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}")
-            print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}"
+            print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}")
 
             ticker_data_cache[ticker] = {
                 "df_short": df_short,
