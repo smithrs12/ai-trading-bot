@@ -215,7 +215,9 @@ def dual_horizon_predict(ticker, df):
 
 # === Main Loop ===
 def is_market_open():
+    print("⏳ Checking if market is open...", flush=True)
     clock = api.get_clock()
+    print(f"✅ Market open status: {clock.is_open}", flush=True)
     return clock.is_open
     
 def is_near_market_close():
@@ -892,6 +894,7 @@ def run_trading_loop():
         time.sleep(300)
 
 if __name__ == "__main__":
+    print("🟢 main.py started")
     send_discord_alert("✅ Trading bot launched on Render.")
 
     # Wait until market opens
