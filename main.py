@@ -82,7 +82,11 @@ class QNetwork(torch.nn.Module):
         return x
 
 q_net = QNetwork(input_dim=4)  # adjust input_dim based on q_state features
-q_net.load_state_dict(torch.load("q_net.pth"))
+if os.path.exists("q_net.pth"):
+    q_net.load_state_dict(torch.load("q_net.pth"))
+    print("🧠 Q-network loaded from q_net.pth")
+else:
+    print("⚠️ No existing Q-network found. Starting fresh.")
 q_net.eval()
 
 def q_state(ticker, position):
