@@ -788,24 +788,12 @@ def execute_trade(ticker, score):
 # === Dynamic Watchlist Selection (Updated) ===
 def get_dynamic_watchlist():
     print("🧠 Generating dynamic watchlist...", flush=True)
-    try:
-        assets = api.list_assets(status="active")
-        tradable = [
-            a.symbol for a in assets
-            if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]
-        ]
-        if not tradable or len(tradable) < 50:
-            print("⚠️ Not enough tradable assets from Alpaca, using fallback universe.")
-            tradable = FALLBACK_UNIVERSE
-    except Exception as e:
-        print(f"❌ Failed to fetch assets from Alpaca: {e}")
-        tradable = FALLBACK_UNIVERSE
+    tradable = FALLBACK_UNIVERSE  # <-- Force fallback universe for IEX testing
 
-    # This logic should be OUTSIDE the except block
     top = []
     sector_counts = {}
 
-    for symbol in random.sample(tradable, 100):  # sample more for diversity
+    for symbol in random.sample(tradable, 30):  # fewer samples to reduce load
         try:
             df = get_data_alpaca(symbol, limit=30)
             if df is None or df.empty:
@@ -815,24 +803,26 @@ def get_dynamic_watchlist():
             volume_avg = df['volume'].mean()
             support, resistance = calculate_support_resistance(df)
             current_price = df['close'].iloc[-1]
+            
+            print(f"🔍 Trying {symbol} | Change: {change:.2%} | Volume: {volume_avg:.0f}")
 
             if (
-                change > 0.01
-                and volume_avg > 500000
-                and passes_volume_vwap_filter(symbol)
+                change > 0.005  # lowered threshold for more matches
+                and volume_avg > 100000  # lowered volume for IEX
                 and support and resistance
                 and support * 0.98 <= current_price <= resistance * 1.02
             ):
                 sector = get_sector(symbol)
                 if sector_counts.get(sector, 0) >= MAX_PER_SECTOR_WATCHLIST:
-                    continue  # Skip to maintain sector diversity
+                    continue
 
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 top.append((symbol, change))
 
                 if len(top) >= 5:
                     break
-        except:
+        except Exception as e:
+            print(f"❌ Error with {symbol}: {e}")
             continue
 
     top.sort(key=lambda x: x[1], reverse=True)
