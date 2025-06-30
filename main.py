@@ -53,7 +53,7 @@ analyzer = SentimentIntensityAnalyzer()
 
 # Google Sheets Setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_name("gspread.json", scope)
+credentials = ServiceAccountCredentials.from_json_keyfile_name(GSPREAD_JSON_PATH, scope)
 gc = gspread.authorize(credentials)
 sheet = gc.open("MetaModelLog").sheet1
 
@@ -211,49 +211,6 @@ def is_near_market_close():
     now = datetime.now(pytz.timezone("US/Eastern"))
     market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     return (market_close - now).total_seconds() <= 300  # 5 minutes
-
-def run_trading_loop():
-    if is_near_market_close():
-    print("⏱️ Near market close — skipping trade cycle.")
-    return  # Or break if in a while loop
-    used_sectors = set()
-    cooldown = {}
-
-    while True:
-        now = datetime.now(pacific)
-        if now.hour == 13 and now.minute >= 0:
-            print("⏹️ Market closing soon, stopping bot.")
-            send_discord_alert("📉 End of trading day.")
-            break
-
-        if now.hour < 6 or (now.hour == 6 and now.minute < 30):
-            print("⏳ Waiting for market to open...")
-            time.sleep(60)
-            continue
-
-        tickers = get_dynamic_watchlist()
-        for ticker in tickers:
-            df_short = get_data(ticker, days=2)
-            df_mid = get_data(ticker, days=15)
-            
-            if not os.path.exists(f"models/short/{ticker}.pkl"):
-                train_model(df_short, "short", ticker)
-            if not os.path.exists(f"models/medium/{ticker}.pkl"):
-                train_model(df_mid, "medium", ticker)
-
-            short_proba, mid_proba = dual_horizon_predict(ticker, df_short)
-            if short_proba and mid_proba:
-                score = (short_proba + mid_proba) / 2
-                if score > 0.6:
-                    state = q_state(ticker, 1).unsqueeze(0)
-                    q_val = q_net(state).item()
-                    if q_val > 0.3:
-                        print(f"🧠 RL approves {ticker} (Q={q_val:.2f})")
-                        execute_trade(ticker, score)
-                    else:
-                        print(f"🛑 RL rejects {ticker} (Q={q_val:.2f})")
-
-        time.sleep(300)
 
 # === Q-Learning Update ===
 def update_q_network_from_log():
@@ -526,7 +483,7 @@ def push_meta_logs_to_sheets(meta_data):
         import gspread
         from oauth2client.service_account import ServiceAccountCredentials
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("google-credentials.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name(GSPREAD_JSON_PATH, scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_key(GSHEET_ID).worksheet("MetaModelLog")
 
