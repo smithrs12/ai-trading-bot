@@ -328,6 +328,9 @@ def passes_volume_vwap_filter(ticker):
 sector_allocations = {}
 MAX_SECTOR_EXPOSURE = 3
 
+# === Dynamic Watchlist Sector Limits ===
+MAX_PER_SECTOR_WATCHLIST = 2  # max tickers per sector in watchlist
+
 def check_sector_allocation(ticker):
     try:
         sector = get_sector(ticker)
@@ -767,57 +770,47 @@ def execute_trade(ticker, score):
 # === Dynamic Watchlist Selection (Updated) ===
 def get_dynamic_watchlist():
     try:
-        print("🔍 Building intelligent watchlist...")
         assets = api.list_assets(status="active")
-        tradable = [
-            a.symbol for a in assets
-            if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]
-        ]
+        tradable = [a.symbol for a in assets if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]]
 
-        stock_scores = []
+        top = []
+        sector_counts = {}
 
-        for symbol in tradable:
+        for symbol in random.sample(tradable, 100):  # sample more for diversity
             try:
                 df = get_data_alpaca(symbol, limit=30)
                 if df is None or df.empty:
                     continue
 
-                # Momentum
                 change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
-
-                # Volume check
                 volume_avg = df['volume'].mean()
-                if volume_avg < 500_000:
-                    continue
-
-                # VWAP & S/R filters
-                if not passes_volume_vwap_filter(symbol):
-                    continue
-
                 support, resistance = calculate_support_resistance(df)
                 current_price = df['close'].iloc[-1]
-                if support is None or resistance is None:
-                    continue
-                if not (support * 0.98 <= current_price <= resistance * 1.02):
-                    continue
 
-                # Score = momentum x volume
-                score = change * volume_avg
-                stock_scores.append((symbol, score))
+                if (
+                    change > 0.01
+                    and volume_avg > 500000
+                    and passes_volume_vwap_filter(symbol)
+                    and support and resistance
+                    and support * 0.98 <= current_price <= resistance * 1.02
+                ):
+                    sector = get_sector(symbol)
+                    if sector_counts.get(sector, 0) >= MAX_PER_SECTOR_WATCHLIST:
+                        continue  # Skip to maintain sector diversity
+
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                    top.append((symbol, change))
+
+                    if len(top) >= 5:
+                        break
             except:
                 continue
 
-        stock_scores.sort(key=lambda x: x[1], reverse=True)
-        top = [sym for sym, _ in stock_scores[:50]]
-        print(f"✅ Watchlist selected: {top}")
-        return top if top else ["AAPL", "MSFT", "NVDA"]
-
+        top.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in top]
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"❌ Watchlist generation failed: {e}\n{tb}")
-        send_discord_alert(f"⚠️ Watchlist generation failed: {e}")
-        return ["AAPL", "MSFT", "NVDA"]
+        print(f"❌ Watchlist generation failed: {e}")
+        return ["AAPL", "MSFT", "NVDA"]  # fallback tickers
 
 def auto_liquidate():
     try:
