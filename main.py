@@ -190,7 +190,14 @@ def get_data(ticker, days=2):
     try:
         end_dt = datetime.now(pytz.utc)
         start_dt = end_dt - timedelta(days=days)
-        bars = api.get_bars(ticker, TimeFrame.Minute, start=start_dt.isoformat(), end=end_dt.isoformat()).df
+        bars = api.get_bars(
+            ticker,
+            TimeFrame.Minute,
+            start=start_dt.isoformat(),
+            end=end_dt.isoformat(),
+            feed='iex'  # Force IEX feed
+        ).df
+
         if bars.empty:
             return None
 
@@ -425,7 +432,12 @@ def get_sector(symbol):
     
 def get_data_alpaca(ticker, timeframe=TimeFrame.Minute, limit=100):
     try:
-        bars = api.get_bars(ticker, timeframe, limit=limit).df
+        bars = api.get_bars(
+            ticker,
+            timeframe,
+            limit=limit,
+            feed='iex'  # Force IEX feed
+        ).df
         return bars if not bars.empty else None
     except Exception as e:
         print(f"❌ Failed to get Alpaca data for {ticker}: {e}")
