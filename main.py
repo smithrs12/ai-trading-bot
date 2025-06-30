@@ -64,6 +64,22 @@ credentials = ServiceAccountCredentials.from_json_keyfile_name(GSPREAD_JSON_PATH
 gc = gspread.authorize(credentials)
 sheet = gc.open("MetaModelLog").sheet1
 
+# === Fallback Universe (Large Cap, Diverse Sectors) ===
+FALLBACK_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "GOOG", "AMZN", "META", "TSLA", "AMD", "NFLX", "CRM",
+    "BRK.B", "V", "MA", "JPM", "BAC", "WFC", "C", "GS", "MS",
+    "XOM", "CVX", "COP", "SLB", "PSX", "EOG",
+    "PFE", "JNJ", "LLY", "MRK", "ABT", "BMY", "CVS", "UNH",
+    "HD", "LOW", "COST", "TGT", "WMT", "PG", "PEP", "KO", "PM",
+    "UNP", "CSX", "UPS", "FDX", "CAT", "DE", "GE", "HON",
+    "NKE", "SBUX", "MCD", "CMG", "DIS", "WBD", "ROKU",
+    "ORCL", "IBM", "INTC", "QCOM", "AVGO", "TXN", "MU", "ADBE", "SNOW", "SHOP",
+    "PLD", "O", "SPG", "AMT", "CCI",
+    "BA", "LMT", "RTX", "NOC", "TDG",
+    "ZM", "ROKU", "DOCU", "UBER", "LYFT", "ABNB", "SQ", "PYPL", "COIN", "SOFI",
+    "TLRY", "CGC", "CRON", "ACB",
+]
+
 # === Utility ===
 def send_discord_alert(message):
     try:
@@ -771,48 +787,56 @@ def execute_trade(ticker, score):
         
 # === Dynamic Watchlist Selection (Updated) ===
 def get_dynamic_watchlist():
+    print("🧠 Generating dynamic watchlist...", flush=True)
     try:
         assets = api.list_assets(status="active")
-        tradable = [a.symbol for a in assets if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]]
+        tradable = [
+            a.symbol for a in assets
+            if a.tradable and a.easy_to_borrow and a.exchange in ["NASDAQ", "NYSE"]
+        ]
+        if not tradable or len(tradable) < 50:
+            print("⚠️ Not enough tradable assets from Alpaca, using fallback universe.")
+            tradable = FALLBACK_UNIVERSE
+    except Exception as e:
+        print(f"❌ Failed to fetch assets from Alpaca: {e}")
+        tradable = FALLBACK_UNIVERSE
 
-        top = []
-        sector_counts = {}
+    # This logic should be OUTSIDE the except block
+    top = []
+    sector_counts = {}
 
-        for symbol in random.sample(tradable, 100):  # sample more for diversity
-            try:
-                df = get_data_alpaca(symbol, limit=30)
-                if df is None or df.empty:
-                    continue
-
-                change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
-                volume_avg = df['volume'].mean()
-                support, resistance = calculate_support_resistance(df)
-                current_price = df['close'].iloc[-1]
-
-                if (
-                    change > 0.01
-                    and volume_avg > 500000
-                    and passes_volume_vwap_filter(symbol)
-                    and support and resistance
-                    and support * 0.98 <= current_price <= resistance * 1.02
-                ):
-                    sector = get_sector(symbol)
-                    if sector_counts.get(sector, 0) >= MAX_PER_SECTOR_WATCHLIST:
-                        continue  # Skip to maintain sector diversity
-
-                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
-                    top.append((symbol, change))
-
-                    if len(top) >= 5:
-                        break
-            except:
+    for symbol in random.sample(tradable, 100):  # sample more for diversity
+        try:
+            df = get_data_alpaca(symbol, limit=30)
+            if df is None or df.empty:
                 continue
 
-        top.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, _ in top]
-    except Exception as e:
-        print(f"❌ Watchlist generation failed: {e}")
-        return ["AAPL", "MSFT", "NVDA"]  # fallback tickers
+            change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
+            volume_avg = df['volume'].mean()
+            support, resistance = calculate_support_resistance(df)
+            current_price = df['close'].iloc[-1]
+
+            if (
+                change > 0.01
+                and volume_avg > 500000
+                and passes_volume_vwap_filter(symbol)
+                and support and resistance
+                and support * 0.98 <= current_price <= resistance * 1.02
+            ):
+                sector = get_sector(symbol)
+                if sector_counts.get(sector, 0) >= MAX_PER_SECTOR_WATCHLIST:
+                    continue  # Skip to maintain sector diversity
+
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                top.append((symbol, change))
+
+                if len(top) >= 5:
+                    break
+        except:
+            continue
+
+    top.sort(key=lambda x: x[1], reverse=True)
+    return [sym for sym, _ in top]
 
 def auto_liquidate():
     try:
