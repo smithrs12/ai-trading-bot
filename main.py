@@ -584,7 +584,7 @@ def train_model(ticker, X, y, model_path):
         model = VotingClassifier(estimators=[
             ('rf', RandomForestClassifier()),
             ('lr', LogisticRegression()),
-            ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
+            ('xgb', XGBClassifier(eval_metric="logloss"))
         ], voting='soft')
         model.fit(X, y)
         acc = walk_forward_validation(X, y, RandomForestClassifier())
