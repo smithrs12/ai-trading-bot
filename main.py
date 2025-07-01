@@ -27,6 +27,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from transformers import pipeline
 import asyncio
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler
 
 # === DEBUG Mode Toggle ===
 DEBUG = True
@@ -575,26 +576,36 @@ def needs_retraining(model_path, max_age_hours=24):
     mod_time = datetime.fromtimestamp(os.path.getmtime(model_path))
     return (datetime.now() - mod_time).total_seconds() > max_age_hours * 3600
 
-# === Updated train_model() ===
+# === Updated train_model() with scaler and higher max_iter ===
 def train_model(ticker, X, y, model_path):
     try:
         if len(X) < 50:
             print(f"⚠️ Not enough data to train {ticker}")
             return None
+
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
         model = VotingClassifier(estimators=[
             ('rf', RandomForestClassifier()),
-            ('lr', LogisticRegression()),
+            ('lr', LogisticRegression(max_iter=500)),  # Increased max_iter
             ('xgb', XGBClassifier(eval_metric="logloss"))
         ], voting='soft')
-        model.fit(X, y)
+
+        model.fit(X_scaled, y)
+
+        # Use unscaled data for validation to match walk_forward_validation inputs
         acc = walk_forward_validation(X, y, RandomForestClassifier())
         if acc < 0.5:
             print(f"⚠️ Low validation accuracy for {ticker}: {acc:.2f}")
             handle_model_training_failure(ticker)
             return None
+
         joblib.dump(model, model_path)
         log(f"✅ Trained model for {ticker} with acc={acc:.2f}")
         return model
+
     except Exception as e:
         handle_model_training_failure(ticker)
         import traceback
