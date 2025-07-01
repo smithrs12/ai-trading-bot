@@ -580,25 +580,25 @@ def needs_retraining(model_path, max_age_hours=24):
 def train_model(ticker, X, y, model_path):
     try:
         if len(X) < 50:
-            print(f"⚠️ Not enough data to train {ticker}")
+            print(f"⚠️ Not enough data to train {ticker}", flush=True)
             return None
 
-        # Scale features
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        print(f"🧪 [{ticker}] Starting training with {len(X)} rows", flush=True)
+        start = time.time()
 
         model = VotingClassifier(estimators=[
             ('rf', RandomForestClassifier()),
-            ('lr', LogisticRegression(max_iter=500)),  # Increased max_iter
-            ('xgb', XGBClassifier(eval_metric="logloss"))
+            ('lr', LogisticRegression()),
+            ('xgb', XGBClassifier(eval_metric="logloss", verbosity=0))
         ], voting='soft')
 
-        model.fit(X_scaled, y)
+        model.fit(X, y)
 
-        # Use unscaled data for validation to match walk_forward_validation inputs
+        print(f"🧪 [{ticker}] Model fit completed in {time.time() - start:.2f}s", flush=True)
+
         acc = walk_forward_validation(X, y, RandomForestClassifier())
         if acc < 0.5:
-            print(f"⚠️ Low validation accuracy for {ticker}: {acc:.2f}")
+            print(f"⚠️ Low validation accuracy for {ticker}: {acc:.2f}", flush=True)
             handle_model_training_failure(ticker)
             return None
 
@@ -610,7 +610,7 @@ def train_model(ticker, X, y, model_path):
         handle_model_training_failure(ticker)
         import traceback
         tb = traceback.format_exc()
-        print(f"❌ Training failed for {ticker}: {e}\n{tb}")
+        print(f"❌ Training failed for {ticker}: {e}\n{tb}", flush=True)
         send_discord_alert(f"⚠️ Model training failed for {ticker}")
         return None
 
