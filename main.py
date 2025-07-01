@@ -884,7 +884,7 @@ def auto_liquidate():
 def run_trading_loop():
     print("🚀 Entered run_trading_loop", flush=True)
     if is_near_market_close():
-        print("⏱️ Near market close — skipping trade cycle.")
+        print("⏱️ Near market close — skipping trade cycle.", flush=True)
         auto_liquidate()
         return
 
@@ -894,47 +894,54 @@ def run_trading_loop():
     while True:
         now = datetime.now(pacific)
         if now.hour == 13 and now.minute >= 0:
-            print("⏹️ Market closing soon, stopping bot.")
+            print("⏹️ Market closing soon, stopping bot.", flush=True)
             send_discord_alert("📉 End of trading day.")
             break
 
         if now.hour < 6 or (now.hour == 6 and now.minute < 30):
-            print("⏳ Waiting for market to open...")
+            print("⏳ Waiting for market to open...", flush=True)
             time.sleep(60)
             continue
 
         tickers = get_dynamic_watchlist()
         print(f"🎯 Evaluating tickers: {tickers}", flush=True)
+        print(f"🧾 Tickering queue: {tickers}", flush=True)
         ticker_data_cache = {}
 
         for ticker in tickers:
-            print(f"📊 Processing {ticker}", flush=True)
-            df_short = get_data(ticker, days=2)
-            df_mid = get_data(ticker, days=15)
-            df_alpaca = get_data_alpaca(ticker, limit=100)
+            try:
+                print(f"📊 Processing {ticker}", flush=True)
+                df_short = get_data(ticker, days=2)
+                df_mid = get_data(ticker, days=15)
+                df_alpaca = get_data_alpaca(ticker, limit=100)
 
-            print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}")
-            print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}")
+                print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}", flush=True)
+                print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}", flush=True)
 
-            ticker_data_cache[ticker] = {
-                "df_short": df_short,
-                "df_mid": df_mid,
-                "df_alpaca": df_alpaca,
-            }
+                ticker_data_cache[ticker] = {
+                    "df_short": df_short,
+                    "df_mid": df_mid,
+                    "df_alpaca": df_alpaca,
+                }
 
-            if df_short is not None and not df_short.empty:
-                print(f"🧠 Training short model for {ticker}")
-                X_short = df_short.drop(columns=["Target"])
-                y_short = df_short["Target"]
-                short_model_path = f"models/short/{ticker}.pkl"
-                train_model(ticker, X_short, y_short, short_model_path)
+                if df_short is not None and not df_short.empty:
+                    print(f"🧠 Training short model for {ticker}", flush=True)
+                    X_short = df_short.drop(columns=["Target"])
+                    y_short = df_short["Target"]
+                    short_model_path = f"models/short/{ticker}.pkl"
+                    train_model(ticker, X_short, y_short, short_model_path)
 
-            if df_mid is not None and not df_mid.empty:
-                print(f"🧠 Training medium model for {ticker}")
-                X_mid = df_mid.drop(columns=["Target"])
-                y_mid = df_mid["Target"]
-                mid_model_path = f"models/medium/{ticker}.pkl"
-                train_model(ticker, X_mid, y_mid, mid_model_path)
+                if df_mid is not None and not df_mid.empty:
+                    print(f"🧠 Training medium model for {ticker}", flush=True)
+                    X_mid = df_mid.drop(columns=["Target"])
+                    y_mid = df_mid["Target"]
+                    mid_model_path = f"models/medium/{ticker}.pkl"
+                    train_model(ticker, X_mid, y_mid, mid_model_path)
+
+                print(f"✅ Done processing {ticker}", flush=True)
+
+            except Exception as e:
+                print(f"❌ Exception while processing {ticker}: {e}", flush=True)
 
         time.sleep(300)
         print("🔄 Looping after 5 min sleep...", flush=True)
