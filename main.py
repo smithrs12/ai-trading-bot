@@ -922,6 +922,9 @@ def run_trading_loop():
                     print(f"⚠️ Not enough data for {ticker}, skipping.", flush=True)
                     continue
 
+                # === Assign 5-minute target ===
+                df_short["Target"] = (df_short["Close"].shift(-5) > df_short["Close"]).astype(int)
+
                 # === Pre-checks BEFORE model training ===
                 latest_row = df_short.iloc[-1]
                 if not all(col in df_short.columns for col in ["Close", "Volume", "High", "Low"]):
