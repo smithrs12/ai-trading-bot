@@ -950,8 +950,8 @@ def run_trading_loop():
                 vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
 
                 if not (
-                    price_momentum > 0.01 and
-                    current_volume > 1.5 * recent_volume and
+                    price_momentum > 0.005 and
+                    current_volume > 1.2 * recent_volume and
                     latest_row.get('Close', 0) > vwap
                 ):
                     print(f"⏩ Skipping {ticker} due to weak momentum or volume.", flush=True)
