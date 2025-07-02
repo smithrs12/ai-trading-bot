@@ -364,10 +364,10 @@ def passes_volume_vwap_filter(ticker):
 
 # === Sector Rotation Limits ===
 sector_allocations = {}
-MAX_SECTOR_EXPOSURE = 3
+MAX_SECTOR_EXPOSURE = 10
 
 # === Dynamic Watchlist Sector Limits ===
-MAX_PER_SECTOR_WATCHLIST = 2  # max tickers per sector in watchlist
+MAX_PER_SECTOR_WATCHLIST = 12  # max tickers per sector in watchlist
 
 def check_sector_allocation(ticker):
     try:
