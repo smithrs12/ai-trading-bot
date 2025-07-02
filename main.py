@@ -918,18 +918,35 @@ def run_trading_loop():
                 print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}", flush=True)
                 print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}", flush=True)
 
-                ticker_data_cache[ticker] = {
-                    "df_short": df_short,
-                    "df_mid": df_mid,
-                    "df_alpaca": df_alpaca,
-                }
+                if df_short is None or df_short.empty or len(df_short) < 20:
+                    print(f"⚠️ Not enough data for {ticker}, skipping.", flush=True)
+                    continue
 
-                if df_short is not None and not df_short.empty:
-                    print(f"🧠 Training short model for {ticker}", flush=True)
-                    X_short = df_short.drop(columns=["Target"])
-                    y_short = df_short["Target"]
-                    short_model_path = f"models/short/{ticker}.pkl"
-                    train_model(ticker, X_short, y_short, short_model_path)
+                # === Pre-checks BEFORE model training ===
+                latest_row = df_short.iloc[-1]
+                if not all(col in df_short.columns for col in ["Close", "Volume", "High", "Low"]):
+                    print(f"⚠️ Missing required columns for {ticker}, skipping.", flush=True)
+                    continue
+
+                price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
+                recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
+                current_volume = latest_row.get('Volume', 0)
+                vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
+
+                if not (
+                    price_momentum > 0.01 and
+                    current_volume > 1.5 * recent_volume and
+                    latest_row.get('Close', 0) > vwap
+                ):
+                    print(f"⏩ Skipping {ticker} due to weak momentum or volume.", flush=True)
+                    continue
+
+                # === Only now train models ===
+                print(f"🧠 Training short model for {ticker}", flush=True)
+                X_short = df_short.drop(columns=["Target"])
+                y_short = df_short["Target"]
+                short_model_path = f"models/short/{ticker}.pkl"
+                train_model(ticker, X_short, y_short, short_model_path)
 
                 if df_mid is not None and not df_mid.empty:
                     print(f"🧠 Training medium model for {ticker}", flush=True)
@@ -938,45 +955,21 @@ def run_trading_loop():
                     mid_model_path = f"models/medium/{ticker}.pkl"
                     train_model(ticker, X_mid, y_mid, mid_model_path)
 
-                # === Make predictions and execute trades ===
-                if df_short is not None and not df_short.empty:
-                    try:
-                        latest_row = df_short.iloc[-1]
-                        X_live = latest_row.drop("Target").values.reshape(1, -1)
-                        model_path = f"models/short/{ticker}.pkl"
-                        if os.path.exists(model_path):
-                            model = joblib.load(model_path)
-                            proba = model.predict_proba(X_live)[0][1]
-                            prediction = model.predict(X_live)[0]
-                            print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
+                # === Predict and act ===
+                if os.path.exists(short_model_path):
+                    model = joblib.load(short_model_path)
+                    X_live = latest_row.drop("Target").values.reshape(1, -1)
+                    proba = model.predict_proba(X_live)[0][1]
+                    prediction = model.predict(X_live)[0]
+                    print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
 
-                            if (
-                                'Close' in df_short.columns and
-                                'Volume' in df_short.columns and
-                                'High' in df_short.columns and
-                                'Low' in df_short.columns
-                            ):
-                                price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
-                                recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
-                                current_volume = latest_row.get('Volume', 0)
-                                vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
-
-                                if (
-                                    proba > 0.53 and prediction == 1 and
-                                    price_momentum > 0.01 and
-                                    current_volume > 1.5 * recent_volume and
-                                    latest_row.get('Close', 0) > vwap
-                                ):
-                                    print(f"🚀 BUY confirmed for {ticker} with price momentum and volume spike")
-                                    execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
-                                elif proba < 0.45 and prediction == 0:
-                                    print(f"📉 SELL or avoid {ticker}")
-                                else:
-                                    print(f"⏸️ HOLD/No action for {ticker}")
-                            else:
-                                print(f"⚠️ Missing key columns for momentum logic in {ticker}")
-                    except Exception as e:
-                        print(f"⚠️ Error during prediction or execution for {ticker}: {e}")
+                    if proba > 0.53 and prediction == 1:
+                        print(f"🚀 BUY confirmed for {ticker}")
+                        execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
+                    elif proba < 0.45 and prediction == 0:
+                        print(f"📉 SELL or avoid {ticker}")
+                    else:
+                        print(f"⏸️ HOLD/No action for {ticker}")
 
                 print(f"✅ Done processing {ticker}", flush=True)
 
