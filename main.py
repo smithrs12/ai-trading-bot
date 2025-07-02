@@ -888,7 +888,6 @@ def run_trading_loop():
         auto_liquidate()
         return
 
-    used_sectors = set()
     cooldown = {}
 
     while True:
@@ -905,41 +904,38 @@ def run_trading_loop():
 
         tickers = get_dynamic_watchlist()
         print(f"🎯 Evaluating tickers: {tickers}", flush=True)
-        print(f"🧾 Tickering queue: {tickers}", flush=True)
-        ticker_data_cache = {}
 
         for ticker in tickers:
             try:
                 print(f"📊 Processing {ticker}", flush=True)
                 df_short = get_data(ticker, days=2)
-                df_mid = get_data(ticker, days=15)
-                df_alpaca = get_data_alpaca(ticker, limit=100)
-
                 print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}", flush=True)
-                print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}", flush=True)
-
-                ticker_data_cache[ticker] = {
-                    "df_short": df_short,
-                    "df_mid": df_mid,
-                    "df_alpaca": df_alpaca,
-                }
 
                 if df_short is not None and not df_short.empty:
+                    # === Train short-term model ===
                     print(f"🧠 Training short model for {ticker}", flush=True)
                     X_short = df_short.drop(columns=["Target"])
                     y_short = df_short["Target"]
                     short_model_path = f"models/short/{ticker}.pkl"
                     train_model(ticker, X_short, y_short, short_model_path)
 
-                if df_mid is not None and not df_mid.empty:
-                    print(f"🧠 Training medium model for {ticker}", flush=True)
-                    X_mid = df_mid.drop(columns=["Target"])
-                    y_mid = df_mid["Target"]
-                    mid_model_path = f"models/medium/{ticker}.pkl"
-                    train_model(ticker, X_mid, y_mid, mid_model_path)
+                    # === Make prediction ===
+                    latest_row = df_short.iloc[-1]
+                    X_live = latest_row.drop("Target").values.reshape(1, -1)
 
-                print(f"✅ Done processing {ticker}", flush=True)
+                    if os.path.exists(short_model_path):
+                        model = joblib.load(short_model_path)
+                        proba = model.predict_proba(X_live)[0][1]
+                        prediction = model.predict(X_live)[0]
+                        print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
 
+                        if proba > 0.55 and prediction == 1:
+                            print(f"🚀 BUY signal for {ticker}!")
+                            execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
+                        elif proba < 0.45 and prediction == 0:
+                            print(f"📉 SELL or avoid {ticker}")
+                        else:
+                            print(f"⏸️ HOLD/No action for {ticker}")
             except Exception as e:
                 print(f"❌ Exception while processing {ticker}: {e}", flush=True)
 
