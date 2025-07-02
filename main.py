@@ -186,7 +186,6 @@ def walk_forward_validation(X, y, model):
         send_discord_alert(f"⚠️ Walk-forward validation error: {e}")
         return 0
 
-# === Data Fetching ===
 def get_data(ticker, days=2):
     try:
         end_dt = datetime.now(pytz.utc)
@@ -196,20 +195,33 @@ def get_data(ticker, days=2):
             TimeFrame.Minute,
             start=start_dt.isoformat(),
             end=end_dt.isoformat(),
-            feed='iex'  # Force IEX feed
+            feed='iex'
         ).df
 
         if bars.empty:
             return None
 
         bars = bars[bars['volume'] > 0].copy()
-        bars["RSI"] = RSIIndicator(close=bars["close"], window=14).rsi()
-        bars["MACD"] = MACD(close=bars["close"]).macd_diff()
-        bars["OBV"] = OnBalanceVolumeIndicator(close=bars["close"], volume=bars["volume"]).on_balance_volume()
-        bars["Target"] = (bars["close"].shift(-5) > bars["close"]).astype(int)
-        bars = bars.dropna()
 
+        # Normalize column names to match the rest of your pipeline
+        bars.rename(columns={
+            "close": "Close",
+            "high": "High",
+            "low": "Low",
+            "volume": "Volume"
+        }, inplace=True)
+
+        # Add TA indicators
+        bars["RSI"] = RSIIndicator(close=bars["Close"], window=14).rsi()
+        bars["MACD"] = MACD(close=bars["Close"]).macd_diff()
+        bars["OBV"] = OnBalanceVolumeIndicator(close=bars["Close"], volume=bars["Volume"]).on_balance_volume()
+
+        # Assign 5-minute prediction target
+        bars["Target"] = (bars["Close"].shift(-5) > bars["Close"]).astype(int)
+
+        bars.dropna(inplace=True)
         return bars
+
     except Exception as e:
         print(f"Data fetch failed for {ticker}: {e}")
         return None
@@ -928,6 +940,7 @@ def run_trading_loop():
                 # === Pre-checks BEFORE model training ===
                 latest_row = df_short.iloc[-1]
                 if not all(col in df_short.columns for col in ["Close", "Volume", "High", "Low"]):
+                    print(f"🧾 Actual columns in df_short for {ticker}: {df_short.columns.tolist()}", flush=True)
                     print(f"⚠️ Missing required columns for {ticker}, skipping.", flush=True)
                     continue
 
