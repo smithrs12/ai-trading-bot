@@ -950,23 +950,31 @@ def run_trading_loop():
                             prediction = model.predict(X_live)[0]
                             print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
 
-                            price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
-                            recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
-                            current_volume = latest_row['Volume']
-                            vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
-
                             if (
-                                proba > 0.53 and prediction == 1 and
-                                price_momentum > 0.01 and
-                                current_volume > 1.5 * recent_volume and
-                                latest_row['Close'] > vwap
+                                'Close' in df_short.columns and
+                                'Volume' in df_short.columns and
+                                'High' in df_short.columns and
+                                'Low' in df_short.columns
                             ):
-                                print(f"🚀 BUY confirmed for {ticker} with price momentum and volume spike")
-                                execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
-                            elif proba < 0.45 and prediction == 0:
-                                print(f"📉 SELL or avoid {ticker}")
+                                price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
+                                recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
+                                current_volume = latest_row.get('Volume', 0)
+                                vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
+
+                                if (
+                                    proba > 0.53 and prediction == 1 and
+                                    price_momentum > 0.01 and
+                                    current_volume > 1.5 * recent_volume and
+                                    latest_row.get('Close', 0) > vwap
+                                ):
+                                    print(f"🚀 BUY confirmed for {ticker} with price momentum and volume spike")
+                                    execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
+                                elif proba < 0.45 and prediction == 0:
+                                    print(f"📉 SELL or avoid {ticker}")
+                                else:
+                                    print(f"⏸️ HOLD/No action for {ticker}")
                             else:
-                                print(f"⏸️ HOLD/No action for {ticker}")
+                                print(f"⚠️ Missing key columns for momentum logic in {ticker}")
                     except Exception as e:
                         print(f"⚠️ Error during prediction or execution for {ticker}: {e}")
 
