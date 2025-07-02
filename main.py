@@ -588,7 +588,7 @@ def train_model(ticker, X, y, model_path):
 
         model = VotingClassifier(estimators=[
             ('rf', RandomForestClassifier()),
-            ('lr', LogisticRegression()),
+            ('lr', LogisticRegression(max_iter=1000)),
             ('xgb', XGBClassifier(eval_metric="logloss", verbosity=0))
         ], voting='soft')
 
@@ -921,7 +921,7 @@ def run_trading_loop():
 
                     # === Make prediction ===
                     latest_row = df_short.iloc[-1]
-                    X_live = latest_row.drop("Target").values.reshape(1, -1)
+                    X_live = latest_row.drop("Target").to_frame().T
 
                     if os.path.exists(short_model_path):
                         model = joblib.load(short_model_path)
