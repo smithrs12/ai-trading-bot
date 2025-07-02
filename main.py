@@ -888,6 +888,7 @@ def run_trading_loop():
         auto_liquidate()
         return
 
+    used_sectors = set()
     cooldown = {}
 
     while True:
@@ -904,38 +905,73 @@ def run_trading_loop():
 
         tickers = get_dynamic_watchlist()
         print(f"🎯 Evaluating tickers: {tickers}", flush=True)
+        print(f"🧾 Tickering queue: {tickers}", flush=True)
+        ticker_data_cache = {}
 
         for ticker in tickers:
             try:
                 print(f"📊 Processing {ticker}", flush=True)
                 df_short = get_data(ticker, days=2)
+                df_mid = get_data(ticker, days=15)
+                df_alpaca = get_data_alpaca(ticker, limit=100)
+
                 print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}", flush=True)
+                print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}", flush=True)
+
+                ticker_data_cache[ticker] = {
+                    "df_short": df_short,
+                    "df_mid": df_mid,
+                    "df_alpaca": df_alpaca,
+                }
 
                 if df_short is not None and not df_short.empty:
-                    # === Train short-term model ===
                     print(f"🧠 Training short model for {ticker}", flush=True)
                     X_short = df_short.drop(columns=["Target"])
                     y_short = df_short["Target"]
                     short_model_path = f"models/short/{ticker}.pkl"
                     train_model(ticker, X_short, y_short, short_model_path)
 
-                    # === Make prediction ===
-                    latest_row = df_short.iloc[-1]
-                    X_live = latest_row.drop("Target").to_frame().T
+                if df_mid is not None and not df_mid.empty:
+                    print(f"🧠 Training medium model for {ticker}", flush=True)
+                    X_mid = df_mid.drop(columns=["Target"])
+                    y_mid = df_mid["Target"]
+                    mid_model_path = f"models/medium/{ticker}.pkl"
+                    train_model(ticker, X_mid, y_mid, mid_model_path)
 
-                    if os.path.exists(short_model_path):
-                        model = joblib.load(short_model_path)
-                        proba = model.predict_proba(X_live)[0][1]
-                        prediction = model.predict(X_live)[0]
-                        print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
+                # === Make predictions and execute trades ===
+                if df_short is not None and not df_short.empty:
+                    try:
+                        latest_row = df_short.iloc[-1]
+                        X_live = latest_row.drop("Target").values.reshape(1, -1)
+                        model_path = f"models/short/{ticker}.pkl"
+                        if os.path.exists(model_path):
+                            model = joblib.load(model_path)
+                            proba = model.predict_proba(X_live)[0][1]
+                            prediction = model.predict(X_live)[0]
+                            print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
 
-                        if proba > 0.55 and prediction == 1:
-                            print(f"🚀 BUY signal for {ticker}!")
-                            execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
-                        elif proba < 0.45 and prediction == 0:
-                            print(f"📉 SELL or avoid {ticker}")
-                        else:
-                            print(f"⏸️ HOLD/No action for {ticker}")
+                            price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
+                            recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
+                            current_volume = latest_row['Volume']
+                            vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
+
+                            if (
+                                proba > 0.53 and prediction == 1 and
+                                price_momentum > 0.01 and
+                                current_volume > 1.5 * recent_volume and
+                                latest_row['Close'] > vwap
+                            ):
+                                print(f"🚀 BUY confirmed for {ticker} with price momentum and volume spike")
+                                execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
+                            elif proba < 0.45 and prediction == 0:
+                                print(f"📉 SELL or avoid {ticker}")
+                            else:
+                                print(f"⏸️ HOLD/No action for {ticker}")
+                    except Exception as e:
+                        print(f"⚠️ Error during prediction or execution for {ticker}: {e}")
+
+                print(f"✅ Done processing {ticker}", flush=True)
+
             except Exception as e:
                 print(f"❌ Exception while processing {ticker}: {e}", flush=True)
 
@@ -946,13 +982,9 @@ if __name__ == "__main__":
     print("🟢 main.py started")
     send_discord_alert("✅ Trading bot launched on Render.")
 
-    # Wait until market opens
     while not is_market_open():
         print("⏳ Market is closed. Waiting to start trading...")
         time.sleep(60)
 
-    # Run bot while market is open
     run_trading_loop()
-    
-    # After market close
     end_of_day_cleanup()
