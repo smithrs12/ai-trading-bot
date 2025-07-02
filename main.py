@@ -828,7 +828,7 @@ def get_dynamic_watchlist():
     top = []
     sector_counts = {}
 
-    for symbol in random.sample(tradable, 30):  # fewer samples to reduce load
+    for symbol in random.sample(tradable, 50):  # fewer samples to reduce load
         try:
             df = get_data_alpaca(symbol, limit=30)
             if df is None or df.empty:
@@ -853,7 +853,7 @@ def get_dynamic_watchlist():
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 top.append((symbol, change))
 
-                if len(top) >= 5:
+                if len(top) >= 20:
                     break
 
         except Exception as e:
