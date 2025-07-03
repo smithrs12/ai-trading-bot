@@ -1128,7 +1128,7 @@ class ElliottWaveAnalyzer:
             log(f"❌ Elliott Wave counting failed: {e}")
             return []
     
-    def validate_elliott_waves(self, self, waves):
+    def validate_elliott_waves(self, waves):
         """Validate Elliott Wave patterns according to rules"""
         try:
             if len(waves) < 5:
