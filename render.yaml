@@ -1,3 +1,6 @@
+build:
+  pythonVersion: 3.11.8
+
 services:
   # Web service for health checks (required for Render)
   - type: web
@@ -33,7 +36,7 @@ services:
         sync: false
     healthCheckPath: /health
     autoDeploy: false
-    
+
   # Background worker for intensive trading operations (optional)
   - type: worker
     name: ai-trading-bot-worker
