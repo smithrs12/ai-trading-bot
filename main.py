@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, EMAIndicator
-from ta.volume import OnBalanceVolumeIndicator, VolumeSMAIndicator
+from ta.volume import OnBalanceVolumeIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 from datetime import datetime, timedelta
 from pytz import timezone
