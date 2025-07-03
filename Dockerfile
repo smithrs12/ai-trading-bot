@@ -9,18 +9,30 @@ RUN apt-get update && apt-get install -y \
     make \
     wget \
     build-essential \
+    libffi-dev \
+    libssl-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    libopenblas-dev \
+    gfortran \
     && rm -rf /var/lib/apt/lists/*
 
-# Install TA-Lib from source (required for talib-binary)
+# Install TA-Lib from source
 RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
     tar -xzf ta-lib-0.4.0-src.tar.gz && \
-    cd ta-lib/ && \
-    ./configure --prefix=/usr && \
+    cd ta-lib && \
+    ./configure --prefix=/usr/local && \
     make && \
     make install && \
     cd .. && \
     rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
-    RUN pip install --no-cache-dir TA-Lib
+
+# Set library path so TA-Lib can be found
+ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+
+# Install Python wrapper for TA-Lib
+RUN pip install --no-cache-dir TA-Lib
 
 # Copy requirements first for better caching
 COPY requirements.txt .
