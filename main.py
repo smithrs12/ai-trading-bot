@@ -917,84 +917,97 @@ def run_trading_loop():
 
         tickers = get_dynamic_watchlist()
         print(f"🎯 Evaluating tickers: {tickers}", flush=True)
-        print(f"🧾 Tickering queue: {tickers}", flush=True)
-        ticker_data_cache = {}
 
         for ticker in tickers:
             try:
                 print(f"📊 Processing {ticker}", flush=True)
                 df_short = get_data(ticker, days=2)
                 df_mid = get_data(ticker, days=15)
-                df_alpaca = get_data_alpaca(ticker, limit=100)
-
-                print(f"📉 {ticker} df_short rows: {len(df_short) if df_short is not None else 'None'}", flush=True)
-                print(f"📊 {ticker} df_mid rows: {len(df_mid) if df_mid is not None else 'None'}", flush=True)
 
                 if df_short is None or df_short.empty or len(df_short) < 20:
                     print(f"⚠️ Not enough data for {ticker}, skipping.", flush=True)
                     continue
 
-                # === Assign 5-minute target ===
-                df_short["Target"] = (df_short["Close"].shift(-5) > df_short["Close"]).astype(int)
-
-                # === Pre-checks BEFORE model training ===
                 latest_row = df_short.iloc[-1]
+
+                # Confirm required columns
                 if not all(col in df_short.columns for col in ["Close", "Volume", "High", "Low"]):
-                    print(f"🧾 Actual columns in df_short for {ticker}: {df_short.columns.tolist()}", flush=True)
                     print(f"⚠️ Missing required columns for {ticker}, skipping.", flush=True)
                     continue
 
+                # Volume & VWAP filters
                 price_momentum = (df_short['Close'].iloc[-1] - df_short['Close'].iloc[-5]) / df_short['Close'].iloc[-5]
                 recent_volume = df_short['Volume'].rolling(20).mean().iloc[-2]
-                current_volume = latest_row.get('Volume', 0)
+                current_volume = latest_row["Volume"]
                 vwap = (df_short['Volume'] * (df_short['High'] + df_short['Low']) / 2).sum() / df_short['Volume'].sum()
 
-                if not (
-                    price_momentum > 0.005 and
-                    current_volume > 1.2 * recent_volume and
-                    latest_row.get('Close', 0) > vwap
-                ):
+                if price_momentum < 0.005 or current_volume < 1.2 * recent_volume or latest_row["Close"] < vwap:
                     print(f"⏩ Skipping {ticker} due to weak momentum or volume.", flush=True)
                     continue
 
-                # === Only now train models ===
-                print(f"🧠 Training short model for {ticker}", flush=True)
+                # Technical filters
+                support, resistance = calculate_support_resistance(df_short)
+                if support and resistance:
+                    current_price = latest_row["Close"]
+                    if current_price > resistance or current_price < support:
+                        print(f"🛑 {ticker} near extreme S/R level, skipping.")
+                        continue
+
+                # Sentiment override
+                sentiment_score = get_sentiment_score(ticker)
+                if sentiment_score < -0.2:
+                    print(f"😡 Negative sentiment for {ticker}, skipping.")
+                    continue
+
+                # Train models
+                df_short["Target"] = (df_short["Close"].shift(-5) > df_short["Close"]).astype(int)
                 X_short = df_short.drop(columns=["Target"])
                 y_short = df_short["Target"]
                 short_model_path = f"models/short/{ticker}.pkl"
                 train_model(ticker, X_short, y_short, short_model_path)
 
                 if df_mid is not None and not df_mid.empty:
-                    print(f"🧠 Training medium model for {ticker}", flush=True)
+                    df_mid["Target"] = (df_mid["Close"].shift(-5) > df_mid["Close"]).astype(int)
                     X_mid = df_mid.drop(columns=["Target"])
                     y_mid = df_mid["Target"]
                     mid_model_path = f"models/medium/{ticker}.pkl"
                     train_model(ticker, X_mid, y_mid, mid_model_path)
 
-                # === Predict and act ===
-                if os.path.exists(short_model_path):
-                    model = joblib.load(short_model_path)
-                    X_live = latest_row.drop("Target").values.reshape(1, -1)
-                    proba = model.predict_proba(X_live)[0][1]
-                    prediction = model.predict(X_live)[0]
-                    print(f"🤖 Prediction for {ticker}: {prediction} (Confidence: {proba:.2f})")
+                # Predict with ensemble
+                proba_short, prediction_short = predict_weighted_proba(ticker, latest_row.drop("Target"))
+                if proba_short is None:
+                    continue
 
-                    if proba > 0.53 and prediction == 1:
-                        print(f"🚀 BUY confirmed for {ticker}")
-                        execute_trade(ticker, prediction, proba, cooldown, latest_row, df_short)
-                    elif proba < 0.45 and prediction == 0:
-                        print(f"📉 SELL or avoid {ticker}")
-                    else:
-                        print(f"⏸️ HOLD/No action for {ticker}")
+                # RL HOLD check
+                if ticker in get_current_positions():
+                    _price = float(get_current_positions()[ticker]["avg_entry_price"])
+                    gain = (latest_row["Close"] - _price) / _price
+                    state = q_state(ticker, 1).unsqueeze(0)
+                    hold_value = q_net(state).item()
+                    if hold_value > 0.3 and gain > 0 and proba_short > 0.55:
+                        print(f"⏸️ RL prefers to HOLD {ticker} (Q={hold_value:.2f})")
+                        continue
+
+                # Execute Buy
+                if proba_short > 0.53 and prediction_short == 1:
+                    print(f"🚀 BUY confirmed for {ticker}")
+                    execute_trade(ticker, prediction_short, proba_short, cooldown, latest_row, df_short)
+
+                # Optional: notify on confident sell
+                elif proba_short < 0.45 and prediction_short == 0:
+                    print(f"📉 SELL or avoid {ticker}")
+
+                else:
+                    print(f"⏸️ HOLD/No action for {ticker}")
 
                 print(f"✅ Done processing {ticker}", flush=True)
 
             except Exception as e:
-                print(f"❌ Exception while processing {ticker}: {e}", flush=True)
+                print(f"❌ Error during loop for {ticker}: {e}", flush=True)
 
         time.sleep(300)
         print("🔄 Looping after 5 min sleep...", flush=True)
-
+        
 if __name__ == "__main__":
     print("🟢 main.py started")
     send_discord_alert("✅ Trading bot launched on Render.")
