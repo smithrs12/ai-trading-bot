@@ -41,25 +41,6 @@ DEBUG = True
 load_dotenv()
 pacific = timezone('US/Pacific')
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint for Render"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'market_open': is_market_open_safe(),
-        'bot_running': True
-    })
-
-@app.route('/')
-def home():
-    """Root endpoint"""
-    return jsonify({
-        'service': 'AI Trading Bot',
-        'status': 'running',
-        'timestamp': datetime.now().isoformat()
-    })
-
 # Enhanced model directories
 os.makedirs("models/short", exist_ok=True)
 os.makedirs("models/medium", exist_ok=True)
