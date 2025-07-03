@@ -75,11 +75,11 @@ API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 BASE_URL = os.getenv("ALPACA_BASE_URL")
 
-if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+if not API_KEY or not SECRET_KEY:
     log("❌ Missing Alpaca API credentials")
     exit(1)
 
-api = REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, base_url=ALPACA_BASE_URL)
+api = REST(API_KEY, SECRET_KEY, base_url=BASE_URL)
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
