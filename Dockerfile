@@ -2,27 +2,31 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system-level dependencies and TA-Lib from source
 RUN apt-get update && apt-get install -y \
-    gcc \
     build-essential \
+    wget \
+    gcc \
+    make \
     && rm -rf /var/lib/apt/lists/*
+
+RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
+    tar -xzf ta-lib-0.4.0-src.tar.gz && \
+    cd ta-lib && \
+    ./configure --prefix=/usr && \
+    make && make install && \
+    cd .. && rm -rf ta-lib*
+
+ENV LD_LIBRARY_PATH=/usr/lib
+ENV TA_LIBRARY_PATH=/usr/lib
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip
+RUN pip install --no-cache-dir ta-lib
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy your app code
 COPY . .
-
-# Create required directories
-RUN mkdir -p logs models/short models/medium models/meta models/q_learning \
-    models/garch models/regime performance backtests support_resistance \
-    volume_profiles sector_analysis fibonacci_analysis elliott_waves \
-    harmonic_patterns ichimoku_analysis microstructure volatility_models \
-    regime_analysis
-
-EXPOSE 5000
 
 CMD ["python", "main.py"]
