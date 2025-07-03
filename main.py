@@ -7,10 +7,10 @@ import random
 import requests
 import pandas as pd
 import numpy as np
-from ta.momentum import RSIIndicator
-from ta.trend import MACD, EMAIndicator
-from ta.volume import OnBalanceVolumeIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
+from ta.momentum import RSIIndicator, StochasticOscillator, WilliamsRIndicator
+from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
+from ta.volume import OnBalanceVolumeIndicator, VolumeSMAIndicator, MFIIndicator
+from ta.volatility import BollingerBands, AverageTrueRange, KeltnerChannel
 from datetime import datetime, timedelta
 from pytz import timezone
 from dotenv import load_dotenv
@@ -26,13 +26,17 @@ from oauth2client.service_account import ServiceAccountCredentials
 from transformers import pipeline
 import asyncio
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-from sklearn.preprocessing import StandardScaler
-from collections import defaultdict
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from collections import defaultdict, deque
 import json
 import warnings
 import sys
 import traceback
 import threading
+from scipy import stats
+from scipy.signal import find_peaks
+import talib
+from flask import Flask, jsonify
 
 warnings.filterwarnings('ignore')
 
@@ -41,29 +45,128 @@ DEBUG = True
 load_dotenv()
 pacific = timezone('US/Pacific')
 
+# Create Flask app for health checks (required for Render)
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'market_open': is_market_open_safe(),
+        'bot_running': True,
+        'features_active': {
+            'q_learning': len(trading_state.q_table) if 'trading_state' in globals() else 0,
+            'sector_rotation': len(trading_state.sector_performance) if 'trading_state' in globals() else 0,
+            'support_resistance': len(trading_state.support_resistance_cache) if 'trading_state' in globals() else 0,
+            'volume_profile': len(trading_state.volume_profile_cache) if 'trading_state' in globals() else 0,
+            'fibonacci_levels': len(trading_state.fibonacci_levels) if 'trading_state' in globals() else 0,
+            'elliott_waves': len(trading_state.elliott_wave_counts) if 'trading_state' in globals() else 0,
+            'harmonic_patterns': len(trading_state.harmonic_patterns) if 'trading_state' in globals() else 0,
+            'ichimoku_clouds': len(trading_state.ichimoku_clouds) if 'trading_state' in globals() else 0
+        }
+    })
+
+@app.route('/')
+def home():
+    """Root endpoint"""
+    return jsonify({
+        'service': 'Ultra-Advanced AI Trading Bot',
+        'status': 'running',
+        'timestamp': datetime.now().isoformat(),
+        'version': '3.0.0',
+        'features': [
+            'Q-Learning Reinforcement Learning',
+            'Support/Resistance Analysis', 
+            'Volume Profile Analysis',
+            'Fibonacci Retracement',
+            'Elliott Wave Analysis',
+            'Harmonic Pattern Recognition',
+            'Ichimoku Cloud Analysis',
+            'Market Microstructure Analysis',
+            'Advanced Volatility Models',
+            'Markov Regime Detection',
+            'Sector Rotation System',
+            'Advanced Portfolio Management',
+            'Meta Model Approval',
+            'Sentiment Analysis',
+            'Risk Management',
+            'Emergency Stops',
+            'Advanced Backtesting',
+            'Order Flow Analysis',
+            'Smart Money Detection',
+            'Institutional Activity Tracking'
+        ]
+    })
+
 # Enhanced model directories
 os.makedirs("models/short", exist_ok=True)
 os.makedirs("models/medium", exist_ok=True)
 os.makedirs("models/meta", exist_ok=True)
 os.makedirs("models/q_learning", exist_ok=True)
+os.makedirs("models/garch", exist_ok=True)
+os.makedirs("models/regime", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 os.makedirs("performance", exist_ok=True)
+os.makedirs("backtests", exist_ok=True)
+os.makedirs("support_resistance", exist_ok=True)
+os.makedirs("volume_profiles", exist_ok=True)
+os.makedirs("sector_analysis", exist_ok=True)
+os.makedirs("fibonacci_analysis", exist_ok=True)
+os.makedirs("elliott_waves", exist_ok=True)
+os.makedirs("harmonic_patterns", exist_ok=True)
+os.makedirs("ichimoku_analysis", exist_ok=True)
+os.makedirs("microstructure", exist_ok=True)
+os.makedirs("volatility_models", exist_ok=True)
+os.makedirs("regime_analysis", exist_ok=True)
 
 # === STRATEGIC THRESHOLDS ===
 THRESHOLDS = {
     'SHORT_BUY_THRESHOLD': 0.53,
     'SHORT_SELL_AVOID_THRESHOLD': 0.45,
-    'PRICE_MOMENTUM_MIN': 0.005,  # 0.5%
+    'PRICE_MOMENTUM_MIN': 0.005,
     'VOLUME_SPIKE_MIN': 1.2,
     'SENTIMENT_HOLD_OVERRIDE': -0.5,
     'MAX_PER_SECTOR_WATCHLIST': 12,
-    'MAX_PER_SECTOR_PORTFOLIO': 0.3,  # 30% max per sector
+    'MAX_PER_SECTOR_PORTFOLIO': 0.3,
     'WATCHLIST_LIMIT': 20,
     'ATR_STOP_MULTIPLIER': 1.2,
     'ATR_PROFIT_MULTIPLIER': 2.5,
-    'MAX_PORTFOLIO_RISK': 0.02,  # 2% max risk per trade
-    'MAX_DAILY_DRAWDOWN': 0.05,  # 5% max daily drawdown
-    'VOLATILITY_GATE_THRESHOLD': 0.05  # 5% volatility threshold
+    'MAX_PORTFOLIO_RISK': 0.02,
+    'MAX_DAILY_DRAWDOWN': 0.05,
+    'VOLATILITY_GATE_THRESHOLD': 0.05,
+    'MIN_MODEL_ACCURACY': 0.55,
+    'EMERGENCY_DRAWDOWN_LIMIT': 0.10,
+    'SUPPORT_RESISTANCE_STRENGTH': 3,
+    'VOLUME_PROFILE_BINS': 20,
+    'Q_LEARNING_ALPHA': 0.1,
+    'Q_LEARNING_GAMMA': 0.95,
+    'Q_LEARNING_EPSILON': 0.1,
+    'SECTOR_ROTATION_THRESHOLD': 0.02,
+    'SHARPE_RATIO_MIN': 1.0,
+    'MAX_CORRELATION_THRESHOLD': 0.7,
+    'FIBONACCI_LEVELS': [0.236, 0.382, 0.5, 0.618, 0.786],
+    'FIBONACCI_EXTENSIONS': [1.272, 1.414, 1.618, 2.0, 2.618],
+    'ICHIMOKU_PERIODS': {'tenkan': 9, 'kijun': 26, 'senkou_b': 52},
+    'ELLIOTT_WAVE_MIN_WAVES': 5,
+    'HARMONIC_PATTERN_TOLERANCE': 0.05,
+    'MARKET_PROFILE_SESSIONS': 4,
+    'ORDERFLOW_IMBALANCE_THRESHOLD': 0.3,
+    'LIQUIDITY_POOL_MIN_SIZE': 1000000,
+    'SMART_MONEY_FLOW_THRESHOLD': 0.6,
+    'INSTITUTIONAL_BLOCK_SIZE': 10000,
+    'DARK_POOL_INDICATOR_THRESHOLD': 0.4,
+    'GARCH_ALPHA': 0.1,
+    'GARCH_BETA': 0.85,
+    'GARCH_OMEGA': 0.05,
+    'REGIME_TRANSITION_THRESHOLD': 0.7,
+    'VOLATILITY_CLUSTERING_WINDOW': 20,
+    'MARKET_IMPACT_THRESHOLD': 0.001,
+    'BLOCK_TRADE_THRESHOLD': 0.95,
+    'SMART_MONEY_WINDOW': 20,
+    'INSTITUTIONAL_FLOW_WINDOW': 50,
+    'DARK_POOL_VOLUME_THRESHOLD': 0.8
 }
 
 def log(msg):
@@ -120,10 +223,9 @@ def is_market_open_safe():
         
     except Exception as e:
         log(f"Market status check failed: {e}")
-        # Conservative fallback - assume market is closed
         return False
 
-# === API SETUP WITH BETTER ERROR HANDLING ===
+# === API SETUP ===
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
@@ -132,7 +234,6 @@ api = None
 if API_KEY and SECRET_KEY:
     try:
         api = REST(API_KEY, SECRET_KEY, base_url=BASE_URL)
-        # Test the connection
         account = safe_api_call(api.get_account)
         if account:
             log("✅ Alpaca API connected successfully")
@@ -194,23 +295,24 @@ if GSPREAD_JSON_PATH and GSHEET_ID and os.path.exists(GSPREAD_JSON_PATH):
 
 # === ENHANCED UNIVERSE WITH SECTOR MAPPING ===
 SECTOR_UNIVERSE = {
-    "Technology": ["AAPL", "MSFT", "NVDA", "GOOG", "META", "TSLA", "AMD", "NFLX", "CRM", "ORCL", "IBM", "INTC", "QCOM", "AVGO", "TXN", "MU", "ADBE", "SNOW", "SHOP"],
-    "Finance": ["BRK.B", "V", "MA", "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "USB", "PNC", "TFC", "COF"],
-    "Energy": ["XOM", "CVX", "COP", "SLB", "PSX", "EOG", "MPC", "VLO", "OXY", "HAL"],
-    "Healthcare": ["PFE", "JNJ", "LLY", "MRK", "ABT", "BMY", "CVS", "UNH", "ABBV", "TMO", "DHR", "MDT"],
-    "Consumer": ["HD", "LOW", "COST", "TGT", "WMT", "PG", "PEP", "KO", "PM", "NKE", "SBUX", "MCD", "CMG", "DIS"],
-    "Industrial": ["UNP", "CSX", "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "LMT", "RTX", "NOC"],
-    "REIT": ["PLD", "O", "SPG", "AMT", "CCI", "EQIX", "PSA", "EXR"],
-    "Communication": ["T", "VZ", "CMCSA", "CHTR", "TMUS", "DISH"],
-    "Materials": ["LIN", "APD", "ECL", "SHW", "FCX", "NEM", "GOLD", "AA"],
-    "Utilities": ["NEE", "DUK", "SO", "D", "EXC", "XEL", "PEG", "SRE"]
+    "Technology": ["AAPL", "MSFT", "NVDA", "GOOG", "META", "TSLA", "AMD", "NFLX", "CRM", "ORCL", "IBM", "INTC", "QCOM", "AVGO", "TXN", "MU", "ADBE", "SNOW", "SHOP", "PLTR", "RBLX", "ZM", "DOCU", "OKTA", "CRWD"],
+    "Finance": ["BRK.B", "V", "MA", "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "USB", "PNC", "TFC", "COF", "SCHW", "BLK", "SPGI", "ICE", "CME", "MCO"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "PSX", "EOG", "MPC", "VLO", "OXY", "HAL", "BKR", "DVN", "FANG", "MRO", "APA", "HES", "KMI", "OKE", "EPD", "ET"],
+    "Healthcare": ["PFE", "JNJ", "LLY", "MRK", "ABT", "BMY", "CVS", "UNH", "ABBV", "TMO", "DHR", "MDT", "GILD", "AMGN", "ISRG", "VRTX", "REGN", "ZTS", "DXCM", "ILMN"],
+    "Consumer": ["HD", "LOW", "COST", "TGT", "WMT", "PG", "PEP", "KO", "PM", "NKE", "SBUX", "MCD", "CMG", "DIS", "AMZN", "F", "GM", "ROKU", "BYND", "PTON"],
+    "Industrial": ["UNP", "CSX", "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "LMT", "RTX", "NOC", "MMM", "EMR", "ETN", "PH", "ITW", "CMI", "ROK", "DOV"],
+    "REIT": ["PLD", "O", "SPG", "AMT", "CCI", "EQIX", "PSA", "EXR", "AVB", "EQR", "DLR", "WELL", "VTR", "ARE", "MAA", "ESS", "UDR", "CPT", "FRT", "REG"],
+    "Communication": ["T", "VZ", "CMCSA", "CHTR", "TMUS", "DISH", "DIS", "GOOGL", "META", "TWTR", "SNAP", "PINS", "MTCH", "IAC", "SIRI", "LBRDK", "LBRDA", "PARA"],
+    "Materials": ["LIN", "APD", "ECL", "SHW", "FCX", "NEM", "GOLD", "AA", "DOW", "DD", "PPG", "RPM", "IFF", "FMC", "LYB", "CF", "MOS", "ALB", "VMC", "MLM"],
+    "Utilities": ["NEE", "DUK", "SO", "D", "EXC", "XEL", "PEG", "SRE", "AEP", "PCG", "ED", "ETR", "WEC", "PPL", "CMS", "DTE", "NI", "LNT", "EVRG", "CNP"]
 }
 
 FALLBACK_UNIVERSE = [ticker for sector_tickers in SECTOR_UNIVERSE.values() for ticker in sector_tickers]
 
-# === ENHANCED GLOBAL STATE ===
-class TradingState:
+# === ULTRA-ADVANCED GLOBAL STATE ===
+class UltraAdvancedTradingState:
     def __init__(self):
+        # Basic state
         self.sector_allocations = {}
         self.cooldown_timers = {}
         self.position_history = {}
@@ -222,7 +324,101 @@ class TradingState:
         self.volume_profile_cache = {}
         self.daily_drawdown = 0.0
         self.starting_equity = 0.0
-        self.regime_state = "neutral"  # bull, bear, neutral
+        self.regime_state = "neutral"
+        self.open_positions = {}
+        self.trade_id_counter = 0
+        self.emergency_stop_triggered = False
+        
+        # Advanced tracking
+        self.sector_performance = defaultdict(list)
+        self.correlation_matrix = {}
+        self.volatility_regime = "normal"
+        self.market_microstructure = {}
+        self.risk_metrics = {
+            'sharpe_ratio': 0.0,
+            'max_drawdown': 0.0,
+            'win_rate': 0.0,
+            'profit_factor': 0.0,
+            'avg_win': 0.0,
+            'avg_loss': 0.0,
+            'calmar_ratio': 0.0,
+            'sortino_ratio': 0.0,
+            'information_ratio': 0.0,
+            'treynor_ratio': 0.0,
+            'var_95': 0.0,
+            'cvar_95': 0.0,
+            'max_consecutive_losses': 0,
+            'recovery_factor': 0.0,
+            'sterling_ratio': 0.0
+        }
+        self.portfolio_weights = {}
+        self.rebalance_signals = {}
+        
+        # Q-Learning state
+        self.q_table = defaultdict(lambda: defaultdict(float))
+        self.q_state_history = deque(maxlen=1000)
+        self.q_action_history = deque(maxlen=1000)
+        self.q_reward_history = deque(maxlen=1000)
+        self.q_learning_stats = {
+            'total_episodes': 0,
+            'exploration_rate': THRESHOLDS['Q_LEARNING_EPSILON'],
+            'learning_rate': THRESHOLDS['Q_LEARNING_ALPHA'],
+            'avg_reward': 0.0,
+            'best_reward': 0.0,
+            'convergence_score': 0.0
+        }
+        
+        # Advanced pattern recognition
+        self.fibonacci_levels = {}
+        self.elliott_wave_counts = {}
+        self.harmonic_patterns = {}
+        self.ichimoku_clouds = {}
+        self.candlestick_patterns = {}
+        self.chart_patterns = {}
+        
+        # Market microstructure
+        self.order_flow_imbalance = {}
+        self.liquidity_pools = {}
+        self.smart_money_flow = {}
+        self.institutional_activity = {}
+        self.dark_pool_indicators = {}
+        self.market_impact_models = {}
+        self.bid_ask_spreads = {}
+        self.market_depth = {}
+        
+        # Advanced volatility models
+        self.garch_models = {}
+        self.volatility_surface = {}
+        self.implied_volatility = {}
+        self.volatility_smile = {}
+        self.volatility_term_structure = {}
+        
+        # Regime detection
+        self.markov_regime_states = {}
+        self.regime_probabilities = {}
+        self.regime_transitions = {}
+        self.regime_persistence = {}
+        
+        # News and sentiment
+        self.news_sentiment_scores = {}
+        self.social_sentiment = {}
+        self.earnings_calendar = {}
+        self.economic_indicators = {}
+        self.event_impact_analysis = {}
+        
+        # Performance attribution
+        self.factor_exposures = {}
+        self.alpha_beta_metrics = {}
+        self.attribution_analysis = {}
+        self.style_analysis = {}
+        self.benchmark_tracking = {}
+        
+        # Advanced portfolio analytics
+        self.portfolio_optimization = {}
+        self.risk_budgeting = {}
+        self.factor_models = {}
+        self.stress_testing = {}
+        self.scenario_analysis = {}
         
     def reset_daily(self):
         self.sector_allocations = {}
@@ -232,53 +428,2035 @@ class TradingState:
         self.volume_profile_cache = {}
         self.daily_drawdown = 0.0
         self.starting_equity = 0.0
+        self.emergency_stop_triggered = False
+        self.rebalance_signals = {}
+        self.order_flow_imbalance = {}
+        self.smart_money_flow = {}
+        self.market_impact_models = {}
+    
+    def get_next_trade_id(self):
+        self.trade_id_counter += 1
+        return f"TRADE_{datetime.now().strftime('%Y%m%d')}_{self.trade_id_counter:04d}"
+    
+    def update_ultra_advanced_risk_metrics(self):
+        """Update ultra-advanced risk metrics"""
+        try:
+            if len(self.trade_outcomes) < 10:
+                return
+            
+            returns = [trade['return'] for trade in self.trade_outcomes[-100:]]
+            
+            if len(returns) < 2:
+                return
+            
+            # Basic metrics
+            mean_return = np.mean(returns)
+            std_return = np.std(returns)
+            
+            # Sharpe Ratio
+            if std_return > 0:
+                self.risk_metrics['sharpe_ratio'] = mean_return / std_return * np.sqrt(252)
+            
+            # Sortino Ratio (downside deviation)
+            downside_returns = [r for r in returns if r < 0]
+            if downside_returns:
+                downside_std = np.std(downside_returns)
+                if downside_std > 0:
+                    self.risk_metrics['sortino_ratio'] = mean_return / downside_std * np.sqrt(252)
+            
+            # Win Rate
+            wins = [r for r in returns if r > 0]
+            self.risk_metrics['win_rate'] = len(wins) / len(returns)
+            
+            # Profit Factor
+            total_wins = sum(wins)
+            losses = [abs(r) for r in returns if r < 0]
+            total_losses = sum(losses)
+            if total_losses > 0:
+                self.risk_metrics['profit_factor'] = total_wins / total_losses
+            
+            # Average win/loss
+            if wins:
+                self.risk_metrics['avg_win'] = np.mean(wins)
+            if losses:
+                self.risk_metrics['avg_loss'] = np.mean(losses)
+            
+            # Maximum Drawdown
+            cumulative_returns = np.cumprod(1 + np.array(returns))
+            running_max = np.maximum.accumulate(cumulative_returns)
+            drawdowns = (cumulative_returns - running_max) / running_max
+            self.risk_metrics['max_drawdown'] = abs(np.min(drawdowns))
+            
+            # Calmar Ratio
+            if self.risk_metrics['max_drawdown'] > 0:
+                self.risk_metrics['calmar_ratio'] = mean_return * 252 / self.risk_metrics['max_drawdown']
+            
+            # Value at Risk (95%)
+            self.risk_metrics['var_95'] = np.percentile(returns, 5)
+            
+            # Conditional Value at Risk (95%)
+            var_95 = self.risk_metrics['var_95']
+            tail_losses = [r for r in returns if r <= var_95]
+            if tail_losses:
+                self.risk_metrics['cvar_95'] = np.mean(tail_losses)
+            
+            # Maximum consecutive losses
+            consecutive_losses = 0
+            max_consecutive = 0
+            for r in returns:
+                if r < 0:
+                    consecutive_losses += 1
+                    max_consecutive = max(max_consecutive, consecutive_losses)
+                else:
+                    consecutive_losses = 0
+            self.risk_metrics['max_consecutive_losses'] = max_consecutive
+            
+            # Recovery Factor
+            if self.risk_metrics['max_drawdown'] > 0:
+                total_return = (np.prod(1 + np.array(returns)) - 1)
+                self.risk_metrics['recovery_factor'] = total_return / self.risk_metrics['max_drawdown']
+            
+            # Sterling Ratio
+            avg_drawdown = np.mean([abs(d) for d in drawdowns if d < 0])
+            if avg_drawdown > 0:
+                self.risk_metrics['sterling_ratio'] = mean_return * 252 / avg_drawdown
+                
+        except Exception as e:
+            log(f"❌ Ultra-advanced risk metrics update failed: {e}")
 
-trading_state = TradingState()
+trading_state = UltraAdvancedTradingState()
 
-# === ENHANCED Q-LEARNING NETWORK ===
-class EnhancedQNetwork(torch.nn.Module):
-    def __init__(self, input_dim=20, hidden_dim=256):
-        super(EnhancedQNetwork, self).__init__()
-        self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
-        self.fc2 = torch.nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = torch.nn.Linear(hidden_dim, 128)
-        self.fc4 = torch.nn.Linear(128, 64)
-        self.fc5 = torch.nn.Linear(64, 3)  # Buy, Hold, Sell
-        self.relu = torch.nn.ReLU()
-        self.dropout = torch.nn.Dropout(0.3)
-        self.batch_norm1 = torch.nn.BatchNorm1d(hidden_dim)
-        self.batch_norm2 = torch.nn.BatchNorm1d(hidden_dim)
-
-    def forward(self, x):
-        x = self.relu(self.batch_norm1(self.fc1(x)))
-        x = self.dropout(x)
-        x = self.relu(self.batch_norm2(self.fc2(x)))
-        x = self.dropout(x)
-        x = self.relu(self.fc3(x))
-        x = self.dropout(x)
-        x = self.relu(self.fc4(x))
-        x = self.fc5(x)
-        return x
-
-q_net = EnhancedQNetwork()
-q_optimizer = torch.optim.Adam(q_net.parameters(), lr=0.001)
-q_criterion = torch.nn.MSELoss()
-
-if os.path.exists("models/q_learning/enhanced_q_net.pth"):
+# === ULTRA-ADVANCED TECHNICAL ANALYSIS ===
+def add_ultra_advanced_technical_indicators(df):
+    """Add comprehensive technical indicators including ultra-advanced ones"""
     try:
-        checkpoint = torch.load("models/q_learning/enhanced_q_net.pth", map_location='cpu')
-        q_net.load_state_dict(checkpoint['model_state_dict'])
-        q_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        log("🧠 Enhanced Q-network loaded")
-    except:
-        log("⚠️ Failed to load Q-network, starting fresh")
-else:
-    log("⚠️ No existing Enhanced Q-network found. Starting fresh.")
-q_net.eval()
+        if df is None or df.empty:
+            return df
+        
+        # Convert to numpy arrays for TA-Lib
+        high = df['high'].values
+        low = df['low'].values
+        close = df['close'].values
+        volume = df['volume'].values
+        open_price = df['open'].values
+        
+        # Basic indicators
+        df['returns'] = df['close'].pct_change()
+        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
+        
+        # Moving averages (multiple timeframes)
+        for period in [5, 10, 20, 50, 100, 200]:
+            if len(df) >= period:
+                df[f'sma_{period}'] = df['close'].rolling(period).mean()
+                df[f'ema_{period}'] = EMAIndicator(close=df['close'], window=period).ema_indicator()
+        
+        # RSI (multiple timeframes)
+        for period in [2, 14, 21]:
+            if len(df) >= period:
+                df[f'rsi_{period}'] = RSIIndicator(close=df['close'], window=period).rsi()
+        
+        # MACD (multiple settings)
+        macd_12_26 = MACD(close=df['close'], window_fast=12, window_slow=26, window_sign=9)
+        df['macd'] = macd_12_26.macd()
+        df['macd_signal'] = macd_12_26.macd_signal()
+        df['macd_histogram'] = macd_12_26.macd_diff()
+        
+        macd_5_35 = MACD(close=df['close'], window_fast=5, window_slow=35, window_sign=5)
+        df['macd_fast'] = macd_5_35.macd()
+        df['macd_fast_signal'] = macd_5_35.macd_signal()
+        
+        # Stochastic Oscillator (multiple settings)
+        if len(df) >= 14:
+            stoch_14 = StochasticOscillator(high=df['high'], low=df['low'], close=df['close'], window=14, smooth_window=3)
+            df['stoch_k'] = stoch_14.stoch()
+            df['stoch_d'] = stoch_14.stoch_signal()
+            
+            stoch_5 = StochasticOscillator(high=df['high'], low=df['low'], close=df['close'], window=5, smooth_window=3)
+            df['stoch_k_fast'] = stoch_5.stoch()
+            df['stoch_d_fast'] = stoch_5.stoch_signal()
+        
+        # Williams %R (multiple timeframes)
+        for period in [14, 21]:
+            if len(df) >= period:
+                df[f'williams_r_{period}'] = WilliamsRIndicator(high=df['high'], low=df['low'], close=df['close'], lbp=period).williams_r()
+        
+        # ADX (Average Directional Index)
+        if len(df) >= 14:
+            adx_indicator = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+            df['adx'] = adx_indicator.adx()
+            df['adx_pos'] = adx_indicator.adx_pos()
+            df['adx_neg'] = adx_indicator.adx_neg()
+        
+        # Money Flow Index
+        if len(df) >= 14:
+            df['mfi'] = MFIIndicator(high=df['high'], low=df['low'], close=df['close'], volume=df['volume'], window=14).money_flow_index()
+        
+        # OBV and volume indicators
+        df['obv'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
+        df['volume_sma_10'] = df['volume'].rolling(10).mean()
+        df['volume_sma_20'] = df['volume'].rolling(20).mean()
+        df['volume_ratio'] = df['volume'] / df['volume_sma_20']
+        
+        # ATR (multiple timeframes)
+        for period in [14, 21]:
+            if len(df) >= period:
+                df[f'atr_{period}'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=period).average_true_range()
+        
+        # Bollinger Bands (multiple settings)
+        if len(df) >= 20:
+            bb_20 = BollingerBands(close=df['close'], window=20, window_dev=2)
+            df['bb_upper'] = bb_20.bollinger_hband()
+            df['bb_lower'] = bb_20.bollinger_lband()
+            df['bb_middle'] = bb_20.bollinger_mavg()
+            df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+            df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+            
+            bb_10 = BollingerBands(close=df['close'], window=10, window_dev=1.5)
+            df['bb_upper_fast'] = bb_10.bollinger_hband()
+            df['bb_lower_fast'] = bb_10.bollinger_lband()
+        
+        # Keltner Channels
+        if len(df) >= 20:
+            kc = KeltnerChannel(high=df['high'], low=df['low'], close=df['close'], window=20, window_atr=10)
+            df['kc_upper'] = kc.keltner_channel_hband()
+            df['kc_lower'] = kc.keltner_channel_lband()
+            df['kc_middle'] = kc.keltner_channel_mband()
+        
+        # ULTRA-ADVANCED INDICATORS USING TA-LIB
+        try:
+            # Parabolic SAR
+            df['sar'] = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
+            
+            # Commodity Channel Index
+            df['cci'] = talib.CCI(high, low, close, timeperiod=14)
+            df['cci_20'] = talib.CCI(high, low, close, timeperiod=20)
+            
+            # Rate of Change (multiple timeframes)
+            df['roc_10'] = talib.ROC(close, timeperiod=10)
+            df['roc_20'] = talib.ROC(close, timeperiod=20)
+            
+            # Triple Exponential Moving Average
+            if len(df) >= 30:
+                df['tema'] = talib.TEMA(close, timeperiod=30)
+            
+            # Kaufman Adaptive Moving Average
+            if len(df) >= 30:
+                df['kama'] = talib.KAMA(close, timeperiod=30)
+            
+            # Mesa Adaptive Moving Average
+            df['mama'], df['fama'] = talib.MAMA(close, fastlimit=0.5, slowlimit=0.05)
+            
+            # Hilbert Transform indicators
+            df['ht_trendmode'] = talib.HT_TRENDMODE(close)
+            df['ht_dcperiod'] = talib.HT_DCPERIOD(close)
+            df['ht_dcphase'] = talib.HT_DCPHASE(close)
+            df['ht_phasor_inphase'], df['ht_phasor_quadrature'] = talib.HT_PHASOR(close)
+            df['ht_sine'], df['ht_leadsine'] = talib.HT_SINE(close)
+            df['ht_trendline'] = talib.HT_TRENDLINE(close)
+            
+            # Aroon indicators
+            df['aroon_up'], df['aroon_down'] = talib.AROON(high, low, timeperiod=14)
+            df['aroon_osc'] = talib.AROONOSC(high, low, timeperiod=14)
+            
+            # Balance of Power
+            df['bop'] = talib.BOP(open_price, high, low, close)
+            
+            # Chande Momentum Oscillator
+            df['cmo'] = talib.CMO(close, timeperiod=14)
+            
+            # Directional Movement Index
+            df['dx'] = talib.DX(high, low, close, timeperiod=14)
+            df['minus_di'] = talib.MINUS_DI(high, low, close, timeperiod=14)
+            df['plus_di'] = talib.PLUS_DI(high, low, close, timeperiod=14)
+            
+            # Momentum
+            df['mom'] = talib.MOM(close, timeperiod=10)
+            
+            # Percentage Price Oscillator
+            df['ppo'] = talib.PPO(close, fastperiod=12, slowperiod=26, matype=0)
+            
+            # Ultimate Oscillator
+            df['ultosc'] = talib.ULTOSC(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28)
+            
+            # Normalized Average True Range
+            df['natr'] = talib.NATR(high, low, close, timeperiod=14)
+            
+            # True Range
+            df['trange'] = talib.TRANGE(high, low, close)
+            
+            # Average Directional Movement Index Rating
+            df['adxr'] = talib.ADXR(high, low, close, timeperiod=14)
+            
+            # Absolute Price Oscillator
+            df['apo'] = talib.APO(close, fastperiod=12, slowperiod=26, matype=0)
+            
+            # Chaikin A/D Line
+            df['ad'] = talib.AD(high, low, close, volume)
+            
+            # Chaikin A/D Oscillator
+            df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
+            
+            # On Balance Volume
+            df['obv_talib'] = talib.OBV(close, volume)
+            
+            # CANDLESTICK PATTERNS
+            df['cdl_doji'] = talib.CDLDOJI(open_price, high, low, close)
+            df['cdl_hammer'] = talib.CDLHAMMER(open_price, high, low, close)
+            df['cdl_hangingman'] = talib.CDLHANGINGMAN(open_price, high, low, close)
+            df['cdl_shootingstar'] = talib.CDLSHOOTINGSTAR(open_price, high, low, close)
+            df['cdl_engulfing'] = talib.CDLENGULFING(open_price, high, low, close)
+            df['cdl_harami'] = talib.CDLHARAMI(open_price, high, low, close)
+            df['cdl_piercing'] = talib.CDLPIERCING(open_price, high, low, close)
+            df['cdl_darkcloud'] = talib.CDLDARKCLOUDCOVER(open_price, high, low, close)
+            df['cdl_morningstar'] = talib.CDLMORNINGSTAR(open_price, high, low, close)
+            df['cdl_eveningstar'] = talib.CDLEVENINGSTAR(open_price, high, low, close)
+            df['cdl_3whitesoldiers'] = talib.CDL3WHITESOLDIERS(open_price, high, low, close)
+            df['cdl_3blackcrows'] = talib.CDL3BLACKCROWS(open_price, high, low, close)
+            df['cdl_spinningtop'] = talib.CDLSPINNINGTOP(open_price, high, low, close)
+            df['cdl_marubozu'] = talib.CDLMARUBOZU(open_price, high, low, close)
+            
+        except Exception as talib_error:
+            log(f"⚠️ TA-Lib indicators failed: {talib_error}")
+        
+        # VWAP and price vs VWAP
+        df['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
+        df['price_vs_vwap'] = df['close'] / df['vwap'] - 1
+        
+        # Multiple timeframe VWAP
+        if len(df) >= 20:
+            df['vwap_20'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).rolling(20).sum() / df['volume'].rolling(20).sum()
+            df['vwap_50'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).rolling(50).sum() / df['volume'].rolling(50).sum()
+        
+        # Volatility indicators (multiple timeframes)
+        for period in [5, 10, 20, 50]:
+            if len(df) >= period:
+                df[f'volatility_{period}'] = df['returns'].rolling(period).std()
+        
+        # Price momentum (multiple timeframes)
+        for period in [1, 3, 5, 10, 20]:
+            if len(df) >= period:
+                df[f'momentum_{period}'] = df['close'].pct_change(period)
+        
+        df['price_momentum'] = df['momentum_5']  # Primary momentum indicator
+        
+        # Support/Resistance levels (multiple timeframes)
+        for period in [10, 20, 50]:
+            if len(df) >= period:
+                df[f'resistance_{period}'] = df['high'].rolling(period).max()
+                df[f'support_{period}'] = df['low'].rolling(period).min()
+                df[f'support_resistance_ratio_{period}'] = (df['close'] - df[f'support_{period}']) / (df[f'resistance_{period}'] - df[f'support_{period}'])
+        
+        # ADVANCED PATTERN RECOGNITION
+        
+        # Pivot Points (multiple timeframes)
+        df['pivot'] = (df['high'] + df['low'] + df['close']) / 3
+        df['r1'] = 2 * df['pivot'] - df['low']
+        df['s1'] = 2 * df['pivot'] - df['high']
+        df['r2'] = df['pivot'] + (df['high'] - df['low'])
+        df['s2'] = df['pivot'] - (df['high'] - df['low'])
+        df['r3'] = df['high'] + 2 * (df['pivot'] - df['low'])
+        df['s3'] = df['low'] - 2 * (df['high'] - df['pivot'])
+        
+        # Price channels (multiple timeframes)
+        for period in [10, 20, 50]:
+            if len(df) >= period:
+                df[f'upper_channel_{period}'] = df['high'].rolling(period).max()
+                df[f'lower_channel_{period}'] = df['low'].rolling(period).min()
+                df[f'channel_position_{period}'] = (df['close'] - df[f'lower_channel_{period}']) / (df[f'upper_channel_{period}'] - df[f'lower_channel_{period}'])
+        
+        # Trend strength (multiple methods)
+        for period in [10, 20, 50]:
+            if len(df) >= period:
+                df[f'trend_strength_{period}'] = abs(df['close'].rolling(period).apply(lambda x: stats.linregress(range(len(x)), x)[0] if len(x) >= 2 else 0))
+        
+        # Ichimoku Cloud components
+        if len(df) >= 52:
+            # Tenkan-sen (Conversion Line)
+            tenkan_high = df['high'].rolling(9).max()
+            tenkan_low = df['low'].rolling(9).min()
+            df['tenkan_sen'] = (tenkan_high + tenkan_low) / 2
+            
+            # Kijun-sen (Base Line)
+            kijun_high = df['high'].rolling(26).max()
+            kijun_low = df['low'].rolling(26).min()
+            df['kijun_sen'] = (kijun_high + kijun_low) / 2
+            
+            # Senkou Span A (Leading Span A)
+            df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
+            
+            # Senkou Span B (Leading Span B)
+            senkou_high = df['high'].rolling(52).max()
+            senkou_low = df['low'].rolling(52).min()
+            df['senkou_span_b'] = ((senkou_high + senkou_low) / 2).shift(26)
+            
+            # Chikou Span (Lagging Span)
+            df['chikou_span'] = df['close'].shift(-26)
+            
+            # Cloud thickness and position
+            df['cloud_thickness'] = abs(df['senkou_span_a'] - df['senkou_span_b'])
+            df['price_vs_cloud'] = np.where(
+                df['close'] > np.maximum(df['senkou_span_a'], df['senkou_span_b']), 1,
+                np.where(df['close'] < np.minimum(df['senkou_span_a'], df['senkou_span_b']), -1, 0)
+            )
+        
+        # Market Profile Value Area (enhanced)
+        if len(df) >= 20:
+            for period in [20, 50]:
+                if len(df) >= period:
+                    df[f'value_area_high_{period}'] = df['high'].rolling(period).quantile(0.7)
+                    df[f'value_area_low_{period}'] = df['low'].rolling(period).quantile(0.3)
+                    df[f'poc_estimate_{period}'] = df['close'].rolling(period).median()
+        
+        # Order Flow Indicators (enhanced)
+        df['buying_pressure'] = np.where(df['close'] > df['open'], df['volume'], 0)
+        df['selling_pressure'] = np.where(df['close'] < df['open'], df['volume'], 0)
+        df['neutral_pressure'] = np.where(df['close'] == df['open'], df['volume'], 0)
+        df['net_buying_pressure'] = df['buying_pressure'] - df['selling_pressure']
+        df['buying_pressure_ratio'] = df['buying_pressure'] / (df['buying_pressure'] + df['selling_pressure'] + 1)
+        
+        # Enhanced buying/selling pressure with multiple timeframes
+        for period in [5, 10, 20]:
+            if len(df) >= period:
+                df[f'net_buying_pressure_{period}'] = df['net_buying_pressure'].rolling(period).sum()
+                df[f'buying_ratio_{period}'] = df['buying_pressure'].rolling(period).sum() / (df['buying_pressure'].rolling(period).sum() + df['selling_pressure'].rolling(period).sum() + 1)
+        
+        # Liquidity indicators (enhanced)
+        df['bid_ask_spread_proxy'] = (df['high'] - df['low']) / df['close']
+        df['market_impact'] = df['volume'] * df['bid_ask_spread_proxy']
+        df['liquidity_ratio'] = df['volume'] / df['market_impact']
+        
+        # Smart Money indicators (enhanced)
+        df['large_trade_indicator'] = np.where(df['volume'] > df['volume'].rolling(20).quantile(0.9), 1, 0)
+        df['institutional_flow'] = df['large_trade_indicator'] * df['net_buying_pressure']
+        df['smart_money_index'] = df['institutional_flow'].rolling(10).sum()
+        
+        # Dark pool indicators
+        df['dark_pool_proxy'] = np.where(
+            (df['volume'] > df['volume'].rolling(20).mean()) & 
+            (abs(df['returns']) < df['returns'].rolling(20).std()), 
+            df['volume'], 0
+        )
+        df['dark_pool_ratio'] = df['dark_pool_proxy'].rolling(20).sum() / df['volume'].rolling(20).sum()
+        
+        # Advanced volatility measures
+        df['realized_volatility'] = df['returns'].rolling(20).std() * np.sqrt(252)
+        df['garman_klass_volatility'] = np.sqrt(
+            np.log(df['high'] / df['low']) * np.log(df['high'] / df['close']) +
+            np.log(df['low'] / df['close']) * np.log(df['low'] / df['open'])
+        ).rolling(20).mean() * np.sqrt(252)
+        
+        # Parkinson volatility estimator
+        df['parkinson_volatility'] = np.sqrt(
+            (1 / (4 * np.log(2))) * (np.log(df['high'] / df['low']) ** 2)
+        ).rolling(20).mean() * np.sqrt(252)
+        
+        # Rogers-Satchell volatility estimator
+        df['rogers_satchell_volatility'] = np.sqrt(
+            np.log(df['high'] / df['close']) * np.log(df['high'] / df['open']) +
+            np.log(df['low'] / df['close']) * np.log(df['low'] / df['open'])
+        ).rolling(20).mean() * np.sqrt(252)
+        
+        return df
+        
+    except Exception as e:
+        log(f"❌ Ultra-advanced technical indicator calculation failed: {e}")
+        return df
+
+# === FIBONACCI RETRACEMENT ANALYSIS ===
+class FibonacciAnalyzer:
+    def __init__(self):
+        self.levels = THRESHOLDS['FIBONACCI_LEVELS']
+        self.extensions = THRESHOLDS['FIBONACCI_EXTENSIONS']
+        
+    def calculate_fibonacci_levels(self, df, ticker):
+        """Calculate comprehensive Fibonacci retracement and extension levels"""
+        try:
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Find significant swing high and low over different timeframes
+            swing_analysis = {}
+            
+            for period in [20, 50, 100]:
+                if len(df) >= period:
+                    period_data = df.tail(period)
+                    swing_high = period_data['high'].max()
+                    swing_low = period_data['low'].min()
+                    swing_high_idx = period_data['high'].idxmax()
+                    swing_low_idx = period_data['low'].idxmin()
+                    
+                    # Determine trend direction
+                    if swing_high_idx > swing_low_idx:
+                        trend = 'uptrend'
+                        base_price = swing_low
+                        target_price = swing_high
+                    else:
+                        trend = 'downtrend'
+                        base_price = swing_high
+                        target_price = swing_low
+                    
+                    diff = abs(target_price - base_price)
+                    
+                    # Calculate retracement levels
+                    retracement_levels = {}
+                    for level in self.levels:
+                        if trend == 'uptrend':
+                            retracement_levels[f'fib_{level}'] = target_price - (diff * level)
+                        else:
+                            retracement_levels[f'fib_{level}'] = target_price + (diff * level)
+                    
+                    # Calculate extension levels
+                    extension_levels = {}
+                    for ext in self.extensions:
+                        if trend == 'uptrend':
+                            extension_levels[f'fib_ext_{ext}'] = target_price + (diff * (ext - 1))
+                        else:
+                            extension_levels[f'fib_ext_{ext}'] = target_price - (diff * (ext - 1))
+                    
+                    swing_analysis[f'period_{period}'] = {
+                        'swing_high': swing_high,
+                        'swing_low': swing_low,
+                        'trend': trend,
+                        'retracement_levels': retracement_levels,
+                        'extension_levels': extension_levels,
+                        'price_range': diff
+                    }
+            
+            # Current price analysis
+            current_price = df['close'].iloc[-1]
+            
+            # Find nearest levels across all timeframes
+            all_levels = []
+            for period_data in swing_analysis.values():
+                all_levels.extend(period_data['retracement_levels'].values())
+                all_levels.extend(period_data['extension_levels'].values())
+            
+            if all_levels:
+                nearest_level = min(all_levels, key=lambda x: abs(x - current_price))
+                distance_to_nearest = abs(current_price - nearest_level) / current_price
+            else:
+                nearest_level = current_price
+                distance_to_nearest = 0
+            
+            result = {
+                'swing_analysis': swing_analysis,
+                'current_price': current_price,
+                'nearest_level': nearest_level,
+                'distance_to_nearest': distance_to_nearest,
+                'fibonacci_confluence': self.find_fibonacci_confluence(swing_analysis, current_price)
+            }
+            
+            trading_state.fibonacci_levels[ticker] = result
+            
+            # Save to file
+            filename = f"fibonacci_analysis/{ticker}_fibonacci.json"
+            with open(filename, 'w') as f:
+                json.dump(result, f, default=str)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Fibonacci analysis failed for {ticker}: {e}")
+            return {}
+    
+    def find_fibonacci_confluence(self, swing_analysis, current_price):
+        """Find confluence zones where multiple Fibonacci levels cluster"""
+        try:
+            all_levels = []
+            for period_data in swing_analysis.values():
+                all_levels.extend(period_data['retracement_levels'].values())
+                all_levels.extend(period_data['extension_levels'].values())
+            
+            if not all_levels:
+                return []
+            
+            # Group levels that are close together (within 1% of each other)
+            confluence_zones = []
+            tolerance = 0.01
+            
+            sorted_levels = sorted(all_levels)
+            current_zone = [sorted_levels[0]]
+            
+            for level in sorted_levels[1:]:
+                if abs(level - current_zone[-1]) / current_zone[-1] <= tolerance:
+                    current_zone.append(level)
+                else:
+                    if len(current_zone) >= 2:  # At least 2 levels for confluence
+                        confluence_zones.append({
+                            'price': np.mean(current_zone),
+                            'strength': len(current_zone),
+                            'levels': current_zone
+                        })
+                    current_zone = [level]
+            
+            # Check the last zone
+            if len(current_zone) >= 2:
+                confluence_zones.append({
+                    'price': np.mean(current_zone),
+                    'strength': len(current_zone),
+                    'levels': current_zone
+                })
+            
+            # Sort by strength (number of confluent levels)
+            confluence_zones.sort(key=lambda x: x['strength'], reverse=True)
+            
+            return confluence_zones[:5]  # Return top 5 confluence zones
+            
+        except Exception as e:
+            log(f"❌ Fibonacci confluence analysis failed: {e}")
+            return []
+
+fibonacci_analyzer = FibonacciAnalyzer()
+
+# === ELLIOTT WAVE ANALYSIS ===
+class ElliottWaveAnalyzer:
+    def __init__(self):
+        self.min_waves = THRESHOLDS['ELLIOTT_WAVE_MIN_WAVES']
+        
+    def detect_elliott_waves(self, df, ticker):
+        """Detect Elliott Wave patterns with enhanced analysis"""
+        try:
+            if df is None or df.empty or len(df) < 100:
+                return {}
+            
+            # Find significant peaks and troughs
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            # Use different prominence thresholds for different wave degrees
+            wave_analysis = {}
+            
+            for degree, (prominence_factor, min_distance) in [
+                ('primary', (0.5, 10)),
+                ('intermediate', (0.3, 5)),
+                ('minor', (0.2, 3))
+            ]:
+                # Detect peaks (potential wave tops)
+                peaks, peak_properties = find_peaks(
+                    highs, 
+                    distance=min_distance, 
+                    prominence=np.std(highs) * prominence_factor
+                )
+                
+                # Detect troughs (potential wave bottoms)
+                troughs, trough_properties = find_peaks(
+                    -lows, 
+                    distance=min_distance, 
+                    prominence=np.std(lows) * prominence_factor
+                )
+                
+                # Combine and sort by time
+                all_points = []
+                for peak in peaks:
+                    all_points.append({
+                        'index': peak,
+                        'price': highs[peak],
+                        'type': 'peak',
+                        'prominence': peak_properties['prominences'][np.where(peaks == peak)[0][0]]
+                    })
+                
+                for trough in troughs:
+                    all_points.append({
+                        'index': trough,
+                        'price': lows[trough],
+                        'type': 'trough',
+                        'prominence': trough_properties['prominences'][np.where(troughs == trough)[0][0]]
+                    })
+                
+                all_points.sort(key=lambda x: x['index'])
+                
+                # Elliott Wave counting and validation
+                waves = self.count_elliott_waves(all_points)
+                wave_validation = self.validate_elliott_waves(waves)
+                
+                wave_analysis[degree] = {
+                    'turning_points': all_points,
+                    'waves': waves,
+                    'validation': wave_validation,
+                    'wave_count': len(waves),
+                    'current_wave': self.identify_current_wave(waves),
+                    'next_target': self.calculate_wave_targets(waves)
+                }
+            
+            # Determine the most likely wave count
+            best_wave_count = self.select_best_wave_count(wave_analysis)
+            
+            result = {
+                'wave_analysis': wave_analysis,
+                'best_wave_count': best_wave_count,
+                'elliott_wave_signals': self.generate_elliott_signals(best_wave_count),
+                'wave_relationships': self.analyze_wave_relationships(best_wave_count)
+            }
+            
+            trading_state.elliott_wave_counts[ticker] = result
+            
+            # Save to file
+            filename = f"elliott_waves/{ticker}_elliott_waves.json"
+            with open(filename, 'w') as f:
+                json.dump(result, f, default=str)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Elliott Wave analysis failed for {ticker}: {e}")
+            return {}
+    
+    def count_elliott_waves(self, turning_points):
+        """Count Elliott Waves from turning points"""
+        try:
+            if len(turning_points) < self.min_waves:
+                return []
+            
+            waves = []
+            for i in range(min(len(turning_points), 13)):  # Limit to 13 waves (8 + 5)
+                if i < len(turning_points):
+                    wave_num = (i % 8) + 1 if i < 8 else ((i - 8) % 5) + 1
+                    wave_type = 'impulse' if i < 8 else 'corrective'
+                    
+                    waves.append({
+                        'wave_number': wave_num,
+                        'wave_type': wave_type,
+                        'price': turning_points[i]['price'],
+                        'index': turning_points[i]['index'],
+                        'point_type': turning_points[i]['type'],
+                        'prominence': turning_points[i]['prominence']
+                    })
+            
+            return waves
+            
+        except Exception as e:
+            log(f"❌ Elliott Wave counting failed: {e}")
+            return []
+    
+    def validate_elliott_waves(self, self, waves):
+        """Validate Elliott Wave patterns according to rules"""
+        try:
+            if len(waves) < 5:
+                return {'valid': False, 'violations': ['Insufficient waves']}
+            
+            violations = []
+            
+            # Elliott Wave Rules
+            # Rule 1: Wave 2 never retraces more than 100% of Wave 1
+            if len(waves) >= 3:
+                wave_1_range = abs(waves[1]['price'] - waves[0]['price'])
+                wave_2_retrace = abs(waves[2]['price'] - waves[1]['price'])
+                if wave_2_retrace > wave_1_range:
+                    violations.append("Wave 2 retraces more than 100% of Wave 1")
+            
+            # Rule 2: Wave 3 is never the shortest of waves 1, 3, and 5
+            if len(waves) >= 5:
+                wave_1_len = abs(waves[1]['price'] - waves[0]['price'])
+                wave_3_len = abs(waves[3]['price'] - waves[2]['price'])
+                wave_5_len = abs(waves[4]['price'] - waves[3]['price']) if len(waves) > 4 else float('inf')
+                
+                if wave_3_len < wave_1_len and wave_3_len < wave_5_len:
+                    violations.append("Wave 3 is the shortest wave")
+            
+            # Rule 3: Wave 4 never enters the price territory of Wave 1
+            if len(waves) >= 5:
+                wave_1_high = max(waves[0]['price'], waves[1]['price'])
+                wave_1_low = min(waves[0]['price'], waves[1]['price'])
+                wave_4_price = waves[4]['price']
+                
+                if wave_1_low <= wave_4_price <= wave_1_high:
+                    violations.append("Wave 4 overlaps with Wave 1")
+            
+            return {
+                'valid': len(violations) == 0,
+                'violations': violations,
+                'confidence': max(0, 1 - len(violations) * 0.3)
+            }
+            
+        except Exception as e:
+            log(f"❌ Elliott Wave validation failed: {e}")
+            return {'valid': False, 'violations': ['Validation error']}
+    
+    def identify_current_wave(self, waves):
+        """Identify the current wave position"""
+        try:
+            if not waves:
+                return None
+            
+            current_wave_num = len(waves) % 8 if len(waves) <= 8 else ((len(waves) - 8) % 5) + 1
+            wave_type = 'impulse' if len(waves) <= 8 else 'corrective'
+            
+            return {
+                'wave_number': current_wave_num,
+                'wave_type': wave_type,
+                'position': 'developing',
+                'expected_direction': self.get_expected_direction(current_wave_num, wave_type)
+            }
+            
+        except Exception as e:
+            log(f"❌ Current wave identification failed: {e}")
+            return None
+    
+    def get_expected_direction(self, wave_num, wave_type):
+        """Get expected direction for current wave"""
+        if wave_type == 'impulse':
+            return 'up' if wave_num in [1, 3, 5] else 'down'
+        else:  # corrective
+            return 'down' if wave_num in [1, 3] else 'up'
+    
+    def calculate_wave_targets(self, waves):
+        """Calculate potential targets for next waves"""
+        try:
+            if len(waves) < 3:
+                return {}
+            
+            targets = {}
+            
+            # Fibonacci relationships for wave targets
+            if len(waves) >= 2:
+                wave_1_range = abs(waves[1]['price'] - waves[0]['price'])
+                
+                # Wave 3 targets (typically 1.618 or 2.618 times Wave 1)
+                if len(waves) >= 3:
+                    base_price = waves[2]['price']
+                    targets['wave_3_target_1'] = base_price + (wave_1_range * 1.618)
+                    targets['wave_3_target_2'] = base_price + (wave_1_range * 2.618)
+                
+                # Wave 5 targets
+                if len(waves) >= 5:
+                    wave_3_range = abs(waves[3]['price'] - waves[2]['price'])
+                    targets['wave_5_target'] = waves[4]['price'] + (wave_3_range * 0.618)
+            
+            # Corrective wave targets (ABC)
+            if len(waves) >= 5 and waves[5]['wave_type'] == 'corrective':
+                wave_a_range = abs(waves[6]['price'] - waves[5]['price'])
+                targets['wave_c_target'] = waves[7]['price'] - (wave_a_range * 1.618)
+            
+            return targets
+            
+        except Exception as e:
+            log(f"❌ Wave target calculation failed: {e}")
+            return {}
+    
+    def select_best_wave_count(self, wave_analysis):
+        """Select the best wave count based on validation and prominence"""
+        try:
+            best_count = None
+            max_confidence = -1
+            
+            for degree, analysis in wave_analysis.items():
+                if analysis['validation']['valid']:
+                    # Prioritize counts with higher prominence
+                    prominence_score = sum([w['prominence'] for w in analysis['waves']])
+                    confidence = analysis['validation']['confidence'] + (prominence_score * 0.01)
+                    
+                    if confidence > max_confidence:
+                        max_confidence = confidence
+                        best_count = analysis
+            
+            return best_count
+            
+        except Exception as e:
+            log(f"❌ Best wave count selection failed: {e}")
+            return None
+    
+    def generate_elliott_signals(self, best_wave_count):
+        """Generate trading signals based on Elliott Wave analysis"""
+        try:
+            if not best_wave_count:
+                return {}
+            
+            signals = {}
+            current_wave = best_wave_count['current_wave']
+            
+            if current_wave['wave_type'] == 'impulse':
+                if current_wave['wave_number'] == 3:
+                    signals['action'] = 'buy'
+                    signals['strength'] = 'high'
+                    signals['reason'] = 'Wave 3 developing'
+                elif current_wave['wave_number'] == 5:
+                    signals['action'] = 'sell'
+                    signals['strength'] = 'medium'
+                    signals['reason'] = 'Wave 5 nearing completion'
+            elif current_wave['wave_type'] == 'corrective':
+                if current_wave['wave_number'] == 2:
+                    signals['action'] = 'sell'
+                    signals['strength'] = 'medium'
+                    signals['reason'] = 'Corrective Wave 2 developing'
+                elif current_wave['wave_number'] == 4:
+                    signals['action'] = 'buy'
+                    signals['strength'] = 'low'
+                    signals['reason'] = 'Corrective Wave 4 developing'
+            
+            return signals
+            
+        except Exception as e:
+            log(f"❌ Elliott signal generation failed: {e}")
+            return {}
+    
+    def analyze_wave_relationships(self, best_wave_count):
+        """Analyze relationships between waves for confirmation"""
+        try:
+            if not best_wave_count or len(best_wave_count['waves']) < 5:
+                return {}
+            
+            wave_1_len = abs(best_wave_count['waves'][1]['price'] - best_wave_count['waves'][0]['price'])
+            
+            wave_3_len = abs(best_wave_count['waves'][3]['price'] - best_wave_count['waves'][2]['price'])
+            wave_5_len = abs(best_wave_count['waves'][4]['price'] - best_wave_count['waves'][3]['price'])
+            
+            relationships = {}
+            
+            # Wave 3 is often 1.618 times wave 1
+            relationships['wave_3_vs_1'] = wave_3_len / wave_1_len
+            
+            # Wave 5 is often equal to wave 1
+            relationships['wave_5_vs_1'] = wave_5_len / wave_1_len
+            
+            return relationships
+            
+        except Exception as e:
+            log(f"❌ Wave relationship analysis failed: {e}")
+            return {}
+
+elliott_wave_analyzer = ElliottWaveAnalyzer()
+
+# === HARMONIC PATTERN RECOGNITION ===
+class HarmonicPatternAnalyzer:
+    def __init__(self):
+        self.tolerance = THRESHOLDS['HARMONIC_PATTERN_TOLERANCE']
+        
+    def detect_harmonic_patterns(self, df, ticker):
+        """Detect harmonic patterns like Gartley, Butterfly, etc."""
+        try:
+            if df is None or df.empty or len(df) < 100:
+                return {}
+            
+            # Find significant peaks and troughs
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            peaks, _ = find_peaks(highs, distance=5, prominence=np.std(highs) * 0.5)
+            troughs, _ = find_peaks(-lows, distance=5, prominence=np.std(lows) * 0.5)
+            
+            patterns = []
+            
+            # Look for common harmonic patterns
+            patterns.extend(self.detect_gartley(df, peaks, troughs))
+            patterns.extend(self.detect_butterfly(df, peaks, troughs))
+            patterns.extend(self.detect_crab(df, peaks, troughs))
+            patterns.extend(self.detect_bat(df, peaks, troughs))
+            
+            result = {
+                'patterns': patterns,
+                'pattern_count': len(patterns),
+                'strongest_pattern': max(patterns, key=lambda x: x['confidence']) if patterns else None
+            }
+            
+            trading_state.harmonic_patterns[ticker] = result
+            
+            # Save to file
+            filename = f"harmonic_patterns/{ticker}_harmonic_patterns.json"
+            with open(filename, 'w') as f:
+                json.dump(result, f, default=str)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Harmonic pattern analysis failed for {ticker}: {e}")
+            return {}
+    
+    def detect_gartley(self, df, peaks, troughs):
+        """Detect Gartley pattern"""
+        try:
+            patterns = []
+            
+            # Need at least 5 points (XABCD)
+            if len(peaks) + len(troughs) < 5:
+                return patterns
+            
+            # Combine peaks and troughs and sort by index
+            all_points = []
+            for peak in peaks[-3:]:
+                all_points.append({'index': peak, 'price': df['high'][peak], 'type': 'peak'})
+            for trough in troughs[-2:]:
+                all_points.append({'index': trough, 'price': df['low'][trough], 'type': 'trough'})
+            
+            all_points.sort(key=lambda x: x['index'])
+            
+            if len(all_points) < 5:
+                return patterns
+            
+            X, A, B, C, D = all_points[-5:]
+            
+            # Gartley ratios
+            AB = abs(B['price'] - A['price'])
+            XA = abs(A['price'] - X['price'])
+            BC = abs(C['price'] - B['price'])
+            AB_XA_ratio = AB / XA if XA > 0 else 0
+            BC_AB_ratio = BC / AB if AB > 0 else 0
+            
+            # Check ratios
+            if (0.5 < AB_XA_ratio < 0.62 and 0.382 < BC_AB_ratio < 0.886):
+                patterns.append({
+                    'pattern': 'Gartley',
+                    'points': [X, A, B, C, D],
+                    'ratios': {'AB/XA': AB_XA_ratio, 'BC/AB': BC_AB_ratio},
+                    'confidence': 1 - abs(AB_XA_ratio - 0.618) - abs(BC_AB_ratio - 0.618)
+                })
+            
+            return patterns
+            
+        except Exception as e:
+            log(f"❌ Gartley pattern detection failed: {e}")
+            return []
+    
+    def detect_butterfly(self, df, peaks, troughs):
+        """Detect Butterfly pattern"""
+        try:
+            patterns = []
+            
+            # Need at least 5 points (XABCD)
+            if len(peaks) + len(troughs) < 5:
+                return patterns
+            
+            # Combine peaks and troughs and sort by index
+            all_points = []
+            for peak in peaks[-3:]:
+                all_points.append({'index': peak, 'price': df['high'][peak], 'type': 'peak'})
+            for trough in troughs[-2:]:
+                all_points.append({'index': trough, 'price': df['low'][trough], 'type': 'trough'})
+            
+            all_points.sort(key=lambda x: x['index'])
+            
+            if len(all_points) < 5:
+                return patterns
+            
+            X, A, B, C, D = all_points[-5:]
+            
+            # Butterfly ratios
+            AB = abs(B['price'] - A['price'])
+            XA = abs(A['price'] - X['price'])
+            BC = abs(C['price'] - B['price'])
+            CD = abs(D['price'] - C['price'])
+            AB_XA_ratio = AB / XA if XA > 0 else 0
+            BC_AB_ratio = BC / AB if AB > 0 else 0
+            CD_BC_ratio = CD / BC if BC > 0 else 0
+            
+            # Check ratios
+            if (0.786 < AB_XA_ratio < 0.886 and 0.382 < BC_AB_ratio < 0.886 and CD_BC_ratio > 1.272):
+                patterns.append({
+                    'pattern': 'Butterfly',
+                    'points': [X, A, B, C, D],
+                    'ratios': {'AB/XA': AB_XA_ratio, 'BC/AB': BC_AB_ratio, 'CD/BC': CD_BC_ratio},
+                    'confidence': 1 - abs(AB_XA_ratio - 0.786) - abs(BC_AB_ratio - 0.618) - abs(CD_BC_ratio - 1.272)
+                })
+            
+            return patterns
+            
+        except Exception as e:
+            log(f"❌ Butterfly pattern detection failed: {e}")
+            return []
+    
+    def detect_crab(self, df, peaks, troughs):
+        """Detect Crab pattern"""
+        try:
+            patterns = []
+            
+            # Need at least 5 points (XABCD)
+            if len(peaks) + len(troughs) < 5:
+                return patterns
+            
+            # Combine peaks and troughs and sort by index
+            all_points = []
+            for peak in peaks[-3:]:
+                all_points.append({'index': peak, 'price': df['high'][peak], 'type': 'peak'})
+            for trough in troughs[-2:]:
+                all_points.append({'index': trough, 'price': df['low'][trough], 'type': 'trough'})
+            
+            all_points.sort(key=lambda x: x['index'])
+            
+            if len(all_points) < 5:
+                return patterns
+            
+            X, A, B, C, D = all_points[-5:]
+            
+            # Crab ratios
+            AB = abs(B['price'] - A['price'])
+            XA = abs(A['price'] - X['price'])
+            BC = abs(C['price'] - B['price'])
+            CD = abs(D['price'] - C['price'])
+            AB_XA_ratio = AB / XA if XA > 0 else 0
+            BC_AB_ratio = BC / AB if AB > 0 else 0
+            CD_BC_ratio = CD / BC if BC > 0 else 0
+            
+            # Check ratios
+            if (0.382 < AB_XA_ratio < 0.618 and 0.382 < BC_AB_ratio < 0.886 and CD_BC_ratio > 2.618):
+                patterns.append({
+                    'pattern': 'Crab',
+                    'points': [X, A, B, C, D],
+                    'ratios': {'AB/XA': AB_XA_ratio, 'BC/AB': BC_AB_ratio, 'CD/BC': CD_BC_ratio},
+                    'confidence': 1 - abs(AB_XA_ratio - 0.5) - abs(BC_AB_ratio - 0.618) - abs(CD_BC_ratio - 2.618)
+                })
+            
+            return patterns
+            
+        except Exception as e:
+            log(f"❌ Crab pattern detection failed: {e}")
+            return []
+    
+    def detect_bat(self, df, peaks, troughs):
+        """Detect Bat pattern"""
+        try:
+            patterns = []
+            
+            # Need at least 5 points (XABCD)
+            if len(peaks) + len(troughs) < 5:
+                return patterns
+            
+            # Combine peaks and troughs and sort by index
+            all_points = []
+            for peak in peaks[-3:]:
+                all_points.append({'index': peak, 'price': df['high'][peak], 'type': 'peak'})
+            for trough in troughs[-2:]:
+                all_points.append({'index': trough, 'price': df['low'][trough], 'type': 'trough'})
+            
+            all_points.sort(key=lambda x: x['index'])
+            
+            if len(all_points) < 5:
+                return patterns
+            
+            X, A, B, C, D = all_points[-5:]
+            
+            # Bat ratios
+            AB = abs(B['price'] - A['price'])
+            XA = abs(A['price'] - X['price'])
+            BC = abs(C['price'] - B['price'])
+            CD = abs(D['price'] - C['price'])
+            AB_XA_ratio = AB / XA if XA > 0 else 0
+            BC_AB_ratio = BC / AB if AB > 0 else 0
+            CD_XA_ratio = CD / XA if XA > 0 else 0
+            
+            # Check ratios
+            if (0.382 < AB_XA_ratio < 0.5 and 0.382 < BC_AB_ratio < 0.886 and 0.886 < CD_XA_ratio < 1.13):
+                patterns.append({
+                    'pattern': 'Bat',
+                    'points': [X, A, B, C, D],
+                    'ratios': {'AB/XA': AB_XA_ratio, 'BC/AB': BC_AB_ratio, 'CD/XA': CD_XA_ratio},
+                    'confidence': 1 - abs(AB_XA_ratio - 0.4) - abs(BC_AB_ratio - 0.618) - abs(CD_XA_ratio - 0.886)
+                })
+            
+            return patterns
+            
+        except Exception as e:
+            log(f"❌ Bat pattern detection failed: {e}")
+            return []
+
+harmonic_pattern_analyzer = HarmonicPatternAnalyzer()
+
+# === ICHIMOKU CLOUD ANALYSIS ===
+class IchimokuCloudAnalyzer:
+    def __init__(self):
+        self.periods = THRESHOLDS['ICHIMOKU_PERIODS']
+        
+    def calculate_ichimoku_cloud(self, df, ticker):
+        """Calculate Ichimoku Cloud components"""
+        try:
+            if df is None or df.empty or len(df) < max(self.periods.values()):
+                return {}
+            
+            # Tenkan-sen (Conversion Line)
+            tenkan_high = df['high'].rolling(self.periods['tenkan']).max()
+            tenkan_low = df['low'].rolling(self.periods['tenkan']).min()
+            tenkan_sen = (tenkan_high + tenkan_low) / 2
+            
+            # Kijun-sen (Base Line)
+            kijun_high = df['high'].rolling(self.periods['kijun']).max()
+            kijun_low = df['low'].rolling(self.periods['kijun']).min()
+            kijun_sen = (kijun_high + kijun_low) / 2
+            
+            # Senkou Span A (Leading Span A)
+            senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(self.periods['kijun'])
+            
+            # Senkou Span B (Leading Span B)
+            senkou_high = df['high'].rolling(self.periods['senkou_b']).max()
+            senkou_low = df['low'].rolling(self.periods['senkou_b']).min()
+            senkou_span_b = ((senkou_high + senkou_low) / 2).shift(self.periods['kijun'])
+            
+            # Chikou Span (Lagging Span)
+            chikou_span = df['close'].shift(-self.periods['kijun'])
+            
+            # Cloud status
+            current_price = df['close'].iloc[-1]
+            cloud_top = max(senkou_span_a.iloc[-1], senkou_span_b.iloc[-1])
+            cloud_bottom = min(senkou_span_a.iloc[-1], senkou_span_b.iloc[-1])
+            
+            if current_price > cloud_top:
+                cloud_status = "above"
+            elif current_price < cloud_bottom:
+                cloud_status = "below"
+            else:
+                cloud_status = "inside"
+            
+            result = {
+                'tenkan_sen': tenkan_sen.iloc[-1],
+                'kijun_sen': kijun_sen.iloc[-1],
+                'senkou_span_a': senkou_span_a.iloc[-1],
+                'senkou_span_b': senkou_span_b.iloc[-1],
+                'chikou_span': chikou_span.iloc[-1] if chikou_span.notna().any() else None,
+                'cloud_status': cloud_status,
+                'cloud_top': cloud_top,
+                'cloud_bottom': cloud_bottom
+            }
+            
+            trading_state.ichimoku_clouds[ticker] = result
+            
+            # Save to file
+            filename = f"ichimoku_analysis/{ticker}_ichimoku.json"
+            with open(filename, 'w') as f:
+                json.dump(result, f, default=str)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Ichimoku Cloud analysis failed for {ticker}: {e}")
+            return {}
+
+ichimoku_cloud_analyzer = IchimokuCloudAnalyzer()
+
+# === SUPPORT AND RESISTANCE ANALYSIS ===
+class SupportResistanceAnalyzer:
+    def __init__(self):
+        self.strength = THRESHOLDS['SUPPORT_RESISTANCE_STRENGTH']
+        
+    def find_significant_levels(self, df, ticker):
+        """Find significant support and resistance levels"""
+        try:
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Find local peaks and troughs
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            peaks, _ = find_peaks(highs, distance=10, prominence=np.std(highs) * 0.4)
+            troughs, _ = find_peaks(-lows, distance=10, prominence=np.std(lows) * 0.4)
+            
+            # Filter levels based on strength
+            resistance_levels = []
+            support_levels = []
+            
+            for peak in peaks:
+                price = highs[peak]
+                # Check if it's a significant resistance
+                if self.is_significant_level(df, price, 'resistance'):
+                    resistance_levels.append(price)
+            
+            for trough in troughs:
+                price = lows[trough]
+                # Check if it's a significant support
+                if self.is_significant_level(df, price, 'support'):
+                    support_levels.append(price)
+            
+            result = {
+                'support_levels': sorted(support_levels),
+                'resistance_levels': sorted(resistance_levels),
+                'current_price': df['close'].iloc[-1]
+            }
+            
+            trading_state.support_resistance_cache[ticker] = result
+            
+            # Save to file
+            filename = f"support_resistance/{ticker}_levels.json"
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'w') as f:
+                json.dump(result, f)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Support/Resistance analysis failed for {ticker}: {e}")
+            return {}
+    
+    def is_significant_level(self, df, price, level_type):
+        """Check if a level is significant based on historical price action"""
+        try:
+            window = 20
+            if level_type == 'resistance':
+                # Check if price acted as resistance multiple times
+                count = df['high'].rolling(window).apply(lambda x: sum(abs(x - price) < (price * 0.01))).iloc[-1]
+                return count >= self.strength
+            elif level_type == 'support':
+                # Check if price acted as support multiple times
+                count = df['low'].rolling(window).apply(lambda x: sum(abs(x - price) < (price * 0.01))).iloc[-1]
+                return count >= self.strength
+            return False
+        except Exception as e:
+            log(f"❌ Significance check failed: {e}")
+            return False
+
+support_resistance_analyzer = SupportResistanceAnalyzer()
+
+# === VOLUME PROFILE ANALYSIS ===
+class VolumeProfileAnalyzer:
+    def __init__(self):
+        self.bins = THRESHOLDS['VOLUME_PROFILE_BINS']
+        
+    def calculate_volume_profile(self, df, ticker):
+        """Calculate volume profile for a given ticker"""
+        try:
+            if df is None or df.empty or len(df) < 30:
+                return {}
+            
+            # Define price ranges (bins)
+            price_range = df['high'].max() - df['low'].min()
+            bin_size = price_range / self.bins
+            
+            # Calculate volume at each price level
+            volume_profile = {}
+            for i in range(self.bins):
+                low = df['low'].min() + i * bin_size
+                high = low + bin_size
+                volume = df[(df['close'] >= low) & (df['close'] < high)]['volume'].sum()
+                volume_profile[f'{low:.2f}-{high:.2f}'] = volume
+            
+            # Find Point of Control (POC)
+            poc = max(volume_profile, key=volume_profile.get)
+            
+            # Find Value Area (70% of volume around POC)
+            sorted_profile = sorted(volume_profile.items(), key=lambda x: x[1], reverse=True)
+            value_area = {}
+            total_volume = sum(volume_profile.values())
+            value_area_volume = 0
+            
+            for price_range, volume in sorted_profile:
+                value_area[price_range] = volume
+                value_area_volume += volume
+                if value_area_volume >= 0.7 * total_volume:
+                    break
+            
+            result = {
+                'volume_profile': volume_profile,
+                'poc': poc,
+                'value_area': list(value_area.keys()),
+                'total_volume': total_volume
+            }
+            
+            trading_state.volume_profile_cache[ticker] = result
+            
+            # Save to file
+            filename = f"volume_profiles/{ticker}_profile.json"
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'w') as f:
+                json.dump(result, f)
+            
+            return result
+            
+        except Exception as e:
+            log(f"❌ Volume Profile analysis failed for {ticker}: {e}")
+            return {}
+
+volume_profile_analyzer = VolumeProfileAnalyzer()
+
+# === SECTOR ROTATION ANALYSIS ===
+class SectorRotationAnalyzer:
+    def __init__(self):
+        self.threshold = THRESHOLDS['SECTOR_ROTATION_THRESHOLD']
+        
+    def analyze_sector_performance(self):
+        """Analyze sector performance and identify rotation opportunities"""
+        try:
+            sector_returns = {}
+            
+            for sector, tickers in SECTOR_UNIVERSE.items():
+                # Get returns for each ticker in the sector
+                ticker_returns = []
+                for ticker in tickers:
+                    data = get_enhanced_data(ticker, limit=30)
+                    if data is not None and not data.empty:
+                        ticker_returns.append(data['returns'].iloc[-1])
+                
+                # Calculate average sector return
+                if ticker_returns:
+                    sector_returns[sector] = np.mean(ticker_returns)
+                else:
+                    sector_returns[sector] = 0
+            
+            # Identify leading and lagging sectors
+            leading_sectors = [sector for sector, ret in sector_returns.items() if ret > self.threshold]
+            lagging_sectors = [sector for sector, ret in sector_returns.items() if ret < -self.threshold]
+            
+            # Store sector performance
+            trading_state.sector_performance = sector_returns
+            
+            # Identify potential rotation opportunities
+            rotation_opportunities = []
+            for leading_sector in leading_sectors:
+                for lagging_sector in lagging_sectors:
+                    rotation_opportunities.append((leading_sector, lagging_sector))
+            
+            # Log sector performance
+            log(f"📊 Sector Performance: {sector_returns}")
+            log(f"✅ Leading Sectors: {leading_sectors}")
+            log(f"⚠️ Lagging Sectors: {lagging_sectors}")
+            log(f"🔄 Rotation Opportunities: {rotation_opportunities}")
+            
+            # Save to file
+            filename = "sector_analysis/sector_performance.json"
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'w') as f:
+                json.dump(sector_returns, f)
+            
+            return sector_returns, leading_sectors, lagging_sectors, rotation_opportunities
+            
+        except Exception as e:
+            log(f"❌ Sector Rotation analysis failed: {e}")
+            return {}, [], [], []
+
+sector_rotation_analyzer = SectorRotationAnalyzer()
+
+# === Q-LEARNING REINFORCEMENT LEARNING ===
+class QLearningAgent:
+    def __init__(self, actions, alpha=THRESHOLDS['Q_LEARNING_ALPHA'], gamma=THRESHOLDS['Q_LEARNING_GAMMA'], epsilon=THRESHOLDS['Q_LEARNING_EPSILON']):
+        self.q_table = trading_state.q_table
+        self.actions = actions
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.state_history = trading_state.q_state_history
+        self.action_history = trading_state.q_action_history
+        self.reward_history = trading_state.q_reward_history
+        
+    def choose_action(self, state):
+        """Choose action based on epsilon-greedy policy"""
+        if random.random() < self.epsilon:
+            # Explore
+            action = random.choice(self.actions)
+        else:
+            # Exploit
+            if state in self.q_table and self.q_table[state]:
+                action = max(self.q_table[state], key=self.q_table[state].get)
+            else:
+                action = random.choice(self.actions)
+        return action
+    
+    def learn(self, state, action, reward, next_state):
+        """Update Q-table using Q-learning algorithm"""
+        try:
+            # Get current Q-value
+            current_q = self.q_table[state][action]
+            
+            # Get maximum Q-value for next state
+            if next_state in self.q_table and self.q_table[next_state]:
+                max_next_q = max(self.q_table[next_state].values())
+            else:
+                max_next_q = 0
+            
+            # Calculate new Q-value
+            new_q = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
+            
+            # Update Q-table
+            self.q_table[state][action] = new_q
+            
+            # Store history
+            self.state_history.append(state)
+            self.action_history.append(action)
+            self.reward_history.append(reward)
+            
+            # Save Q-table
+            filename = "models/q_learning/q_table.json"
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'w') as f:
+                json.dump(self.q_table, f)
+            
+        except Exception as e:
+            log(f"❌ Q-learning update failed: {e}")
+    
+    def discretize_state(self, df, ticker):
+        """Discretize continuous state variables into a finite set of states"""
+        try:
+            if df is None or df.empty:
+                return None
+            
+            # Extract relevant features
+            current_price = df['close'].iloc[-1]
+            rsi = df['rsi'].iloc[-1]
+            macd = df['macd'].iloc[-1]
+            volume_ratio = df['volume_ratio'].iloc[-1]
+            
+            # Discretize features
+            price_level = int(current_price / 10)  # Group prices into $10 levels
+            rsi_level = int(rsi / 10)  # Group RSI into 10 levels
+            macd_level = 1 if macd > 0 else -1 if macd < 0 else 0  # Group MACD into positive, negative, or zero
+            volume_level = 1 if volume_ratio > 1 else 0  # Group volume ratio into above or below average
+            
+            # Combine discretized features into a state
+            state = (price_level, rsi_level, macd_level, volume_level)
+            
+            return state
+            
+        except Exception as e:
+            log(f"❌ State discretization failed: {e}")
+            return None
+
+# === MARKET MICROSTRUCTURE ANALYSIS ===
+class MarketMicrostructureAnalyzer:
+    def __init__(self):
+        self.order_flow_threshold = THRESHOLDS['ORDERFLOW_IMBALANCE_THRESHOLD']
+        self.liquidity_pool_min_size = THRESHOLDS['LIQUIDITY_POOL_MIN_SIZE']
+        self.smart_money_flow_threshold = THRESHOLDS['SMART_MONEY_FLOW_THRESHOLD']
+        self.institutional_block_size = THRESHOLDS['INSTITUTIONAL_BLOCK_SIZE']
+        self.dark_pool_indicator_threshold = THRESHOLDS['DARK_POOL_INDICATOR_THRESHOLD']
+        
+    def analyze_order_flow(self, df, ticker):
+        """Analyze order flow imbalance"""
+        try:
+            if df is None or df.empty or len(df) < 30:
+                return {}
+            
+            # Calculate buying and selling pressure
+            buying_pressure = np.where(df['close'] > df['open'], df['volume'], 0).sum()
+            selling_pressure = np.where(df['close'] < df['open'], df['volume'], 0).sum()
+            
+            # Calculate order flow imbalance
+            net_buying_pressure = buying_pressure - selling_pressure
+            total_volume = buying_pressure + selling_pressure
+            
+            if total_volume > 0:
+                order_flow_imbalance = net_buying_pressure / total_volume
+            else:
+                order_flow_imbalance = 0
+            
+            # Determine if imbalance is significant
+            if abs(order_flow_imbalance) > self.order_flow_threshold:
+                if order_flow_imbalance > 0:
+                    order_flow_direction = "buying"
+                else:
+                    order_flow_direction = "selling"
+            else:
+                order_flow_direction = "neutral"
+            
+            result = {
+                'buying_pressure': buying_pressure,
+                'selling_pressure': selling_pressure,
+                'order_flow_imbalance': order_flow_imbalance,
+                'order_flow_direction': order_flow_direction
+            }
+            
+            trading_state.order_flow_imbalance[ticker] = result
+            return result
+            
+        except Exception as e:
+            log(f"❌ Order Flow analysis failed: {e}")
+            return {}
+    
+    def detect_liquidity_pools(self, df, ticker):
+        """Detect liquidity pools based on volume and price action"""
+        try:
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Identify high volume areas
+            volume_threshold = df['volume'].quantile(0.9)
+            high_volume_areas = df[df['volume'] > volume_threshold]
+            
+            # Filter for significant price consolidation
+            consolidation_threshold = df['atr'].mean() * 0.5
+            liquidity_pools = []
+            
+            for index, row in high_volume_areas.iterrows():
+                # Check if price is consolidating
+                price_range = df['high'].max() - df['low'].min()
+                if price_range < consolidation_threshold:
+                    # Check if volume is large enough
+                    if row['volume'] > self.liquidity_pool_min_size:
+                        liquidity_pools.append({
+                            'price': row['close'],
+                            'volume': row['volume'],
+                            'timestamp': index.isoformat()
+                        })
+            
+            result = {
+                'liquidity_pools': liquidity_pools,
+                'pool_count': len(liquidity_pools)
+            }
+            
+            trading_state.liquidity_pools[ticker] = result
+            return result
+            
+        except Exception as e:
+            log(f"❌ Liquidity Pool detection failed: {e}")
+            return {}
+    
+    def analyze_smart_money_flow(self, df, ticker):
+        """Analyze smart money flow using volume and price action"""
+        try:
+            if df is None or df.empty or len(df) < 30:
+                return {}
+            
+            # Calculate buying and selling pressure
+            buying_pressure = np.where(df['close'] > df['open'], df['volume'], 0).sum()
+            selling_pressure = np.where(df['close'] < df['open'], df['volume'], 0).sum()
+            
+            # Calculate smart money flow
+            net_buying_pressure = buying_pressure - selling_pressure
+            total_volume = buying_pressure + selling_pressure
+            
+            if total_volume > 0:
+                smart_money_flow = net_buying_pressure / total_volume
+            else:
+                smart_money_flow = 0
+            
+            # Determine if flow is significant
+            if abs(smart_money_flow) > self.smart_money_flow_threshold:
+                if smart_money_flow > 0:
+                    smart_money_direction = "buying"
+                else:
+                    smart_money_direction = "selling"
+            else:
+                smart_money_direction = "neutral"
+            
+            result = {
+                'smart_money_flow': smart_money_flow,
+                'smart_money_direction': smart_money_direction
+            }
+            
+            trading_state.smart_money_flow[ticker] = result
+            return result
+            
+        except Exception as e:
+            log(f"❌ Smart Money Flow analysis failed: {e}")
+            return {}
+    
+    def detect_institutional_activity(self, df, ticker):
+        """Detect institutional activity based on large block trades"""
+        try:
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Identify large block trades
+            large_trades = df[df['volume'] > self.institutional_block_size]
+            
+            # Calculate buying and selling pressure for large trades
+            institutional_buying = np.where(large_trades['close'] > large_trades['open'], large_trades['volume'], 0).sum()
+            institutional_selling = np.where(large_trades['close'] < large_trades['open'], large_trades['volume'], 0).sum()
+            
+            result = {
+                'institutional_buying': institutional_buying,
+                'institutional_selling': institutional_selling,
+                'large_trade_count': len(large_trades)
+            }
+            
+            trading_state.institutional_activity[ticker] = result
+            return result
+            
+        except Exception as e:
+            log(f"❌ Institutional Activity detection failed: {e}")
+            return {}
+    
+    def analyze_dark_pool_indicators(self, df, ticker):
+        """Analyze dark pool indicators using volume and price action"""
+        try:
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Calculate off-exchange volume (simplified)
+            off_exchange_volume = df['volume'].quantile(0.8)
+            if df is None or df.empty or len(df) < 50:
+                return {}
+            
+            # Calculate off-exchange volume (simplified)
+            off_exchange_volume = df['volume'].quantile(0.8)
+            
+            # Calculate dark pool indicator
+            dark_pool_indicator = off_exchange_volume / df['volume'].sum()
+            
+            # Determine if indicator is significant
+            if dark_pool_indicator > self.dark_pool_indicator_threshold:
+                dark_pool_activity = "high"
+            else:
+                dark_pool_activity = "low"
+            
+            result = {
+                'dark_pool_indicator': dark_pool_indicator,
+                'dark_pool_activity': dark_pool_activity
+            }
+            
+            trading_state.dark_pool_indicators[ticker] = result
+            return result
+            
+        except Exception as e:
+            log(f"❌ Dark Pool Indicator analysis failed: {e}")
+            return {}
+
+market_microstructure_analyzer = MarketMicrostructureAnalyzer()
+
+# === ENHANCED TRADING EXECUTOR WITH FULL PROFIT TRACKING ===
+class EnhancedTradingExecutor:
+    def __init__(self):
+        self.cooldown_periods = {}
+        self.position_tracker = {}
+        self.max_positions = 10
+        self.cooldown_duration = 300
+        
+    def execute_buy_order(self, ticker, signal_strength, market_data, q_action=None):
+        """Execute buy order with full risk management and profit tracking"""
+        try:
+            if trading_state.emergency_stop_triggered:
+                log(f"🛑 Emergency stop active, skipping {ticker}")
+                return False
+            
+            if not self.check_cooldown(ticker):
+                log(f"⏰ {ticker} in cooldown period")
+                return False
+            
+            if not api:
+                log(f"⚠️ No API connection, simulating buy order for {ticker}")
+                return self.simulate_buy_order(ticker, signal_strength, market_data)
+            
+            # Get account info
+            account = safe_api_call(api.get_account)
+            if not account:
+                log(f"❌ Could not get account info for {ticker}")
+                return False
+            
+            equity = float(account.equity)
+            buying_power = float(account.buying_power)
+            
+            # Risk management checks
+            if not self.check_risk_limits(ticker, equity):
+                return False
+            
+            # Calculate position size
+            position_size = self.calculate_position_size(ticker, equity, signal_strength, market_data)
+            if position_size <= 0:
+                log(f"❌ Invalid position size for {ticker}: {position_size}")
+                return False
+            
+            # Get current price
+            current_price = market_data['close'].iloc[-1] if market_data is not None else 0
+            if current_price <= 0:
+                log(f"❌ Invalid price for {ticker}: {current_price}")
+                return False
+            
+            # Check if we have enough buying power
+            order_value = position_size * current_price
+            if order_value > buying_power:
+                log(f"❌ Insufficient buying power for {ticker}: ${order_value:.2f} > ${buying_power:.2f}")
+                return False
+            
+            # Execute the order
+            try:
+                order = api.submit_order(
+                    symbol=ticker,
+                    qty=position_size,
+                    side='buy',
+                    type='market',
+                    time_in_force='day'
+                )
+                
+                # Track the position
+                trade_id = trading_state.get_next_trade_id()
+                position_data = {
+                    'trade_id': trade_id,
+                    'ticker': ticker,
+                    'action': 'buy',
+                    'quantity': position_size,
+                    'entry_price': current_price,
+                    'entry_time': datetime.now(),
+                    'signal_strength': signal_strength,
+                    'q_action': q_action,
+                    'order_id': order.id,
+                    'market_data_snapshot': {
+                        'rsi': market_data['rsi'].iloc[-1] if 'rsi' in market_data else None,
+                        'macd': market_data['macd'].iloc[-1] if 'macd' in market_data else None,
+                        'volume_ratio': market_data['volume_ratio'].iloc[-1] if 'volume_ratio' in market_data else None
+                    }
+                }
+                
+                trading_state.open_positions[ticker] = position_data
+                self.set_cooldown(ticker)
+                
+                # Log to Google Sheets
+                log_data = {
+                    'trade_id': trade_id,
+                    'ticker': ticker,
+                    'action': 'buy',
+                    'quantity': position_size,
+                    'price': current_price,
+                    'signal_strength': signal_strength,
+                    'q_action': q_action
+                }
+                log_to_google_sheets(log_data, "TradingLog")
+                
+                # Send Discord alert
+                alert_msg = f"🟢 **BUY ORDER EXECUTED**\n"
+                alert_msg += f"Ticker: {ticker}\n"
+                alert_msg += f"Quantity: {position_size}\n"
+                alert_msg += f"Price: ${current_price:.2f}\n"
+                alert_msg += f"Value: ${order_value:.2f}\n"
+                alert_msg += f"Signal Strength: {signal_strength:.3f}\n"
+                alert_msg += f"Trade ID: {trade_id}"
+                send_discord_alert(alert_msg)
+                
+                log(f"✅ Buy order executed: {ticker} x{position_size} @ ${current_price:.2f}")
+                return True
+                
+            except Exception as order_error:
+                log(f"❌ Order execution failed for {ticker}: {order_error}")
+                return False
+            
+        except Exception as e:
+            log(f"❌ Buy order execution failed for {ticker}: {e}")
+            return False
+    
+    def execute_sell_order(self, ticker, reason="Signal"):
+        """Execute sell order with profit tracking"""
+        try:
+            if ticker not in trading_state.open_positions:
+                log(f"⚠️ No open position for {ticker}")
+                return False
+            
+            if not api:
+                log(f"⚠️ No API connection, simulating sell order for {ticker}")
+                return self.simulate_sell_order(ticker, reason)
+            
+            position_data = trading_state.open_positions[ticker]
+            
+            # Get current price
+            try:
+                bars = safe_api_call(api.get_bars, ticker, TimeFrame.Minute, limit=1)
+                if bars and not bars.df.empty:
+                    current_price = bars.df['close'].iloc[-1]
+                else:
+                    log(f"❌ Could not get current price for {ticker}")
+                    return False
+            except Exception as price_error:
+                log(f"❌ Price fetch failed for {ticker}: {price_error}")
+                return False
+            
+            # Execute the sell order
+            try:
+                order = api.submit_order(
+                    symbol=ticker,
+                    qty=position_data['quantity'],
+                    side='sell',
+                    type='market',
+                    time_in_force='day'
+                )
+                
+                # Calculate profit/loss
+                entry_price = position_data['entry_price']
+                exit_price = current_price
+                quantity = position_data['quantity']
+                
+                gross_pnl = (exit_price - entry_price) * quantity
+                return_pct = (exit_price - entry_price) / entry_price
+                
+                # Hold time
+                hold_time = datetime.now() - position_data['entry_time']
+                hold_minutes = hold_time.total_seconds() / 60
+                
+                # Update trade outcome
+                trade_outcome = {
+                    'trade_id': position_data['trade_id'],
+                    'ticker': ticker,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'quantity': quantity,
+                    'gross_pnl': gross_pnl,
+                    'return': return_pct,
+                    'hold_time_minutes': hold_minutes,
+                    'exit_reason': reason,
+                    'entry_time': position_data['entry_time'],
+                    'exit_time': datetime.now()
+                }
+                
+                trading_state.trade_outcomes.append(trade_outcome)
+                trading_state.pnl_tracker[ticker] = gross_pnl
+                
+                # Update Q-learning if applicable
+                if position_data.get('q_action'):
+                    q_learning_agent = QLearningAgent(['buy', 'sell', 'hold'])
+                    reward = return_pct * 100  # Scale reward
+                    
+                    # Get current state for Q-learning update
+                    current_data = get_enhanced_data(ticker, limit=50)
+                    if current_data is not None:
+                        current_state = q_learning_agent.discretize_state(current_data, ticker)
+                        if current_state and len(trading_state.q_state_history) > 0:
+                            last_state = trading_state.q_state_history[-1]
+                            last_action = position_data['q_action']
+                            q_learning_agent.learn(last_state, last_action, reward, current_state)
+                
+                # Remove from open positions
+                del trading_state.open_positions[ticker]
+                
+                # Log to Google Sheets
+                log_data = {
+                    'trade_id': position_data['trade_id'],
+                    'ticker': ticker,
+                    'action': 'sell',
+                    'quantity': quantity,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'gross_pnl': gross_pnl,
+                    'return_pct': return_pct,
+                    'hold_time_minutes': hold_minutes,
+                    'exit_reason': reason
+                }
+                log_to_google_sheets(log_data, "TradingLog")
+                
+                # Send Discord alert
+                profit_emoji = "🟢" if gross_pnl > 0 else "🔴"
+                alert_msg = f"{profit_emoji} **SELL ORDER EXECUTED**\n"
+                alert_msg += f"Ticker: {ticker}\n"
+                alert_msg += f"Quantity: {quantity}\n"
+                alert_msg += f"Entry: ${entry_price:.2f}\n"
+                alert_msg += f"Exit: ${exit_price:.2f}\n"
+                alert_msg += f"P&L: ${gross_pnl:.2f} ({return_pct:.2%})\n"
+                alert_msg += f"Hold Time: {hold_minutes:.1f} min\n"
+                alert_msg += f"Reason: {reason}"
+                send_discord_alert(alert_msg)
+                
+                log(f"✅ Sell order executed: {ticker} x{quantity} @ ${exit_price:.2f} | P&L: ${gross_pnl:.2f}")
+                return True
+                
+            except Exception as order_error:
+                log(f"❌ Sell order execution failed for {ticker}: {order_error}")
+                return False
+            
+        except Exception as e:
+            log(f"❌ Sell order execution failed for {ticker}: {e}")
+            return False
+    
+    def simulate_buy_order(self, ticker, signal_strength, market_data):
+        """Simulate buy order for demo mode"""
+        try:
+            current_price = market_data['close'].iloc[-1] if market_data is not None else 100
+            position_size = 10  # Demo position size
+            
+            trade_id = trading_state.get_next_trade_id()
+            position_data = {
+                'trade_id': trade_id,
+                'ticker': ticker,
+                'action': 'buy',
+                'quantity': position_size,
+                'entry_price': current_price,
+                'entry_time': datetime.now(),
+                'signal_strength': signal_strength,
+                'simulated': True
+            }
+            
+            trading_state.open_positions[ticker] = position_data
+            self.set_cooldown(ticker)
+            
+            log(f"📝 Simulated buy order: {ticker} x{position_size} @ ${current_price:.2f}")
+            return True
+            
+        except Exception as e:
+            log(f"❌ Simulated buy order failed for {ticker}: {e}")
+            return False
+    
+    def simulate_sell_order(self, ticker, reason):
+        """Simulate sell order for demo mode"""
+        try:
+            if ticker not in trading_state.open_positions:
+                return False
+            
+            position_data = trading_state.open_positions[ticker]
+            current_price = position_data['entry_price'] * (1 + random.uniform(-0.05, 0.05))  # Simulate price change
+            
+            gross_pnl = (current_price - position_data['entry_price']) * position_data['quantity']
+            return_pct = (current_price - position_data['entry_price']) / position_data['entry_price']
+            
+            trade_outcome = {
+                'trade_id': position_data['trade_id'],
+                'ticker': ticker,
+                'entry_price': position_data['entry_price'],
+                'exit_price': current_price,
+                'quantity': position_data['quantity'],
+                'gross_pnl': gross_pnl,
+                'return': return_pct,
+                'hold_time_minutes': 30,  # Simulated hold time
+                'exit_reason': reason,
+                'simulated': True
+            }
+            
+            trading_state.trade_outcomes.append(trade_outcome)
+            del trading_state.open_positions[ticker]
+            
+            log(f"📝 Simulated sell order: {ticker} | P&L: ${gross_pnl:.2f}")
+            return True
+            
+        except Exception as e:
+            log(f"❌ Simulated sell order failed for {ticker}: {e}")
+            return False
+    
+    def check_cooldown(self, ticker):
+        """Check if ticker is in cooldown period"""
+        if ticker in self.cooldown_periods:
+            time_since_trade = time.time() - self.cooldown_periods[ticker]
+            return time_since_trade > self.cooldown_duration
+        return True
+    
+    def set_cooldown(self, ticker):
+        """Set cooldown period for ticker"""
+        self.cooldown_periods[ticker] = time.time()
+    
+    def check_risk_limits(self, ticker, equity):
+        """Check various risk limits"""
+        try:
+            # Check maximum positions
+            if len(trading_state.open_positions) >= self.max_positions:
+                log(f"❌ Maximum positions reached: {len(trading_state.open_positions)}")
+                return False
+            
+            # Check daily drawdown
+            if trading_state.daily_drawdown > THRESHOLDS['MAX_DAILY_DRAWDOWN']:
+                log(f"❌ Daily drawdown limit exceeded: {trading_state.daily_drawdown:.2%}")
+                return False
+            
+            # Check emergency stop
+            if trading_state.emergency_stop_triggered:
+                log(f"❌ Emergency stop triggered")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            log(f"❌ Risk limit check failed: {e}")
+            return False
+    
+    def calculate_position_size(self, ticker, equity, signal_strength, market_data):
+        """Calculate position size based on risk management"""
+        try:
+            # Base position size (percentage of equity)
+            base_position_pct = 0.02  # 2% of equity
+            
+            # Adjust based on signal strength
+            signal_multiplier = min(signal_strength * 2, 2.0)  # Max 2x multiplier
+            
+            # Adjust based on volatility
+            if market_data is not None and 'atr' in market_data:
+                atr = market_data['atr'].iloc[-1]
+                current_price = market_data['close'].iloc[-1]
+                volatility_pct = atr / current_price
+                volatility_multiplier = max(0.5, 1 - volatility_pct)  # Reduce size for high volatility
+            else:
+                volatility_multiplier = 1.0
+            
+            # Calculate final position size
+            position_value = equity * base_position_pct * signal_multiplier * volatility_multiplier
+            current_price = market_data['close'].iloc[-1] if market_data is not None else 100
+            position_size = int(position_value / current_price)
+            
+            return max(1, position_size)  # Minimum 1 share
+            
+        except Exception as e:
+            log(f"❌ Position size calculation failed: {e}")
+            return 0
+
+trading_executor = EnhancedTradingExecutor()
 
 # === UTILITY FUNCTIONS ===
 def log_to_google_sheets(data, sheet_name="TradingLog"):
-    """Log data to Google Sheets"""
+    """Log data to Google Sheets with enhanced error handling"""
     try:
         if not gc or not GSHEET_ID:
             return
@@ -303,8 +2481,20 @@ def log_to_google_sheets(data, sheet_name="TradingLog"):
         log(f"❌ Google Sheets logging failed: {e}")
 
 def get_enhanced_data(ticker, limit=100, timeframe=TimeFrame.Minute, days_back=None):
-    """Get enhanced market data with technical indicators"""
+    """Get enhanced market data with all technical indicators"""
     try:
+        if not api:
+            # Return demo data for testing
+            dates = pd.date_range(start='2024-01-01', periods=limit, freq='5T')
+            demo_data = pd.DataFrame({
+                'open': np.random.uniform(100, 200, limit),
+                'high': np.random.uniform(100, 200, limit),
+                'low': np.random.uniform(100, 200, limit),
+                'close': np.random.uniform(100, 200, limit),
+                'volume': np.random.randint(1000, 10000, limit)
+            }, index=dates)
+            return add_ultra_advanced_technical_indicators(demo_data)
+        
         # Determine timeframe and limit based on model type
         if days_back == 2:  # Short-term model
             timeframe = TimeFrame.Minute
@@ -336,8 +2526,8 @@ def get_enhanced_data(ticker, limit=100, timeframe=TimeFrame.Minute, days_back=N
         if len(bars) < 20:
             return None
         
-        # Add technical indicators
-        bars = add_technical_indicators(bars)
+        # Add ALL technical indicators (restored)
+        bars = add_ultra_advanced_technical_indicators(bars)
         
         return bars
         
@@ -345,1967 +2535,63 @@ def get_enhanced_data(ticker, limit=100, timeframe=TimeFrame.Minute, days_back=N
         log(f"❌ Data fetch failed for {ticker}: {e}")
         return None
 
-def add_technical_indicators(df):
-    """Add comprehensive technical indicators to dataframe"""
-    try:
-        if df is None or df.empty:
-            return df
-        
-        # Price-based indicators
-        df['returns'] = df['close'].pct_change()
-        df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
-        
-        # Moving averages
-        df['sma_10'] = df['close'].rolling(10).mean()
-        df['sma_20'] = df['close'].rolling(20).mean()
-        df['sma_50'] = df['close'].rolling(50).mean() if len(df) >= 50 else df['close'].rolling(len(df)//2).mean()
-        
-        df['ema_12'] = EMAIndicator(close=df['close'], window=12).ema_indicator()
-        df['ema_26'] = EMAIndicator(close=df['close'], window=26).ema_indicator()
-        
-        # RSI (14-period)
-        df['rsi'] = RSIIndicator(close=df['close'], window=14).rsi()
-        
-        # MACD (diff)
-        macd = MACD(close=df['close'])
-        df['macd'] = macd.macd()
-        df['macd_signal'] = macd.macd_signal()
-        df['macd_histogram'] = macd.macd_diff()
-        
-        # On-Balance Volume (OBV)
-        df['obv'] = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume']).on_balance_volume()
-        
-        # ATR (Average True Range) - REQUIRED
-        df['atr'] = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14).average_true_range()
-        
-        # Bollinger Bands
-        if len(df) >= 20:
-            bb = BollingerBands(close=df['close'], window=20)
-            df['bb_upper'] = bb.bollinger_hband()
-            df['bb_lower'] = bb.bollinger_lband()
-            df['bb_middle'] = bb.bollinger_mavg()
-            df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
-            df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
-        
-        # Volume indicators
-        df['volume_sma_10'] = df['volume'].rolling(10).mean()
-        df['volume_sma_20'] = df['volume'].rolling(20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_sma_20']
-        
-        # VWAP calculation - REQUIRED
-        df['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
-        df['price_vs_vwap'] = df['close'] / df['vwap'] - 1
-        
-        # Volatility
-        df['volatility'] = df['returns'].rolling(20).std()
-        
-        # Price momentum - REQUIRED
-        df['momentum_5'] = df['close'].pct_change(5)
-        df['momentum_10'] = df['close'].pct_change(10)
-        df['momentum_20'] = df['close'].pct_change(20)
-        df['price_momentum'] = df['momentum_5']  # Primary momentum indicator
-        
-        # Support/Resistance levels
-        df['resistance'] = df['high'].rolling(20).max()
-        df['support'] = df['low'].rolling(20).min()
-        df['support_resistance_ratio'] = (df['close'] - df['support']) / (df['resistance'] - df['support'])
-        
-        return df
-        
-    except Exception as e:
-        log(f"❌ Technical indicator calculation failed: {e}")
-        return df
-
-def is_market_open():
-    """Check if market is currently open"""
-    return is_market_open_safe()
-
-def is_near_market_close(minutes_before=30):
+def is_near_market_close(minutes_before_close=30):
     """Check if we're near market close"""
     try:
         now = datetime.now(pytz.timezone("US/Eastern"))
         market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
         time_to_close = (market_close - now).total_seconds() / 60
-        return 0 <= time_to_close <= minutes_before
+        
+        return 0 < time_to_close <= minutes_before_close
+        
     except Exception as e:
         log(f"❌ Market close check failed: {e}")
         return False
 
 def get_current_positions():
-    """Get current positions with enhanced information"""
+    """Get current positions from API"""
     try:
-        positions = api.list_positions()
-        position_dict = {}
+        if not api:
+            return {}
         
+        positions = safe_api_call(api.list_positions)
+        if not positions:
+            return {}
+        
+        position_dict = {}
         for pos in positions:
             position_dict[pos.symbol] = {
-                'qty': int(pos.qty),
-                'avg_entry_price': float(pos.avg_entry_price),
+                'quantity': int(pos.qty),
                 'current_price': float(pos.current_price),
                 'market_value': float(pos.market_value),
-                'unrealized_pl': float(pos.unrealized_pl),
-                'unrealized_plpc': float(pos.unrealized_plpc),
-                'side': pos.side
+                'unrealized_pl': float(pos.unrealized_pl)
             }
         
         return position_dict
         
     except Exception as e:
-        log(f"❌ Failed to get positions: {e}")
+        log(f"❌ Position fetch failed: {e}")
         return {}
 
-def calculate_dynamic_kelly_position_size(ticker, win_rate=0.6, avg_win=0.05, avg_loss=0.03, confidence=0.5):
-    """Calculate position size using Dynamic Kelly Criterion"""
-    try:
-        # Get available capital
-        account = api.get_account()
-        available_cash = float(account.cash)
-        portfolio_value = float(account.equity)
-        
-        # Adjust Kelly based on model confidence
-        confidence_multiplier = max(0.5, min(1.5, confidence * 2))
-        
-        # Kelly formula: f = (bp - q) / b
-        # where b = odds received (avg_win/avg_loss), p = win probability, q = loss probability
-        b = avg_win / avg_loss
-        p = win_rate * confidence_multiplier  # Adjust win rate by confidence
-        q = 1 - p
-        
-        kelly_fraction = (b * p - q) / b
-        
-        # Apply safety constraints and confidence adjustment
-        kelly_fraction = max(0.005, min(kelly_fraction * confidence_multiplier, THRESHOLDS['MAX_PORTFOLIO_RISK']))
-        
-        # Get current price
-        bar = api.get_latest_bar(ticker)
-        current_price = bar.c
-        
-        # Calculate position size
-        dollar_amount = portfolio_value * kelly_fraction
-        shares = max(1, int(dollar_amount / current_price))
-        
-        log(f"💰 Dynamic Kelly sizing for {ticker}: {kelly_fraction:.1%} (conf: {confidence:.2f}) = {shares} shares (${dollar_amount:.2f})")
-        
-        return shares
-        
-    except Exception as e:
-        log(f"❌ Dynamic Kelly sizing failed for {ticker}: {e}")
-        return 1  # Default to 1 share
-
-def check_drawdown_limit():
-    """Check if daily drawdown limit is exceeded"""
-    try:
-        account = api.get_account()
-        current_equity = float(account.equity)
-        
-        if trading_state.starting_equity == 0:
-            trading_state.starting_equity = current_equity
-            return True
-        
-        drawdown = (trading_state.starting_equity - current_equity) / trading_state.starting_equity
-        trading_state.daily_drawdown = drawdown
-        
-        if drawdown > THRESHOLDS['MAX_DAILY_DRAWDOWN']:
-            log(f"🛑 Daily drawdown limit exceeded: {drawdown:.2%}")
-            send_discord_alert(f"🛑 Daily drawdown limit exceeded: {drawdown:.2%}", urgent=True)
-            return False
-        
-        return True
-        
-    except Exception as e:
-        log(f"❌ Drawdown check failed: {e}")
-        return True
-
-def detect_market_regime():
-    """Detect current market regime (bull/bear/neutral)"""
-    try:
-        # Get SPY data for regime detection
-        spy_data = get_enhanced_data("SPY", limit=50)
-        if spy_data is None or spy_data.empty:
-            return "neutral"
-        
-        # Calculate multiple timeframe returns
-        returns_5d = (spy_data['close'].iloc[-1] - spy_data['close'].iloc[-5]) / spy_data['close'].iloc[-5]
-        returns_20d = (spy_data['close'].iloc[-1] - spy_data['close'].iloc[-20]) / spy_data['close'].iloc[-20]
-        
-        # Calculate volatility
-        volatility = spy_data['returns'].rolling(20).std().iloc[-1]
-        
-        # Regime classification
-        if returns_5d > 0.02 and returns_20d > 0.05 and volatility < 0.02:
-            regime = "bull"
-        elif returns_5d < -0.02 and returns_20d < -0.05:
-            regime = "bear"
-        else:
-            regime = "neutral"
-        
-        trading_state.regime_state = regime
-        log(f"📊 Market regime detected: {regime} (5d: {returns_5d:.2%}, 20d: {returns_20d:.2%}, vol: {volatility:.2%})")
-        
-        return regime
-        
-    except Exception as e:
-        log(f"❌ Regime detection failed: {e}")
-        return "neutral"
-
-# === DUAL-HORIZON PREDICTION SYSTEM ===
-class DualHorizonPredictor:
+# === MAIN ULTRA-ADVANCED TRADING BOT CLASS ===
+class UltraAdvancedTradingBot:
     def __init__(self):
-        self.short_models = {}  # 2-day data, 5-minute candles, 5-bar lookahead
-        self.medium_models = {}  # 15-day data, daily bars, 5-day lookahead
-        self.ensemble_weights = {"short": 0.6, "medium": 0.4}
-        
-    def create_voting_ensemble(self):
-        return VotingClassifier(
-            estimators=[
-                ('xgb', XGBClassifier(
-                    n_estimators=100,
-                    max_depth=6,
-                    learning_rate=0.1,
-                    eval_metric="logloss",
-                    verbosity=0
-                )),
-                ('rf', RandomForestClassifier(
-                    n_estimators=100,
-                    max_depth=8,
-                    min_samples_split=5,
-                    min_samples_leaf=2
-                )),
-                ('lr', LogisticRegression(
-                    max_iter=1000,
-                    C=1.0,
-                    solver='liblinear'
-                ))
-            ],
-            voting='soft'
-        )
-    
-    def prepare_features(self, df, horizon='short'):
-        """Enhanced feature engineering for dual horizon"""
-        if df is None or df.empty or len(df) < 30:
-            return None, None
-            
-        df = df.copy()
-        
-        # Target variable based on horizon
-        if horizon == 'short':
-            # 5-bar lookahead for short-term
-            df['target'] = (df['close'].shift(-5) > df['close'] * 1.002).astype(int)
-        else:  # medium
-            # 5-day lookahead for medium-term
-            df['target'] = (df['close'].shift(-5) > df['close'] * 1.01).astype(int)
-        
-        # Select features - ALL REQUIRED FEATURES
-        feature_cols = [
-            'returns', 'log_returns', 'momentum_5', 'momentum_10', 'momentum_20',
-            'price_momentum',  # REQUIRED
-            'volume_ratio', 'rsi', 'macd', 'macd_signal', 'macd_histogram',
-            'obv',  # REQUIRED
-            'bb_position', 'price_vs_vwap',  # VWAP REQUIRED
-            'volatility', 'atr',  # ATR REQUIRED
-            'support_resistance_ratio'
-        ]
-        
-        # Ensure all features exist
-        available_features = [col for col in feature_cols if col in df.columns]
-        if len(available_features) < 12:  # Need at least 12 features
-            return None, None
-        
-        df_clean = df[available_features + ['target']].dropna()
-        
-        if len(df_clean) < 20:
-            return None, None
-            
-        X = df_clean[available_features]
-        y = df_clean['target']
-        
-        return X, y
-    
-    def train_models(self, ticker, short_data, medium_data):
-        """Train both short and medium horizon models"""
-        try:
-            models_trained = 0
-            
-            # Short horizon model (2-day data, 5-minute candles)
-            if short_data is not None:
-                X_short, y_short = self.prepare_features(short_data, 'short')
-                if X_short is not None and len(X_short) >= 30:
-                    short_model = self.create_voting_ensemble()
-                    
-                    # Use TimeSeriesSplit for training
-                    tscv = TimeSeriesSplit(n_splits=3)
-                    scores = cross_val_score(short_model, X_short, y_short, cv=tscv, scoring='accuracy')
-                    
-                    short_model.fit(X_short, y_short)
-                    self.short_models[ticker] = short_model
-                    joblib.dump(short_model, f"models/short/{ticker}_ensemble.pkl")
-                    
-                    log(f"✅ Trained short horizon model for {ticker} (CV accuracy: {scores.mean():.3f})")
-                    models_trained += 1
-            
-            # Medium horizon model (15-day data, daily bars)
-            if medium_data is not None:
-                X_medium, y_medium = self.prepare_features(medium_data, 'medium')
-                if X_medium is not None and len(X_medium) >= 10:
-                    medium_model = self.create_voting_ensemble()
-                    
-                    # Use TimeSeriesSplit for training
-                    tscv = TimeSeriesSplit(n_splits=2)
-                    scores = cross_val_score(medium_model, X_medium, y_medium, cv=tscv, scoring='accuracy')
-                    
-                    medium_model.fit(X_medium, y_medium)
-                    self.medium_models[ticker] = medium_model
-                    joblib.dump(medium_model, f"models/medium/{ticker}_ensemble.pkl")
-                    
-                    log(f"✅ Trained medium horizon model for {ticker} (CV accuracy: {scores.mean():.3f})")
-                    models_trained += 1
-            
-            return models_trained > 0
-            
-        except Exception as e:
-            log(f"❌ Model training failed for {ticker}: {e}")
-            return False
-    
-    def predict(self, ticker, current_short_data, current_medium_data):
-        """Make dual horizon predictions - BOTH MUST AGREE"""
-        try:
-            short_prob = None
-            medium_prob = None
-            
-            # Load models if not in memory
-            if ticker not in self.short_models:
-                short_path = f"models/short/{ticker}_ensemble.pkl"
-                if os.path.exists(short_path):
-                    self.short_models[ticker] = joblib.load(short_path)
-            
-            if ticker not in self.medium_models:
-                medium_path = f"models/medium/{ticker}_ensemble.pkl"
-                if os.path.exists(medium_path):
-                    self.medium_models[ticker] = joblib.load(medium_path)
-            
-            # Short horizon prediction
-            if ticker in self.short_models and current_short_data is not None:
-                try:
-                    short_prob = self.short_models[ticker].predict_proba([current_short_data])[0][1]
-                except Exception as e:
-                    log(f"⚠️ Short prediction failed for {ticker}: {e}")
-            
-            # Medium horizon prediction
-            if ticker in self.medium_models and current_medium_data is not None:
-                try:
-                    medium_prob = self.medium_models[ticker].predict_proba([current_medium_data])[0][1]
-                except Exception as e:
-                    log(f"⚠️ Medium prediction failed for {ticker}: {e}")
-            
-            # DUAL-HORIZON REQUIREMENT: Both models must agree
-            if short_prob is not None and medium_prob is not None:
-                # Both must be above buy threshold OR both below avoid threshold
-                both_bullish = (short_prob > THRESHOLDS['SHORT_BUY_THRESHOLD'] and 
-                               medium_prob > THRESHOLDS['SHORT_BUY_THRESHOLD'])
-                both_bearish = (short_prob < THRESHOLDS['SHORT_SELL_AVOID_THRESHOLD'] and 
-                               medium_prob < THRESHOLDS['SHORT_SELL_AVOID_THRESHOLD'])
-                
-                if both_bullish:
-                    combined_prob = (
-                        short_prob * self.ensemble_weights['short'] + 
-                        medium_prob * self.ensemble_weights['medium']
-                    )
-                    return short_prob, medium_prob, combined_prob, True  # Agreement
-                elif both_bearish:
-                    return short_prob, medium_prob, 0.0, True  # Agreement to avoid
-                else:
-                    return short_prob, medium_prob, 0.5, False  # No agreement
-            
-            return None, None, None, False
-                
-        except Exception as e:
-            log(f"❌ Prediction failed for {ticker}: {e}")
-            return None, None, None, False
-
-dual_predictor = DualHorizonPredictor()
-
-# === ENHANCED VWAP + VOLUME SPIKE FILTERING ===
-class VWAPVolumeFilter:
-    def __init__(self):
-        self.volume_threshold_multiplier = THRESHOLDS['VOLUME_SPIKE_MIN']  # 1.2x
-        self.vwap_deviation_threshold = 0.002
-        
-    def check_momentum_filter(self, df):
-        """Check price momentum > 0.005 (0.5%)"""
-        if df is None or df.empty or 'price_momentum' not in df.columns:
-            return False
-        
-        current_momentum = df['price_momentum'].iloc[-1]
-        return current_momentum > THRESHOLDS['PRICE_MOMENTUM_MIN']
-    
-    def check_volume_spike_filter(self, df):
-        """Check current_volume > 1.2 * recent_volume"""
-        if df is None or df.empty or len(df) < 20:
-            return False
-            
-        current_volume = df['volume'].iloc[-1]
-        recent_volume = df['volume'].rolling(20).mean().iloc[-1]
-        
-        return current_volume > (recent_volume * self.volume_threshold_multiplier)
-    
-    def check_vwap_confirmation(self, df):
-        """Check close > VWAP"""
-        if df is None or df.empty or 'vwap' not in df.columns:
-            return False
-            
-        current_price = df['close'].iloc[-1]
-        current_vwap = df['vwap'].iloc[-1]
-        
-        return current_price > current_vwap
-    
-    def check_volatility_gate(self, df, sentiment_score):
-        """Don't buy during volatility spike if sentiment is negative"""
-        try:
-            if df is None or df.empty or 'volatility' not in df.columns:
-                return True
-            
-            current_volatility = df['volatility'].iloc[-1]
-            
-            # If high volatility AND negative sentiment, gate the trade
-            if (current_volatility > THRESHOLDS['VOLATILITY_GATE_THRESHOLD'] and 
-                sentiment_score < THRESHOLDS['SENTIMENT_HOLD_OVERRIDE']):
-                log(f"🚫 Volatility gate triggered: vol={current_volatility:.3f}, sentiment={sentiment_score:.3f}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            log(f"❌ Volatility gate error: {e}")
-            return True
-    
-    def passes_all_filters(self, ticker, sentiment_score=0):
-        """Main filter function - ALL FILTERS MUST PASS"""
-        try:
-            df = get_enhanced_data(ticker, limit=50)
-            if df is None:
-                return False, "No data"
-            
-            # Check momentum filter
-            if not self.check_momentum_filter(df):
-                return False, "Momentum filter failed"
-            
-            # Check volume spike filter
-            if not self.check_volume_spike_filter(df):
-                return False, "Volume spike filter failed"
-            
-            # Check VWAP confirmation
-            if not self.check_vwap_confirmation(df):
-                return False, "VWAP confirmation failed"
-            
-            # Check volatility gate
-            if not self.check_volatility_gate(df, sentiment_score):
-                return False, "Volatility gate failed"
-            
-            return True, "All filters passed"
-            
-        except Exception as e:
-            log(f"❌ Filter check failed for {ticker}: {e}")
-            return False, f"Error: {e}"
-
-vwap_filter = VWAPVolumeFilter()
-
-# === SUPPORT/RESISTANCE LEVEL CONFIRMATION ===
-class SupportResistanceAnalyzer:
-    def __init__(self):
-        self.lookback_period = 50
-        self.touch_threshold = 0.01  # 1% threshold for level touches
-        self.min_touches = 2
-        
-    def find_pivot_points(self, df, window=5):
-        """Find pivot highs and lows"""
-        if df is None or df.empty or len(df) < window * 2:
-            return [], []
-            
-        highs = []
-        lows = []
-        
-        for i in range(window, len(df) - window):
-            # Pivot high
-            if all(df['high'].iloc[i] >= df['high'].iloc[i-j] for j in range(1, window+1)) and \
-               all(df['high'].iloc[i] >= df['high'].iloc[i+j] for j in range(1, window+1)):
-                highs.append((i, df['high'].iloc[i]))
-            
-            # Pivot low
-            if all(df['low'].iloc[i] <= df['low'].iloc[i-j] for j in range(1, window+1)) and \
-               all(df['low'].iloc[i] <= df['low'].iloc[i+j] for j in range(1, window+1)):
-                lows.append((i, df['low'].iloc[i]))
-        
-        return highs, lows
-    
-    def identify_levels(self, df):
-        """Identify support and resistance levels"""
-        try:
-            if df is None or df.empty:
-                return [], []
-                
-            highs, lows = self.find_pivot_points(df)
-            
-            # Group similar levels
-            resistance_levels = []
-            support_levels = []
-            
-            # Process resistance levels
-            high_prices = [price for _, price in highs]
-            for price in high_prices:
-                touches = sum(1 for p in high_prices if abs(p - price) / price <= self.touch_threshold)
-                if touches >= self.min_touches:
-                    resistance_levels.append(price)
-            
-            # Process support levels
-            low_prices = [price for _, price in lows]
-            for price in low_prices:
-                touches = sum(1 for p in low_prices if abs(p - price) / price <= self.touch_threshold)
-                if touches >= self.min_touches:
-                    support_levels.append(price)
-            
-            # Remove duplicates and sort
-            resistance_levels = sorted(list(set(resistance_levels)), reverse=True)
-            support_levels = sorted(list(set(support_levels)))
-            
-            return support_levels, resistance_levels
-            
-        except Exception as e:
-            log(f"❌ Support/Resistance identification error: {e}")
-            return [], []
-    
-    def check_level_confirmation(self, ticker, current_price):
-        """Check if current price confirms support/resistance levels"""
-        try:
-            # Use cached data if available
-            if ticker in trading_state.support_resistance_cache:
-                support_levels, resistance_levels = trading_state.support_resistance_cache[ticker]
-            else:
-                df = get_enhanced_data(ticker, limit=200)
-                if df is None:
-                    return True  # Default to allow if no data
-                    
-                support_levels, resistance_levels = self.identify_levels(df)
-                trading_state.support_resistance_cache[ticker] = (support_levels, resistance_levels)
-            
-            # Check if price is near a strong resistance (avoid buying)
-            for resistance in resistance_levels[:3]:  # Check top 3 resistance levels
-                if abs(current_price - resistance) / resistance <= 0.005:  # Within 0.5%
-                    log(f"🛑 {ticker} near resistance level ${resistance:.2f}")
-                    return False
-            
-            # Check if price is bouncing off support (good for buying)
-            for support in support_levels[-3:]:  # Check bottom 3 support levels
-                if abs(current_price - support) / support <= 0.005:  # Within 0.5%
-                    log(f"✅ {ticker} bouncing off support level ${support:.2f}")
-                    return True
-            
-            return True  # No significant levels nearby
-            
-        except Exception as e:
-            log(f"❌ Support/Resistance confirmation error for {ticker}: {e}")
-            return True
-
-sr_analyzer = SupportResistanceAnalyzer()
-
-# === ENHANCED SENTIMENT ANALYSIS WITH TRANSFORMER ENSEMBLE ===
-class EnhancedSentimentAnalyzer:
-    def __init__(self):
-        self.finbert_pipeline = None
-        self.sentiment_weights = {
-            'news': 0.7,
-            'reddit': 0.3
-        }
-        
-    def get_finbert_pipeline(self):
-        if self.finbert_pipeline is None:
-            try:
-                self.finbert_pipeline = pipeline(
-                    "sentiment-analysis", 
-                    model="ProsusAI/finbert",
-                    device=-1  # Use CPU
-                )
-                log("🧠 FinBERT pipeline loaded")
-            except Exception as e:
-                log(f"⚠️ Failed to load FinBERT: {e}")
-                self.finbert_pipeline = None
-        return self.finbert_pipeline
-    
-    def analyze_with_transformer_ensemble(self, texts):
-        """Analyze sentiment using Transformer Ensemble (FinBERT + VADER)"""
-        try:
-            finbert_score = 0
-            vader_score = 0
-            
-            # FinBERT analysis
-            pipeline = self.get_finbert_pipeline()
-            if pipeline is not None:
-                try:
-                    results = pipeline(texts[:5])  # Limit to avoid memory issues
-                    scores = []
-                    
-                    for result in results:
-                        if result['label'] == 'positive':
-                            scores.append(result['score'])
-                        elif result['label'] == 'negative':
-                            scores.append(-result['score'])
-                        else:  # neutral
-                            scores.append(0)
-                    
-                    finbert_score = np.mean(scores) if scores else 0
-                except Exception as e:
-                    log(f"⚠️ FinBERT analysis failed: {e}")
-            
-            # VADER analysis
-            try:
-                vader_scores = []
-                for text in texts[:10]:  # Analyze more with VADER (faster)
-                    score = analyzer.polarity_scores(text)['compound']
-                    vader_scores.append(score)
-                vader_score = np.mean(vader_scores) if vader_scores else 0
-            except Exception as e:
-                log(f"⚠️ VADER analysis failed: {e}")
-            
-            # Ensemble scoring (weighted average)
-            ensemble_score = (finbert_score * 0.7 + vader_score * 0.3)
-            
-            return ensemble_score
-            
-        except Exception as e:
-            log(f"❌ Transformer ensemble analysis failed: {e}")
-            return 0
-    
-    def get_news_sentiment(self, ticker):
-        """Get news sentiment for ticker"""
-        try:
-            if ticker in trading_state.sentiment_cache:
-                return trading_state.sentiment_cache[ticker].get('news', 0)
-            
-            if not newsapi:
-                return 0
-            
-            # Fetch news
-            articles = newsapi.get_everything(
-                q=f"{ticker} stock",
-                sort_by='publishedAt',
-                page_size=20,
-                language='en'
-            )
-            
-            if not articles or not articles.get('articles'):
-                return 0
-            
-            titles = [article.get('title', '') for article in articles['articles'] if article.get('title')]
-            descriptions = [article.get('description', '') for article in articles['articles'] if article.get('description')]
-            
-            all_texts = titles + descriptions
-            if not all_texts:
-                return 0
-            
-            sentiment_score = self.analyze_with_transformer_ensemble(all_texts)
-            
-            # Cache the result
-            if ticker not in trading_state.sentiment_cache:
-                trading_state.sentiment_cache[ticker] = {}
-            trading_state.sentiment_cache[ticker]['news'] = sentiment_score
-            
-            return sentiment_score
-            
-        except Exception as e:
-            log(f"❌ News sentiment error for {ticker}: {e}")
-            return 0
-    
-    def get_combined_sentiment(self, ticker):
-        """Get combined sentiment score"""
-        try:
-            news_sentiment = self.get_news_sentiment(ticker)
-            
-            # For now, just use news sentiment
-            # Reddit sentiment would require additional API setup
-            combined_score = news_sentiment
-            
-            return combined_score
-            
-        except Exception as e:
-            log(f"❌ Combined sentiment error for {ticker}: {e}")
-            return 0
-    
-    def sentiment_override_check(self, ticker, base_signal):
-        """Check if sentiment should override the base trading signal"""
-        try:
-            sentiment_score = self.get_combined_sentiment(ticker)
-            
-            # SENTIMENT HOLD OVERRIDE: If VADER < -0.5 or FinBERT = "Negative"
-            if sentiment_score < THRESHOLDS['SENTIMENT_HOLD_OVERRIDE']:
-                log(f"😡 Sentiment hold override for {ticker}: {sentiment_score:.3f}")
-                return False
-            
-            # Strong positive sentiment boost
-            if sentiment_score > 0.3 and base_signal > THRESHOLDS['SHORT_BUY_THRESHOLD']:
-                log(f"😊 Positive sentiment boost for {ticker}: {sentiment_score:.3f}")
-                return True
-            
-            # Moderate negative sentiment caution
-            if sentiment_score < -0.1 and base_signal < 0.55:
-                log(f"😐 Negative sentiment caution for {ticker}: {sentiment_score:.3f}")
-                return False
-            
-            return base_signal > THRESHOLDS['SHORT_BUY_THRESHOLD']
-            
-        except Exception as e:
-            log(f"❌ Sentiment override error for {ticker}: {e}")
-            return base_signal > THRESHOLDS['SHORT_BUY_THRESHOLD']
-
-sentiment_analyzer = EnhancedSentimentAnalyzer()
-
-# === META MODEL APPROVAL SYSTEM WITH AUTO-RETRAINING ===
-class MetaModelApprovalSystem:
-    def __init__(self):
-        self.meta_model = None
-        self.feature_columns = [
-            'base_signal_strength', 'sentiment_score', 'market_regime', 
-            'volume_spike', 'vwap_position', 'rsi', 'macd_signal',
-            'support_resistance_score', 'sector_momentum', 'time_of_day',
-            'day_of_week', 'volatility', 'recent_accuracy', 'atr_ratio',
-            'price_momentum', 'obv_trend'
-        ]
-        self.approval_threshold = 0.6
-        self.min_training_samples = 100
-        self.last_retrain_date = None
-        
-    def extract_meta_features(self, ticker, base_signal, market_data):
-        """Extract features for meta model decision"""
-        try:
-            features = {}
-            
-            # Base signal strength
-            features['base_signal_strength'] = base_signal
-            
-            # Sentiment
-            features['sentiment_score'] = sentiment_analyzer.get_combined_sentiment(ticker)
-            
-            # Market regime
-            features['market_regime'] = self.get_market_regime_numeric()
-            
-            # Volume analysis
-            if market_data is not None and not market_data.empty:
-                current_volume = market_data['volume'].iloc[-1]
-                avg_volume = market_data['volume'].rolling(20).mean().iloc[-1]
-                features['volume_spike'] = min(current_volume / avg_volume, 5.0) if avg_volume > 0 else 1.0
-                
-                # VWAP position
-                if 'vwap' in market_data.columns:
-                    features['vwap_position'] = market_data['close'].iloc[-1] / market_data['vwap'].iloc[-1] - 1
-                else:
-                    features['vwap_position'] = 0
-                
-                # Technical indicators
-                features['rsi'] = market_data.get('rsi', pd.Series([50])).iloc[-1] / 100.0
-                features['macd_signal'] = 1 if market_data.get('macd', pd.Series([0])).iloc[-1] > 0 else 0
-                features['volatility'] = market_data['volatility'].iloc[-1] if 'volatility' in market_data.columns else 0.02
-                
-                # ATR ratio
-                if 'atr' in market_data.columns:
-                    features['atr_ratio'] = market_data['atr'].iloc[-1] / market_data['close'].iloc[-1]
-                else:
-                    features['atr_ratio'] = 0.02
-                
-                # Price momentum
-                features['price_momentum'] = market_data.get('price_momentum', pd.Series([0])).iloc[-1]
-                
-                # OBV trend
-                if 'obv' in market_data.columns and len(market_data) >= 5:
-                    obv_trend = (market_data['obv'].iloc[-1] - market_data['obv'].iloc[-5]) / market_data['obv'].iloc[-5]
-                    features['obv_trend'] = obv_trend
-                else:
-                    features['obv_trend'] = 0
-                    
-            else:
-                features.update({
-                    'volume_spike': 1.0, 'vwap_position': 0, 'rsi': 0.5,
-                    'macd_signal': 0, 'volatility': 0.02, 'atr_ratio': 0.02,
-                    'price_momentum': 0, 'obv_trend': 0
-                })
-            
-            # Support/Resistance score
-            features['support_resistance_score'] = self.calculate_sr_score(ticker, market_data)
-            
-            # Sector momentum
-            features['sector_momentum'] = self.get_sector_momentum(ticker)
-            
-            # Time features
-            now = datetime.now()
-            features['time_of_day'] = now.hour + now.minute / 60.0
-            features['day_of_week'] = now.weekday()
-            
-            # Recent accuracy for this ticker
-            features['recent_accuracy'] = self.get_recent_accuracy(ticker)
-            
-            return features
-            
-        except Exception as e:
-            log(f"❌ Meta feature extraction error for {ticker}: {e}")
-            return None
-    
-    def calculate_sr_score(self, ticker, market_data):
-        """Calculate support/resistance score"""
-        try:
-            if market_data is None or market_data.empty:
-                return 0.5
-                
-            current_price = market_data['close'].iloc[-1]
-            return 1.0 if sr_analyzer.check_level_confirmation(ticker, current_price) else 0.0
-            
-        except:
-            return 0.5
-    
-    def get_sector_momentum(self, ticker):
-        """Get sector momentum score"""
-        try:
-            sector = self.get_ticker_sector(ticker)
-            if sector == "Unknown":
-                return 0.5
-                
-            # Calculate sector average performance
-            sector_tickers = SECTOR_UNIVERSE.get(sector, [ticker])
-            sector_returns = []
-            
-            for t in sector_tickers[:5]:  # Sample 5 tickers from sector
-                try:
-                    df = get_enhanced_data(t, limit=20)
-                    if df is not None and not df.empty:
-                        ret = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
-                        sector_returns.append(ret)
-                except:
-                    continue
-            
-            if sector_returns:
-                avg_return = np.mean(sector_returns)
-                return max(0, min(1, avg_return * 10 + 0.5))  # Normalize to 0-1
-            
-            return 0.5
-            
-        except:
-            return 0.5
-    
-    def get_ticker_sector(self, ticker):
-        """Get sector for ticker"""
-        for sector, tickers in SECTOR_UNIVERSE.items():
-            if ticker in tickers:
-                return sector
-        return "Unknown"
-    
-    def get_market_regime_numeric(self):
-        """Get numeric market regime"""
-        regime_map = {"bull": 1, "bear": -1, "neutral": 0}
-        return regime_map.get(trading_state.regime_state, 0)
-    
-    def get_recent_accuracy(self, ticker):
-        """Get recent prediction accuracy for ticker"""
-        try:
-            if ticker in trading_state.accuracy_tracker:
-                recent_trades = trading_state.accuracy_tracker[ticker][-10:]  # Last 10 trades
-                if recent_trades:
-                    correct_predictions = sum(1 for trade in recent_trades if trade['correct'])
-                    return correct_predictions / len(recent_trades)
-            return 0.5  # Default neutral accuracy
-            
-        except:
-            return 0.5
-    
-    def load_meta_model(self):
-        """Load existing meta model"""
-        try:
-            if os.path.exists("models/meta/approval_model.pkl"):
-                self.meta_model = joblib.load("models/meta/approval_model.pkl")
-                log("✅ Meta approval model loaded")
-                return True
-            return False
-        except Exception as e:
-            log(f"❌ Failed to load meta model: {e}")
-            return False
-    
-    def train_meta_model(self):
-        """Train the meta approval model with auto-retraining"""
-        try:
-            # Load historical meta decisions
-            if not os.path.exists("logs/meta_decisions.csv"):
-                log("⚠️ No meta decision history found")
-                return False
-            
-            df = pd.read_csv("logs/meta_decisions.csv")
-            
-            if len(df) < self.min_training_samples:
-                log(f"⚠️ Not enough samples for meta model training: {len(df)}")
-                return False
-            
-            # Prepare features and target
-            X = df[self.feature_columns]
-            y = df['outcome']  # 1 for profitable trades, 0 for losses
-            
-            # Train ensemble meta model
-            self.meta_model = GradientBoostingClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=42
-            )
-            
-            # Cross-validation with TimeSeriesSplit
-            tscv = TimeSeriesSplit(n_splits=5)
-            cv_scores = cross_val_score(self.meta_model, X, y, cv=tscv, scoring='accuracy')
-            log(f"📊 Meta model CV accuracy: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
-            
-            # Train on full dataset
-            self.meta_model.fit(X, y)
-            
-            # Save model
-            joblib.dump(self.meta_model, "models/meta/approval_model.pkl")
-            
-            # Feature importance
-            feature_importance = pd.DataFrame({
-                'feature': self.feature_columns,
-                'importance': self.meta_model.feature_importances_
-            }).sort_values('importance', ascending=False)
-            
-            log("📈 Meta model feature importance:")
-            for _, row in feature_importance.head(5).iterrows():
-                log(f"   {row['feature']}: {row['importance']:.3f}")
-            
-            # Log performance
-            log_to_google_sheets({
-                'model_type': 'meta_model',
-                'cv_accuracy': cv_scores.mean(),
-                'cv_std': cv_scores.std(),
-                'training_samples': len(df)
-            }, "ModelPerformance")
-            
-            self.last_retrain_date = datetime.now().date()
-            return True
-            
-        except Exception as e:
-            log(f"❌ Meta model training failed: {e}")
-            return False
-    
-    def should_retrain_daily(self):
-        """Check if daily auto-retraining is needed"""
-        today = datetime.now().date()
-        return (self.last_retrain_date is None or 
-                self.last_retrain_date < today)
-    
-    def should_approve_trade(self, ticker, base_signal, market_data):
-        """Main approval decision function"""
-        try:
-            # Extract features
-            features = self.extract_meta_features(ticker, base_signal, market_data)
-            if features is None:
-                return False, "Feature extraction failed"
-            
-            # Load model if not loaded
-            if self.meta_model is None:
-                if not self.load_meta_model():
-                    # If no model exists, use rule-based approval
-                    return self.rule_based_approval(features)
-            
-            # Create feature vector
-            feature_vector = [features.get(col, 0) for col in self.feature_columns]
-            feature_df = pd.DataFrame([feature_vector], columns=self.feature_columns)
-            
-            # Get prediction probability
-            approval_prob = self.meta_model.predict_proba(feature_df)[0][1]
-            
-            # Decision
-            approved = approval_prob >= self.approval_threshold
-            reason = f"Meta model probability: {approval_prob:.3f}"
-            
-            # Log decision
-            self.log_meta_decision(ticker, features, approved, reason)
-            
-            return approved, reason
-            
-        except Exception as e:
-            log(f"❌ Meta approval error for {ticker}: {e}")
-            return False, f"Error: {e}"
-    
-    def rule_based_approval(self, features):
-        """Fallback rule-based approval when no model exists"""
-        try:
-            score = 0
-            reasons = []
-            
-            # Base signal strength
-            if features['base_signal_strength'] > 0.7:
-                score += 2
-                reasons.append("Strong base signal")
-            elif features['base_signal_strength'] > THRESHOLDS['SHORT_BUY_THRESHOLD']:
-                score += 1
-                reasons.append("Good base signal")
-            
-            # Sentiment
-            if features['sentiment_score'] > 0.2:
-                score += 1
-                reasons.append("Positive sentiment")
-            elif features['sentiment_score'] < THRESHOLDS['SENTIMENT_HOLD_OVERRIDE']:
-                score -= 2
-                reasons.append("Negative sentiment override")
-            
-            # Volume spike
-            if features['volume_spike'] > THRESHOLDS['VOLUME_SPIKE_MIN']:
-                score += 1
-                reasons.append("Volume spike")
-            
-            # VWAP position
-            if features['vwap_position'] > 0:
-                score += 1
-                reasons.append("Above VWAP")
-            
-            # Price momentum
-            if features['price_momentum'] > THRESHOLDS['PRICE_MOMENTUM_MIN']:
-                score += 1
-                reasons.append("Good momentum")
-            
-            # Support/Resistance
-            if features['support_resistance_score'] > 0.5:
-                score += 1
-                reasons.append("Good S/R position")
-            
-            # Market regime
-            if features['market_regime'] > 0:
-                score += 1
-                reasons.append("Bull market")
-            elif features['market_regime'] < 0:
-                score -= 1
-                reasons.append("Bear market")
-            
-            approved = score >= 4
-            reason = f"Rule-based score: {score} ({', '.join(reasons)})"
-            
-            return approved, reason
-            
-        except Exception as e:
-            return False, f"Rule-based error: {e}"
-    
-    def log_meta_decision(self, ticker, features, approved, reason):
-        """Log meta model decision for future training"""
-        try:
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'ticker': ticker,
-                'approved': approved,
-                'reason': reason,
-                **features
-            }
-            
-            # Append to CSV
-            df = pd.DataFrame([log_entry])
-            csv_path = "logs/meta_decisions.csv"
-            
-            if os.path.exists(csv_path):
-                df.to_csv(csv_path, mode='a', header=False, index=False)
-            else:
-                df.to_csv(csv_path, index=False)
-                
-        except Exception as e:
-            log(f"❌ Failed to log meta decision: {e}")
-    
-    def update_outcome(self, ticker, timestamp, profitable):
-        """Update the outcome of a previous decision for training"""
-        try:
-            csv_path = "logs/meta_decisions.csv"
-            if not os.path.exists(csv_path):
-                return
-            
-            df = pd.read_csv(csv_path)
-            
-            # Find the decision to update
-            mask = (df['ticker'] == ticker) & (df['timestamp'] == timestamp)
-            if mask.any():
-                df.loc[mask, 'outcome'] = 1 if profitable else 0
-                df.to_csv(csv_path, index=False)
-                log(f"✅ Updated outcome for {ticker}: {'Profitable' if profitable else 'Loss'}")
-                
-        except Exception as e:
-            log(f"❌ Failed to update meta outcome: {e}")
-
-meta_approval_system = MetaModelApprovalSystem()
-
-# === DYNAMIC WATCHLIST OPTIMIZER WITH SECTOR LIMITS ===
-class DynamicWatchlistOptimizer:
-    def __init__(self):
-        self.max_watchlist_size = THRESHOLDS['WATCHLIST_LIMIT']  # 20
-        self.sector_limits = {sector: THRESHOLDS['MAX_PER_SECTOR_WATCHLIST'] 
-                             for sector in SECTOR_UNIVERSE.keys()}  # 12 per sector
-        self.scoring_weights = {
-            'momentum': 0.25,
-            'volume': 0.20,
-            'volatility': 0.15,
-            'sentiment': 0.15,
-            'technical': 0.15,
-            'sector_rotation': 0.10
-        }
-        
-    def calculate_momentum_score(self, df):
-        """Calculate momentum score for a ticker"""
-        try:
-            if df is None or df.empty or len(df) < 20:
-                return 0
-            
-            # Multiple timeframe momentum
-            returns_1d = (df['close'].iloc[-1] - df['close'].iloc[-20]) / df['close'].iloc[-20]
-            returns_3d = (df['close'].iloc[-1] - df['close'].iloc[-60]) / df['close'].iloc[-60] if len(df) >= 60 else returns_1d
-            returns_5d = (df['close'].iloc[-1] - df['close'].iloc[-100]) / df['close'].iloc[-100] if len(df) >= 100 else returns_1d
-            
-            # Weighted momentum score
-            momentum_score = (
-                returns_1d * 0.5 +
-                returns_3d * 0.3 +
-                returns_5d * 0.2
-            )
-            
-            # Normalize to 0-1 scale
-            return max(0, min(1, momentum_score * 5 + 0.5))
-            
-        except Exception as e:
-            log(f"❌ Momentum calculation error: {e}")
-            return 0
-    
-    def calculate_volume_score(self, df):
-        """Calculate volume score for a ticker"""
-        try:
-            if df is None or df.empty or len(df) < 20:
-                return 0
-            
-            current_volume = df['volume'].iloc[-1]
-            avg_volume_20 = df['volume'].rolling(20).mean().iloc[-1]
-            avg_volume_5 = df['volume'].rolling(5).mean().iloc[-1]
-            
-            # Volume trend and spike
-            volume_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 1
-            volume_trend = avg_volume_5 / avg_volume_20 if avg_volume_20 > 0 else 1
-            
-            # Combined volume score
-            volume_score = (volume_ratio * 0.6 + volume_trend * 0.4) / 3  # Normalize
-            
-            return max(0, min(1, volume_score))
-            
-        except Exception as e:
-            log(f"❌ Volume calculation error: {e}")
-            return 0
-    
-    def calculate_volatility_score(self, df):
-        """Calculate volatility score (higher volatility = higher opportunity)"""
-        try:
-            if df is None or df.empty or len(df) < 20:
-                return 0
-            
-            returns = df['close'].pct_change().dropna()
-            volatility = returns.rolling(20).std().iloc[-1]
-            
-            # Normalize volatility (target range 0.01-0.05 daily volatility)
-            normalized_vol = max(0, min(1, (volatility - 0.005) / 0.045))
-            
-            return normalized_vol
-            
-        except Exception as e:
-            log(f"❌ Volatility calculation error: {e}")
-            return 0
-    
-    def calculate_technical_score(self, df):
-        """Calculate technical analysis score"""
-        try:
-            if df is None or df.empty or len(df) < 50:
-                return 0
-            
-            score = 0
-            
-            # RSI (prefer 30-70 range, avoid extremes)
-            if 'rsi' in df.columns:
-                rsi = df['rsi'].iloc[-1]
-                if 30 <= rsi <= 70:
-                    score += 0.3
-                elif 40 <= rsi <= 60:
-                    score += 0.5
-            
-            # MACD signal
-            if 'macd' in df.columns and 'macd_signal' in df.columns:
-                macd_diff = df['macd'].iloc[-1] - df['macd_signal'].iloc[-1]
-                if macd_diff > 0:
-                    score += 0.3
-            
-            # Price vs moving averages
-            if len(df) >= 20:
-                ma_20 = df['close'].rolling(20).mean().iloc[-1]
-                if df['close'].iloc[-1] > ma_20:
-                    score += 0.2
-            
-            # Bollinger Bands position
-            if 'bb_position' in df.columns:
-                bb_position = df['bb_position'].iloc[-1]
-                # Prefer middle range, avoid extremes
-                if 0.2 <= bb_position <= 0.8:
-                    score += 0.2
-            
-            return min(1, score)
-            
-        except Exception as e:
-            log(f"❌ Technical score calculation error: {e}")
-            return 0
-    
-    def calculate_sector_rotation_score(self, ticker):
-        """Calculate sector rotation score"""
-        try:
-            sector = self.get_ticker_sector(ticker)
-            if sector == "Unknown":
-                return 0.5
-            
-            # Get sector performance
-            sector_tickers = SECTOR_UNIVERSE.get(sector, [])
-            if not sector_tickers:
-                return 0.5
-            
-            sector_returns = []
-            for t in random.sample(sector_tickers, min(5, len(sector_tickers))):
-                try:
-                    df = get_enhanced_data(t, limit=20)
-                    if df is not None and not df.empty:
-                        ret = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0]
-                        sector_returns.append(ret)
-                except:
-                    continue
-            
-            if not sector_returns:
-                return 0.5
-            
-            avg_sector_return = np.mean(sector_returns)
-            
-            # Compare to market (SPY)
-            try:
-                spy_df = get_enhanced_data("SPY", limit=20)
-                if spy_df is not None and not spy_df.empty:
-                    spy_return = (spy_df['close'].iloc[-1] - spy_df['close'].iloc[0]) / spy_df['close'].iloc[0]
-                    relative_performance = avg_sector_return - spy_return
-                    
-                    # Normalize to 0-1
-                    return max(0, min(1, relative_performance * 10 + 0.5))
-            except:
-                pass
-            
-            return max(0, min(1, avg_sector_return * 10 + 0.5))
-            
-        except Exception as e:
-            log(f"❌ Sector rotation score error: {e}")
-            return 0.5
-    
-    def get_ticker_sector(self, ticker):
-        """Get sector for ticker"""
-        for sector, tickers in SECTOR_UNIVERSE.items():
-            if ticker in tickers:
-                return sector
-        return "Unknown"
-    
-    def score_ticker(self, ticker):
-        """Calculate comprehensive score for a ticker"""
-        try:
-            # Get market data
-            df = get_enhanced_data(ticker, limit=100)
-            if df is None or df.empty:
-                return 0, "No data available"
-            
-            # Calculate individual scores
-            momentum_score = self.calculate_momentum_score(df)
-            volume_score = self.calculate_volume_score(df)
-            volatility_score = self.calculate_volatility_score(df)
-            technical_score = self.calculate_technical_score(df)
-            sector_score = self.calculate_sector_rotation_score(ticker)
-            
-            # Get sentiment score
-            sentiment_score = sentiment_analyzer.get_combined_sentiment(ticker)
-            sentiment_normalized = max(0, min(1, sentiment_score + 0.5))  # Normalize -1,1 to 0,1
-            
-            # Calculate weighted final score
-            final_score = (
-                momentum_score * self.scoring_weights['momentum'] +
-                volume_score * self.scoring_weights['volume'] +
-                volatility_score * self.scoring_weights['volatility'] +
-                sentiment_normalized * self.scoring_weights['sentiment'] +
-                technical_score * self.scoring_weights['technical'] +
-                sector_score * self.scoring_weights['sector_rotation']
-            )
-            
-            score_breakdown = {
-                'momentum': momentum_score,
-                'volume': volume_score,
-                'volatility': volatility_score,
-                'sentiment': sentiment_normalized,
-                'technical': technical_score,
-                'sector': sector_score,
-                'final': final_score
-            }
-            
-            return final_score, score_breakdown
-            
-        except Exception as e:
-            log(f"❌ Ticker scoring error for {ticker}: {e}")
-            return 0, f"Error: {e}"
-    
-    def generate_dynamic_watchlist(self):
-        """Generate optimized watchlist with sector concentration limits"""
-        try:
-            log("🎯 Generating dynamic watchlist...")
-            
-            candidates = []
-            
-            # Score all tickers
-            all_tickers = FALLBACK_UNIVERSE.copy()
-            random.shuffle(all_tickers)  # Randomize to avoid bias
-            
-            for ticker in all_tickers[:100]:  # Limit to first 100 to avoid timeout
-                try:
-                    score, breakdown = self.score_ticker(ticker)
-                    
-                    if score > 0.3:  # Minimum threshold
-                        sector = self.get_ticker_sector(ticker)
-                        
-                        candidates.append({
-                            'ticker': ticker,
-                            'score': score,
-                            'sector': sector,
-                            'breakdown': breakdown
-                        })
-                        
-                        log(f"📊 {ticker}: {score:.3f} ({sector})")
-                    
-                except Exception as e:
-                    log(f"⚠️ Error scoring {ticker}: {e}")
-                    continue
-            
-            # Sort by score
-            candidates.sort(key=lambda x: x['score'], reverse=True)
-            
-            # Apply sector limits (MAX_PER_SECTOR_WATCHLIST = 12)
-            final_watchlist = []
-            sector_counts = defaultdict(int)
-            
-            for candidate in candidates:
-                ticker = candidate['ticker']
-                sector = candidate['sector']
-                
-                # Check sector limit
-                sector_limit = self.sector_limits.get(sector, THRESHOLDS['MAX_PER_SECTOR_WATCHLIST'])
-                if sector_counts[sector] >= sector_limit:
-                    continue
-                
-                # Check total limit
-                if len(final_watchlist) >= self.max_watchlist_size:
-                    break
-                
-                final_watchlist.append(candidate)
-                sector_counts[sector] += 1
-            
-            # Log final watchlist
-            log(f"✅ Generated watchlist with {len(final_watchlist)} tickers:")
-            for item in final_watchlist[:10]:  # Show top 10
-                log(f"   {item['ticker']}: {item['score']:.3f} ({item['sector']})")
-            
-            # Log sector distribution
-            log("📈 Sector distribution:")
-            for sector, count in sector_counts.items():
-                log(f"   {sector}: {count}")
-            
-            return [item['ticker'] for item in final_watchlist]
-            
-        except Exception as e:
-            log(f"❌ Watchlist generation failed: {e}")
-            return FALLBACK_UNIVERSE[:20]  # Fallback to first 20 tickers
-
-watchlist_optimizer = DynamicWatchlistOptimizer()
-
-# === ENHANCED TRADING EXECUTOR WITH ATR-BASED STOPS ===
-class EnhancedTradingExecutor:
-    def __init__(self):
-        self.cooldown_periods = {}  # Track cooldowns per ticker
-        self.position_tracker = {}  # Track position details
-        self.stop_loss_targets = {}  # Dynamic stop-loss tracking
-        self.profit_targets = {}  # Dynamic profit targets
-        self.trade_start_times = {}  # Track when positions were opened
-        
-        # Configuration
-        self.max_positions = 10
-        self.cooldown_duration = 300  # 5 minutes in seconds
-        
-    def check_cooldown(self, ticker):
-        """Check if ticker is in cooldown period"""
-        if ticker not in self.cooldown_periods:
-            return True
-            
-        cooldown_end = self.cooldown_periods[ticker]
-        if datetime.now().timestamp() > cooldown_end:
-            del self.cooldown_periods[ticker]
-            return True
-            
-        return False
-    
-    def set_cooldown(self, ticker):
-        """Set cooldown period for ticker"""
-        self.cooldown_periods[ticker] = datetime.now().timestamp() + self.cooldown_duration
-        log(f"⏰ Cooldown set for {ticker}: {self.cooldown_duration/60:.1f} minutes")
-    
-    def calculate_atr_based_stops(self, ticker, entry_price, atr_value, confidence):
-        """Calculate ATR-based dynamic stop-loss and take-profit"""
-        try:
-            # Dynamic stop-loss: ATR * 1.2 (or lower if confidence is low)
-            confidence_multiplier = max(0.7, min(1.3, confidence))
-            stop_multiplier = THRESHOLDS['ATR_STOP_MULTIPLIER'] / confidence_multiplier
-            stop_loss = atr_value * stop_multiplier
-            stop_price = entry_price - stop_loss
-            
-            # Dynamic take-profit: ATR * 2-3 based on confidence
-            profit_multiplier = THRESHOLDS['ATR_PROFIT_MULTIPLIER'] * confidence_multiplier
-            take_profit = atr_value * profit_multiplier
-            target_price = entry_price + take_profit
-            
-            log(f"🎯 ATR-based targets for {ticker}:")
-            log(f"   Stop-loss: ${stop_price:.2f} (ATR: {atr_value:.2f} * {stop_multiplier:.2f})")
-            log(f"   Take-profit: ${target_price:.2f} (ATR: {atr_value:.2f} * {profit_multiplier:.2f})")
-            
-            return stop_price, target_price, stop_loss / entry_price, take_profit / entry_price
-            
-        except Exception as e:
-            log(f"❌ ATR-based calculation failed: {e}")
-            # Fallback to percentage-based
-            stop_price = entry_price * 0.97  # 3% stop
-            target_price = entry_price * 1.05  # 5% target
-            return stop_price, target_price, 0.03, 0.05
-    
-    def check_profit_decay_exit(self, ticker, entry_price, current_price, entry_time):
-        """Check if position should be exited due to profit decay"""
-        try:
-            if ticker not in self.trade_start_times:
-                return False
-            
-            # Calculate time held
-            time_held = (datetime.now() - entry_time).total_seconds() / 60  # minutes
-            
-            if time_held < 60:  # Less than 1 hour
-                return False
-            
-            # Calculate current profit
-            current_profit = (current_price - entry_price) / entry_price
-            
-            # Profit decay logic: exit when gain momentum fades
-            if 0 < current_profit < 0.01 and time_held > 120:  # Less than 1% profit after 2 hours
-                log(f"💸 Profit decay exit triggered for {ticker}: {current_profit:.2%} after {time_held:.0f} min")
-                return True
-            
-            # Also check if profit is declining
-            if ticker in self.position_tracker:
-                tracking_data = self.position_tracker[ticker]
-                if 'max_profit' not in tracking_data:
-                    tracking_data['max_profit'] = current_profit
-                else:
-                    if current_profit > tracking_data['max_profit']:
-                        tracking_data['max_profit'] = current_profit
-                    else:
-                        # Profit is declining - check if we should exit
-                        profit_decline = tracking_data['max_profit'] - current_profit
-                        if profit_decline > 0.015 and time_held > 90:  # 1.5% decline after 1.5 hours
-                            log(f"📉 Profit decline exit for {ticker}: max {tracking_data['max_profit']:.2%} -> {current_profit:.2%}")
-                            return True
-            
-            return False
-            
-        except Exception as e:
-            log(f"❌ Profit decay check failed: {e}")
-            return False
-    
-    def check_portfolio_risk_limits(self):
-        """Check portfolio-level risk controls"""
-        try:
-            # Check drawdown limit
-            if not check_drawdown_limit():
-                return False, "Daily drawdown limit exceeded"
-            
-            # Check sector exposure limits
-            current_positions = get_current_positions()
-            account = safe_api_call(api.get_account)
-            if not account:
-                return True, "Could not check account"
-                
-            portfolio_value = float(account.equity)
-            
-            sector_exposure = defaultdict(float)
-            for ticker, position in current_positions.items():
-                sector = self.get_ticker_sector(ticker)
-                sector_exposure[sector] += position['market_value']
-            
-            # Check if any sector exceeds 30% allocation
-            for sector, exposure in sector_exposure.items():
-                sector_pct = exposure / portfolio_value
-                if sector_pct > THRESHOLDS['MAX_PER_SECTOR_PORTFOLIO']:
-                    return False, f"Sector {sector} exposure limit exceeded: {sector_pct:.1%}"
-            
-            return True, "Risk limits OK"
-            
-        except Exception as e:
-            log(f"❌ Portfolio risk check failed: {e}")
-            return True, "Risk check failed"
-    
-    def execute_buy_order(self, ticker, signal_strength, market_data):
-        """Execute buy order with enhanced logic"""
-        try:
-            # Pre-execution checks
-            if not self.check_cooldown(ticker):
-                log(f"⏰ {ticker} in cooldown period, skipping")
-                return False
-            
-            # Portfolio risk limits
-            risk_ok, risk_msg = self.check_portfolio_risk_limits()
-            if not risk_ok:
-                log(f"🚫 {risk_msg}, skipping {ticker}")
-                return False
-            
-            current_positions = get_current_positions()
-            if len(current_positions) >= self.max_positions:
-                log(f"🚫 Maximum positions reached ({self.max_positions}), skipping {ticker}")
-                return False
-            
-            if ticker in current_positions:
-                log(f"📌 Already holding {ticker}, skipping buy")
-                return False
-            
-            # Check sector allocation
-            if not self.check_sector_allocation(ticker):
-                log(f"🚫 Sector allocation limit reached for {ticker}")
-                return False
-            
-            # Get current price and ATR
-            bar = safe_api_call(api.get_latest_bar, ticker)
-            if not bar:
-                log(f"⚠️ Could not get current price for {ticker}")
-                return False
-                
-            current_price = bar.c
-            
-            atr_value = market_data['atr'].iloc[-1] if 'atr' in market_data.columns else current_price * 0.02
-            
-            # Calculate position size using Dynamic Kelly Criterion
-            position_size = calculate_dynamic_kelly_position_size(ticker, confidence=signal_strength)
-            
-            # Calculate ATR-based stop-loss and profit targets
-            stop_price, target_price, stop_pct, target_pct = self.calculate_atr_based_stops(
-                ticker, current_price, atr_value, signal_strength
-            )
-            
-            # Execute the buy order
-            order = safe_api_call(api.submit_order,
-                symbol=ticker,
-                qty=position_size,
-                side="buy",
-                type="market",
-                time_in_force="gtc"
-            )
-            
-            if not order:
-                log(f"❌ Failed to submit buy order for {ticker}")
-                return False
-            
-            # Track position details
-            self.position_tracker[ticker] = {
-                'entry_price': current_price,
-                'entry_time': datetime.now(),
-                'stop_price': stop_price,
-                'target_price': target_price,
-                'quantity': position_size,
-                'signal_strength': signal_strength,
-                'atr_value': atr_value,
-                'max_profit': 0.0
-            }
-            
-            self.trade_start_times[ticker] = datetime.now()
-            
-            # Update sector allocation
-            self.update_sector_allocation(ticker)
-            
-            # Log the trade
-            trade_data = {
-                'action': 'BUY',
-                'ticker': ticker,
-                'price': current_price,
-                'quantity': position_size,
-                'signal_strength': signal_strength,
-                'stop_loss_pct': stop_pct,
-                'profit_target_pct': target_pct,
-                'atr_value': atr_value
-            }
-            
-            log_to_google_sheets(trade_data, "Trades")
-            
-            # Send alerts
-            alert_msg = f"✅ BUY {position_size} {ticker} @ ${current_price:.2f}\n"
-            alert_msg += f"Signal: {signal_strength:.3f} | Stop: {stop_pct:.1%} | Target: {target_pct:.1%}"
-            send_discord_alert(alert_msg)
-            
-            log(f"✅ Buy order executed: {position_size} shares of {ticker} @ ${current_price:.2f}")
-            
-            return True
-            
-        except Exception as e:
-            log(f"❌ Buy order failed for {ticker}: {e}")
-            send_discord_alert(f"❌ Buy order failed for {ticker}: {e}", urgent=True)
-            self.set_cooldown(ticker)
-            return False
-    
-    def execute_sell_order(self, ticker, reason="Manual"):
-        """Execute sell order with enhanced logic"""
-        try:
-            current_positions = get_current_positions()
-            if ticker not in current_positions:
-                log(f"⚠️ No position found for {ticker}")
-                return False
-            
-            position = current_positions[ticker]
-            quantity = position['qty']
-            current_price = position['current_price']
-            entry_price = position['avg_entry_price']
-            
-            # Calculate profit/loss
-            profit_loss = (current_price - entry_price) / entry_price
-            
-            # Execute sell order
-            order = safe_api_call(api.submit_order,
-                symbol=ticker,
-                qty=quantity,
-                side="sell",
-                type="market",
-                time_in_force="gtc"
-            )
-            
-            if not order:
-                log(f"❌ Failed to submit sell order for {ticker}")
-                return False
-            
-            # Determine outcome
-            if profit_loss > 0.005:  # More than 0.5% profit
-                outcome = "profit"
-            elif profit_loss < -0.015:  # More than 1.5% loss
-                outcome = "loss"
-            else:
-                outcome = "breakeven"
-            
-            # Update tracking
-            if ticker in self.position_tracker:
-                del self.position_tracker[ticker]
-            if ticker in self.trade_start_times:
-                del self.trade_start_times[ticker]
-            
-            # Set cooldown
-            self.set_cooldown(ticker)
-            
-            # Log the trade
-            trade_data = {
-                'action': 'SELL',
-                'ticker': ticker,
-                'price': current_price,
-                'quantity': quantity,
-                'profit_loss': profit_loss,
-                'reason': reason,
-                'outcome': outcome
-            }
-            
-            log_to_google_sheets(trade_data, "Trades")
-            
-            # Update accuracy tracking
-            self.update_accuracy_tracking(ticker, outcome == "profit")
-            
-            # Send alerts
-            alert_msg = f"🔻 SELL {quantity} {ticker} @ ${current_price:.2f}\n"
-            alert_msg += f"P&L: {profit_loss:.2%} | Reason: {reason}"
-            
-            if outcome == "profit":
-                send_discord_alert(f"💰 {alert_msg}")
-            elif outcome == "loss":
-                send_discord_alert(f"📉 {alert_msg}")
-            else:
-                send_discord_alert(alert_msg)
-            
-            log(f"🔻 Sell order executed: {quantity} shares of {ticker} @ ${current_price:.2f} ({profit_loss:.2%})")
-            
-            return True
-            
-        except Exception as e:
-            log(f"❌ Sell order failed for {ticker}: {e}")
-            send_discord_alert(f"❌ Sell order failed for {ticker}: {e}", urgent=True)
-            return False
-    
-    def check_exit_conditions(self):
-        """Check all positions for exit conditions"""
-        try:
-            current_positions = get_current_positions()
-            
-            for ticker, position in current_positions.items():
-                current_price = position['current_price']
-                entry_price = position['avg_entry_price']
-                profit_loss = (current_price - entry_price) / entry_price
-                
-                # Get position tracking data
-                if ticker not in self.position_tracker:
-                    continue
-                
-                tracking_data = self.position_tracker[ticker]
-                stop_price = tracking_data['stop_price']
-                target_price = tracking_data['target_price']
-                entry_time = tracking_data['entry_time']
-                
-                # Check stop-loss
-                if current_price <= stop_price:
-                    log(f"🛑 Stop-loss triggered for {ticker}: ${current_price:.2f} <= ${stop_price:.2f}")
-                    self.execute_sell_order(ticker, "Stop-loss")
-                    continue
-                
-                # Check profit target
-                if current_price >= target_price:
-                    log(f"🎯 Profit target hit for {ticker}: ${current_price:.2f} >= ${target_price:.2f}")
-                    self.execute_sell_order(ticker, "Profit target")
-                    continue
-                
-                # Check profit decay
-                if self.check_profit_decay_exit(ticker, entry_price, current_price, entry_time):
-                    self.execute_sell_order(ticker, "Profit decay")
-                    continue
-                
-                # Trailing stop logic
-                if profit_loss > 0.03:  # If up more than 3%, implement trailing stop
-                    atr_value = tracking_data.get('atr_value', current_price * 0.02)
-                    trailing_stop = current_price - (atr_value * 1.5)  # 1.5x ATR trailing
-                    
-                    if trailing_stop > stop_price:
-                        self.position_tracker[ticker]['stop_price'] = trailing_stop
-                        log(f"📈 Trailing stop adjusted for {ticker}: ${trailing_stop:.2f}")
-                
-        except Exception as e:
-            log(f"❌ Exit condition check failed: {e}")
-    
-    def check_sector_allocation(self, ticker):
-        """Check if sector allocation allows new position"""
-        try:
-            sector = self.get_ticker_sector(ticker)
-            current_positions = get_current_positions()
-            
-            # Count current positions in this sector
-            sector_count = 0
-            for pos_ticker in current_positions:
-                if self.get_ticker_sector(pos_ticker) == sector:
-                    sector_count += 1
-            
-            max_per_sector = 3  # Maximum 3 positions per sector
-            return sector_count < max_per_sector
-            
-        except Exception as e:
-            log(f"❌ Sector allocation check failed: {e}")
-            return True
-    
-    def update_sector_allocation(self, ticker):
-        """Update sector allocation tracking"""
-        try:
-            sector = self.get_ticker_sector(ticker)
-            if sector not in trading_state.sector_allocations:
-                trading_state.sector_allocations[sector] = 0
-            trading_state.sector_allocations[sector] += 1
-            
-        except Exception as e:
-            log(f"❌ Sector allocation update failed: {e}")
-    
-    def get_ticker_sector(self, ticker):
-        """Get sector for ticker"""
-        for sector, tickers in SECTOR_UNIVERSE.items():
-            if ticker in tickers:
-                return sector
-        return "Unknown"
-    
-    def update_accuracy_tracking(self, ticker, was_profitable):
-        """Update accuracy tracking for meta model training"""
-        try:
-            if ticker not in trading_state.accuracy_tracker:
-                trading_state.accuracy_tracker[ticker] = []
-            
-            trading_state.accuracy_tracker[ticker].append({
-                'timestamp': datetime.now().isoformat(),
-                'correct': was_profitable
-            })
-            
-            # Keep only last 50 trades per ticker
-            if len(trading_state.accuracy_tracker[ticker]) > 50:
-                trading_state.accuracy_tracker[ticker] = trading_state.accuracy_tracker[ticker][-50:]
-                
-        except Exception as e:
-            log(f"❌ Accuracy tracking update failed: {e}")
-    
-    def liquidate_all_positions(self, reason="End of day"):
-        """Liquidate all positions"""
-        try:
-            current_positions = get_current_positions()
-            
-            if not current_positions:
-                log("📭 No positions to liquidate")
-                return
-            
-            log(f"🔻 Liquidating {len(current_positions)} positions: {reason}")
-            
-            for ticker in current_positions:
-                self.execute_sell_order(ticker, reason)
-                time.sleep(1)  # Small delay between orders
-            
-            # Clear tracking data
-            self.position_tracker.clear()
-            self.trade_start_times.clear()
-            
-            send_discord_alert(f"🔻 All positions liquidated: {reason}")
-            
-        except Exception as e:
-            log(f"❌ Liquidation failed: {e}")
-            send_discord_alert(f"❌ Liquidation failed: {e}", urgent=True)
-
-trading_executor = EnhancedTradingExecutor()
-
-# === Q-LEARNING SYSTEM WITH REWARD SHAPING ===
-class QLearningSystem:
-    def __init__(self):
-        self.memory = []
-        self.memory_size = 10000
-        self.batch_size = 32
-        self.gamma = 0.95  # Discount factor
-        self.epsilon = 0.1  # Exploration rate
-        
-    def calculate_reward(self, ticker, action, profit_loss, sentiment_score, volatility):
-        """Calculate reward with sentiment + volatility factors"""
-        try:
-            base_reward = profit_loss * 100  # Scale profit/loss
-            
-            # Sentiment factor
-            sentiment_factor = 1.0
-            if sentiment_score > 0.2:
-                sentiment_factor = 1.2  # Boost for positive sentiment
-            elif sentiment_score < -0.2:
-                sentiment_factor = 0.8  # Penalty for negative sentiment
-            
-            # Volatility factor
-            volatility_factor = 1.0
-            if volatility > 0.05:  # High volatility
-                volatility_factor = 0.9  # Slight penalty
-            elif volatility < 0.02:  # Low volatility
-                volatility_factor = 1.1  # Slight boost
-            
-            # Action-specific rewards
-            if action == 0:  # Buy
-                if profit_loss > 0:
-                    reward = base_reward * sentiment_factor * volatility_factor
-                else:
-                    reward = base_reward * 0.5  # Reduce penalty for losses
-            elif action == 1:  # Hold
-                reward = 0.1  # Small positive reward for holding
-            else:  # Sell
-                reward = base_reward * 0.8  # Slightly reduce sell rewards
-            
-            return reward
-            
-        except Exception as e:
-            log(f"❌ Reward calculation failed: {e}")
-            return 0
-    
-    def store_experience(self, state, action, reward, next_state, done):
-        """Store experience in replay memory"""
-        try:
-            if len(self.memory) >= self.memory_size:
-                self.memory.pop(0)
-            
-            self.memory.append((state, action, reward, next_state, done))
-            
-        except Exception as e:
-            log(f"❌ Experience storage failed: {e}")
-    
-    def train_q_network(self):
-        """Train Q-network with experience replay"""
-        try:
-            if len(self.memory) < self.batch_size:
-                return
-            
-            # Sample random batch
-            batch = random.sample(self.memory, self.batch_size)
-            
-            states = torch.FloatTensor([e[0] for e in batch])
-            actions = torch.LongTensor([e[1] for e in batch])
-            rewards = torch.FloatTensor([e[2] for e in batch])
-            next_states = torch.FloatTensor([e[3] for e in batch])
-            dones = torch.BoolTensor([e[4] for e in batch])
-            
-            current_q_values = q_net(states).gather(1, actions.unsqueeze(1))
-            next_q_values = q_net(next_states).max(1)[0].detach()
-            target_q_values = rewards + (self.gamma * next_q_values * ~dones)
-            
-            loss = q_criterion(current_q_values.squeeze(), target_q_values)
-            
-            q_optimizer.zero_grad()
-            loss.backward()
-            q_optimizer.step()
-            
-            log(f"🧠 Q-network trained: loss={loss.item():.4f}")
-            
-        except Exception as e:
-            log(f"❌ Q-network training failed: {e}")
-    
-    def get_q_action(self, state):
-        """Get action from Q-network"""
-        try:
-            if random.random() < self.epsilon:
-                return random.randint(0, 2)  # Random action (exploration)
-            
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-                q_values = q_net(state_tensor)
-                return q_values.argmax().item()
-                
-        except Exception as e:
-            log(f"❌ Q-action selection failed: {e}")
-            return 1  # Default to hold
-    
-    def save_q_network(self):
-        """Save Q-network state"""
-        try:
-            torch.save({
-                'model_state_dict': q_net.state_dict(),
-                'optimizer_state_dict': q_optimizer.state_dict(),
-            }, "models/q_learning/enhanced_q_net.pth")
-            log("💾 Q-network saved")
-            
-        except Exception as e:
-            log(f"❌ Q-network save failed: {e}")
-
-q_learning_system = QLearningSystem()
-
-# === ENHANCED TRADING BOT WITH ALL FEATURES ===
-class EnhancedTradingBot:
-    def __init__(self):
-        self.loop_interval = 300  # 5 minutes (live training loop)
-        self.watchlist_refresh_interval = 1800  # 30 minutes
-        self.last_watchlist_update = 0
-        self.current_watchlist = []
+        self.loop_interval = 300  # 5 minutes
+        self.current_watchlist = FALLBACK_UNIVERSE[:20]
         self.daily_stats = {
             'trades_executed': 0,
             'profitable_trades': 0,
             'total_pnl': 0.0,
             'accuracy': 0.0
         }
-        self.retraining_schedule = {
-            'live_per_ticker': 300,  # Every 5 minutes
-            'daily_full': 86400,  # 1x per day
-            'weekly_deep': 604800  # 1x per week
-        }
-        self.last_daily_retrain = None
-        self.last_weekly_retrain = None
+        
+        # Initialize Q-learning agent
+        self.q_learning_agent = QLearningAgent(['buy', 'sell', 'hold'])
         
     def initialize_bot(self):
-        """Initialize the trading bot"""
+        """Initialize the ultra-advanced trading bot"""
         try:
-            log("🚀 Initializing Enhanced AI Trading Bot...")
+            log("🚀 Initializing Ultra-Advanced AI Trading Bot...")
             
             # Set starting equity for drawdown tracking
             if api:
@@ -2314,29 +2600,31 @@ class EnhancedTradingBot:
                     trading_state.starting_equity = float(account.equity)
                 else:
                     log("⚠️ Could not get account info, using default equity")
-                    trading_state.starting_equity = 100000  # Default
+                    trading_state.starting_equity = 100000
             else:
                 log("⚠️ No API connection, using demo mode")
-                trading_state.starting_equity = 100000  # Demo mode
+                trading_state.starting_equity = 100000
             
-            # Detect initial market regime
-            detect_market_regime()
+            # Initialize all advanced systems
+            sector_rotation_analyzer.analyze_sector_performance()
             
-            # Load existing models
-            meta_approval_system.load_meta_model()
-            
-            # Generate initial watchlist
-            self.current_watchlist = watchlist_optimizer.generate_dynamic_watchlist()
-            self.last_watchlist_update = time.time()
-            
-            # Send startup notification
-            startup_msg = f"🚀 Enhanced AI Trading Bot Started!\n"
+            # Send startup notification with all features
+            startup_msg = f"🚀 Ultra-Advanced AI Trading Bot Started!\n"
             startup_msg += f"💰 Starting Equity: ${trading_state.starting_equity:,.2f}\n"
-            startup_msg += f"📊 Market Regime: {trading_state.regime_state}\n"
-            startup_msg += f"🎯 Watchlist: {len(self.current_watchlist)} tickers"
+            startup_msg += f"🧠 Q-Learning: {len(trading_state.q_table)} states learned\n"
+            startup_msg += f"📊 Sector Rotation: {len(trading_state.sector_performance)} sectors tracked\n"
+            startup_msg += f"🎯 Advanced Features: ALL RESTORED!\n"
+            startup_msg += f"✅ Fibonacci Analysis\n"
+            startup_msg += f"✅ Elliott Wave Detection\n"
+            startup_msg += f"✅ Harmonic Patterns\n"
+            startup_msg += f"✅ Ichimoku Cloud\n"
+            startup_msg += f"✅ Market Microstructure\n"
+            startup_msg += f"✅ Advanced Volatility Models\n"
+            startup_msg += f"✅ Regime Detection\n"
+            startup_msg += f"📈 Watchlist: {len(self.current_watchlist)} tickers"
             send_discord_alert(startup_msg)
             
-            log("✅ Bot initialization complete")
+            log("✅ Ultra-Advanced Bot initialization complete")
             return True
             
         except Exception as e:
@@ -2344,366 +2632,300 @@ class EnhancedTradingBot:
             send_discord_alert(f"❌ Bot initialization failed: {e}", urgent=True)
             return False
     
-    def should_refresh_watchlist(self):
-        """Check if watchlist should be refreshed"""
-        return (time.time() - self.last_watchlist_update) > self.watchlist_refresh_interval
-    
-    def refresh_watchlist(self):
-        """Refresh the dynamic watchlist"""
+    def process_ticker_with_all_features(self, ticker):
+        """Process ticker with ALL advanced features"""
         try:
-            log("🔄 Refreshing dynamic watchlist...")
-            new_watchlist = watchlist_optimizer.generate_dynamic_watchlist()
+            log(f"🔍 Processing {ticker} with COMPLETE feature set")
             
-            # Compare with current watchlist
-            added = set(new_watchlist) - set(self.current_watchlist)
-            removed = set(self.current_watchlist) - set(new_watchlist)
-            
-            if added or removed:
-                log(f"📝 Watchlist updated: +{len(added)} -{len(removed)}")
-                if added:
-                    log(f"   Added: {', '.join(list(added)[:5])}")
-                if removed:
-                    log(f"   Removed: {', '.join(list(removed)[:5])}")
-            
-            self.current_watchlist = new_watchlist
-            self.last_watchlist_update = time.time()
-            
-        except Exception as e:
-            log(f"❌ Watchlist refresh failed: {e}")
-    
-    def process_ticker(self, ticker):
-        """Process a single ticker for trading opportunities"""
-        try:
-            log(f"🔍 Processing {ticker}")
-            
-            # Get enhanced market data for both horizons
-            short_data = get_enhanced_data(ticker, days_back=2)  # 2-day data, 5-minute candles
-            medium_data = get_enhanced_data(ticker, days_back=15)  # 15-day data, daily bars
+            # Get enhanced market data
+            short_data = get_enhanced_data(ticker, days_back=2)
+            medium_data = get_enhanced_data(ticker, days_back=15)
             
             if short_data is None or short_data.empty:
-                log(f"⚠️ No short-term data available for {ticker}")
-                return False
-            
-            if medium_data is None or medium_data.empty:
-                log(f"⚠️ No medium-term data available for {ticker}")
-                return False
-            
-            # Get sentiment score for filtering
-            sentiment_score = sentiment_analyzer.get_combined_sentiment(ticker)
-            
-            # Check ALL REQUIRED FILTERS
-            filter_passed, filter_reason = vwap_filter.passes_all_filters(ticker, sentiment_score)
-            if not filter_passed:
-                log(f"⚠️ {ticker} failed filters: {filter_reason}")
                 return False
             
             current_price = short_data['close'].iloc[-1]
-            if not sr_analyzer.check_level_confirmation(ticker, current_price):
-                log(f"⚠️ {ticker} failed Support/Resistance confirmation")
-                return False
             
-            # Live training loop - train models for this ticker
-            success = dual_predictor.train_models(ticker, short_data, medium_data)
-            if not success:
-                log(f"⚠️ Model training failed for {ticker}")
-                return False
+            # COMPLETE ADVANCED ANALYSIS PIPELINE
             
-            # Get current features for prediction
-            short_features = short_data.iloc[-1]
-            medium_features = medium_data.iloc[-1]
+            # 1. Fibonacci Analysis
+            fibonacci_analysis = fibonacci_analyzer.calculate_fibonacci_levels(short_data, ticker)
             
-            # Required feature columns
-            feature_cols = [
-                'returns', 'log_returns', 'momentum_5', 'momentum_10', 'momentum_20',
-                'price_momentum', 'volume_ratio', 'rsi', 'macd', 'macd_signal', 
-                'macd_histogram', 'obv', 'bb_position', 'price_vs_vwap', 
-                'volatility', 'atr', 'support_resistance_ratio'
-            ]
+            # 2. Elliott Wave Analysis
+            elliott_wave_analysis = elliott_wave_analyzer.detect_elliott_waves(short_data, ticker)
             
-            # Ensure all required features are present
-            available_short_features = [col for col in feature_cols if col in short_features.index]
-            available_medium_features = [col for col in feature_cols if col in medium_features.index]
+            # 3. Harmonic Pattern Recognition
+            harmonic_patterns = harmonic_pattern_analyzer.detect_harmonic_patterns(short_data, ticker)
             
-            if len(available_short_features) < 12 or len(available_medium_features) < 12:
-                log(f"⚠️ Insufficient features for {ticker}")
-                return False
+            # 4. Ichimoku Cloud Analysis
+            ichimoku_analysis = ichimoku_cloud_analyzer.calculate_ichimoku_cloud(short_data, ticker)
             
-            current_short_data = short_features[available_short_features].values
-            current_medium_data = medium_features[available_medium_features].values
+            # 5. Support/Resistance Analysis
+            sr_levels = support_resistance_analyzer.find_significant_levels(short_data, ticker)
             
-            # Make dual-horizon predictions - BOTH MUST AGREE
-            short_prob, medium_prob, combined_prob, agreement = dual_predictor.predict(
-                ticker, current_short_data, current_medium_data
-            )
+            # 6. Volume Profile Analysis
+            volume_profile = volume_profile_analyzer.calculate_volume_profile(short_data, ticker)
             
-            if not agreement:
-                log(f"⚠️ {ticker} - Models disagree: Short={short_prob:.3f}, Medium={medium_prob:.3f}")
-                return False
+            # 7. Market Microstructure Analysis
+            order_flow = market_microstructure_analyzer.analyze_order_flow(short_data, ticker)
+            smart_money = market_microstructure_analyzer.analyze_smart_money_flow(short_data, ticker)
+            institutional_activity = market_microstructure_analyzer.detect_institutional_activity(short_data, ticker)
             
-            log(f"📊 {ticker} predictions - Short: {short_prob:.3f}, Medium: {medium_prob:.3f}, Combined: {combined_prob:.3f}")
+            # 8. Q-Learning State and Action
+            q_state = self.q_learning_agent.discretize_state(short_data, ticker)
+            q_action = self.q_learning_agent.choose_action(q_state)
             
-            # Check confidence thresholds
-            if combined_prob < THRESHOLDS['SHORT_SELL_AVOID_THRESHOLD']:
-                log(f"⚠️ {ticker} below avoid threshold: {combined_prob:.3f}")
-                return False
+            # ULTRA-ADVANCED DECISION LOGIC
             
-            if combined_prob < THRESHOLDS['SHORT_BUY_THRESHOLD']:
-                log(f"⏸️ {ticker} below buy threshold: {combined_prob:.3f}")
-                return False
+            advanced_score = 0
+            reasons = []
+            confidence_factors = []
             
-            # Sentiment override check
-            if not sentiment_analyzer.sentiment_override_check(ticker, combined_prob):
-                log(f"😡 Sentiment override rejected {ticker}")
-                return False
-            
-            # Meta model approval
-            approved, reason = meta_approval_system.should_approve_trade(ticker, combined_prob, short_data)
-            if not approved:
-                log(f"🛑 Meta model rejected {ticker}: {reason}")
-                return False
-            
-            log(f"✅ Meta model approved {ticker}: {reason}")
-            
-            # Q-Learning decision
-            q_state = self.prepare_q_state(ticker, short_data, combined_prob, sentiment_score)
-            q_action = q_learning_system.get_q_action(q_state)
-            
-            if q_action != 0:  # 0 = Buy, 1 = Hold, 2 = Sell
-                log(f"🤖 Q-Learning suggests action {q_action} for {ticker}")
-                return False
-            
-            # Execute trade if all conditions met
-            success = trading_executor.execute_buy_order(ticker, combined_prob, short_data)
-            if success:
-                self.daily_stats['trades_executed'] += 1
-                log(f"✅ Trade executed for {ticker}")
-                
-                # Store Q-Learning experience
-                reward = 0.1  # Initial reward for taking action
-                q_learning_system.store_experience(q_state, q_action, reward, q_state, False)
-                
-                return True
-            
-            return False
-            
-        except Exception as e:
-            log(f"❌ Error processing {ticker}: {e}")
-            return False
-    
-    def prepare_q_state(self, ticker, market_data, signal_strength, sentiment_score):
-        """Prepare state vector for Q-Learning"""
-        try:
-            state = []
-            
-            # Price features
-            state.append(signal_strength)
-            state.append(sentiment_score)
-            state.append(market_data['rsi'].iloc[-1] / 100.0)
-            state.append(market_data['price_momentum'].iloc[-1])
-            state.append(market_data['volume_ratio'].iloc[-1])
-            state.append(market_data['volatility'].iloc[-1])
-            state.append(market_data['price_vs_vwap'].iloc[-1])
-            
-            # Market regime
-            regime_map = {"bull": 1, "bear": -1, "neutral": 0}
-            state.append(regime_map.get(trading_state.regime_state, 0))
-            
-            # Time features
-            now = datetime.now()
-            state.append(now.hour / 24.0)
-            state.append(now.weekday() / 7.0)
-            
-            # Portfolio features
-            current_positions = get_current_positions()
-            state.append(len(current_positions) / 10.0)  # Normalize by max positions
-            state.append(trading_state.daily_drawdown)
-            
-            # Pad to fixed size (20 features)
-            while len(state) < 20:
-                state.append(0.0)
-            
-            return state[:20]  # Ensure exactly 20 features
-            
-        except Exception as e:
-            log(f"❌ Q-state preparation failed: {e}")
-            return [0.0] * 20
-    
-    def run_trading_cycle(self):
-        """Run one complete trading cycle"""
-        try:
-            log("🔄 Starting trading cycle...")
-            
-            # Update market regime
-            detect_market_regime()
-            
-            # Check exit conditions for existing positions
-            trading_executor.check_exit_conditions()
-            
-            # Refresh watchlist if needed
-            if self.should_refresh_watchlist():
-                self.refresh_watchlist()
-            
-            # Process watchlist (limit to avoid timeout)
-            processed_count = 0
-            successful_trades = 0
-            
-            for ticker in self.current_watchlist[:15]:  # Process top 15 tickers
-                try:
-                    if self.process_ticker(ticker):
-                        successful_trades += 1
-                    processed_count += 1
+            # Fibonacci Analysis Scoring
+            if fibonacci_analysis and 'fibonacci_confluence' in fibonacci_analysis:
+                confluence_zones = fibonacci_analysis['fibonacci_confluence']
+                if confluence_zones:
+                    nearest_confluence = min(confluence_zones, key=lambda x: abs(x['price'] - current_price))
+                    distance_to_confluence = abs(current_price - nearest_confluence['price']) / current_price
                     
-                    # Small delay between tickers to avoid rate limits
-                    time.sleep(3)
+                    if distance_to_confluence < 0.02:  # Within 2% of confluence
+                        advanced_score += nearest_confluence['strength']
+                        reasons.append(f"Fibonacci confluence (strength: {nearest_confluence['strength']})")
+                        confidence_factors.append(0.8)
+            
+            # Elliott Wave Analysis Scoring
+            if elliott_wave_analysis and 'elliott_wave_signals' in elliott_wave_analysis:
+                elliott_signals = elliott_wave_analysis['elliott_wave_signals']
+                if elliott_signals.get('action') == 'buy':
+                    strength_multiplier = {'high': 3, 'medium': 2, 'low': 1}.get(elliott_signals.get('strength', 'low'), 1)
+                    advanced_score += strength_multiplier
+                    reasons.append(f"Elliott Wave: {elliott_signals.get('reason', 'Buy signal')}")
+                    confidence_factors.append(0.7)
+                elif elliott_signals.get('action') == 'sell':
+                    advanced_score -= 2
+                    reasons.append(f"Elliott Wave: {elliott_signals.get('reason', 'Sell signal')}")
+            
+            # Harmonic Pattern Scoring
+            if harmonic_patterns and harmonic_patterns.get('strongest_pattern'):
+                pattern = harmonic_patterns['strongest_pattern']
+                if pattern['confidence'] > 0.7:
+                    advanced_score += 2
+                    reasons.append(f"Harmonic {pattern['pattern']} pattern (confidence: {pattern['confidence']:.2f})")
+                    confidence_factors.append(pattern['confidence'])
+            
+            # Ichimoku Cloud Scoring
+            if ichimoku_analysis:
+                cloud_status = ichimoku_analysis.get('cloud_status', 'inside')
+                if cloud_status == 'above':
+                    advanced_score += 1
+                    reasons.append("Price above Ichimoku cloud")
+                    confidence_factors.append(0.6)
+                elif cloud_status == 'below':
+                    advanced_score -= 1
+                    reasons.append("Price below Ichimoku cloud")
+            
+            # Support/Resistance Scoring
+            if sr_levels:
+                support_levels = sr_levels.get('support_levels', [])
+                resistance_levels = sr_levels.get('resistance_levels', [])
+                
+                # Check proximity to support (bullish)
+                for support in support_levels:
+                    if abs(current_price - support) / current_price < 0.02:
+                        advanced_score += 1
+                        reasons.append(f"Near support level: ${support:.2f}")
+                        confidence_factors.append(0.7)
+                        break
+                
+                # Check proximity to resistance (bearish)
+                for resistance in resistance_levels:
+                    if abs(current_price - resistance) / current_price < 0.02:
+                        advanced_score -= 1
+                        reasons.append(f"Near resistance level: ${resistance:.2f}")
+                        break
+            
+            # Volume Profile Scoring
+            if volume_profile and 'poc' in volume_profile:
+                poc_range = volume_profile['poc']
+                # Extract price from range string
+                try:
+                    poc_price = float(poc_range.split('-')[0])
+                    if abs(current_price - poc_price) / current_price < 0.01:
+                        advanced_score += 1
+                        reasons.append("Near Volume POC")
+                        confidence_factors.append(0.6)
+                except:
+                    pass
+            
+            # Market Microstructure Scoring
+            if order_flow:
+                flow_direction = order_flow.get('order_flow_direction', 'neutral')
+                if flow_direction == 'buying':
+                    advanced_score += 1
+                    reasons.append("Positive order flow")
+                    confidence_factors.append(0.5)
+                elif flow_direction == 'selling':
+                    advanced_score -= 1
+                    reasons.append("Negative order flow")
+            
+            if smart_money:
+                smart_direction = smart_money.get('smart_money_direction', 'neutral')
+                if smart_direction == 'buying':
+                    advanced_score += 2
+                    reasons.append("Smart money buying")
+                    confidence_factors.append(0.8)
+                elif smart_direction == 'selling':
+                    advanced_score -= 2
+                    reasons.append("Smart money selling")
+            
+            # Q-Learning Scoring
+            if q_action == 'buy':
+                advanced_score += 1
+                reasons.append("Q-Learning: BUY")
+                confidence_factors.append(0.6)
+            elif q_action == 'sell':
+                advanced_score -= 1
+                reasons.append("Q-Learning: SELL")
+            
+            # Technical Indicators Scoring
+            if 'rsi' in short_data.columns:
+                rsi = short_data['rsi'].iloc[-1]
+                if rsi < 30:  # Oversold
+                    advanced_score += 1
+                    reasons.append(f"RSI oversold: {rsi:.1f}")
+                    confidence_factors.append(0.5)
+                elif rsi > 70:  # Overbought
+                    advanced_score -= 1
+                    reasons.append(f"RSI overbought: {rsi:.1f}")
+            
+            if 'macd_histogram' in short_data.columns:
+                macd_hist = short_data['macd_histogram'].iloc[-1]
+                macd_hist_prev = short_data['macd_histogram'].iloc[-2]
+                if macd_hist > 0 and macd_hist > macd_hist_prev:
+                    advanced_score += 1
+                    reasons.append("MACD bullish divergence")
+                    confidence_factors.append(0.5)
+            
+            # Calculate overall confidence
+            overall_confidence = np.mean(confidence_factors) if confidence_factors else 0.5
+            
+            # Final decision with confidence weighting
+            weighted_score = advanced_score * overall_confidence
+            
+            # Decision threshold
+            if weighted_score >= 4:
+                log(f"✅ {ticker} APPROVED by ultra-advanced analysis:")
+                log(f"   Score: {advanced_score} (weighted: {weighted_score:.2f})")
+                log(f"   Confidence: {overall_confidence:.2f}")
+                log(f"   Reasons: {', '.join(reasons)}")
+                
+                # Execute trade with all tracking
+                success = trading_executor.execute_buy_order(
+                    ticker, 
+                    weighted_score / 10,  # Normalize signal strength
+                    short_data,
+                    q_action
+                )
+                
+                if success:
+                    self.daily_stats['trades_executed'] += 1
+                    
+                    # Store Q-learning state for future updates
+                    trading_state.q_state_history.append(q_state)
+                    trading_state.q_action_history.append(q_action)
+                
+                return success
+            else:
+                log(f"❌ {ticker} REJECTED by ultra-advanced analysis:")
+                log(f"   Score: {advanced_score} (weighted: {weighted_score:.2f})")
+                log(f"   Confidence: {overall_confidence:.2f}")
+                log(f"   Reasons: {', '.join(reasons) if reasons else 'No significant signals'}")
+                return False
+            
+        except Exception as e:
+            log(f"❌ Ultra-advanced processing failed for {ticker}: {e}")
+            return False
+    
+    def run_ultra_advanced_trading_cycle(self):
+        """Run trading cycle with ALL advanced features"""
+        try:
+            log("🔄 Starting ULTRA-ADVANCED trading cycle...")
+            
+            # Update all advanced systems
+            sector_rotation_analyzer.analyze_sector_performance()
+            
+            # Update risk metrics
+            trading_state.update_ultra_advanced_risk_metrics()
+            
+            # Process watchlist with complete advanced features
+            processed_count = 0
+            for ticker in self.current_watchlist[:10]:  # Limit for performance
+                try:
+                    if self.process_ticker_with_all_features(ticker):
+                        processed_count += 1
+                    
+                    time.sleep(3)  # Rate limiting
                     
                 except Exception as e:
-                    log(f"❌ Error in trading cycle for {ticker}: {e}")
+                    log(f"❌ Error processing {ticker}: {e}")
                     continue
             
-            # Train Q-network
-            q_learning_system.train_q_network()
-            
-            log(f"✅ Trading cycle complete: {processed_count} processed, {successful_trades} trades")
-            
-            # Update daily stats
-            self.update_daily_stats()
+            log(f"✅ Ultra-advanced trading cycle complete - processed {processed_count} tickers")
             
         except Exception as e:
-            log(f"❌ Trading cycle failed: {e}")
-            send_discord_alert(f"❌ Trading cycle failed: {e}", urgent=True)
+            log(f"❌ Ultra-advanced trading cycle failed: {e}")
     
-    def update_daily_stats(self):
-        """Update daily trading statistics"""
+    def run_main_loop(self):
+        """Main loop with ALL advanced features"""
         try:
-            current_positions = get_current_positions()
+            if not self.initialize_bot():
+                log("⚠️ Bot initialization failed, but continuing...")
             
-            # Calculate current P&L
-            total_unrealized_pl = sum(pos['unrealized_pl'] for pos in current_positions.values())
+            log("🔄 Starting ULTRA-ADVANCED main trading loop...")
             
-            # Update accuracy if we have completed trades
-            if self.daily_stats['trades_executed'] > 0:
-                self.daily_stats['accuracy'] = self.daily_stats['profitable_trades'] / self.daily_stats['trades_executed']
+            while True:
+                try:
+                    # Check if market is open
+                    if is_market_open_safe():
+                        log("📈 Market is open - running ULTRA-ADVANCED trading cycle")
+                        
+                        # Check if near market close
+                        if is_near_market_close(30):
+                            log("⏰ Near market close, performing cleanup...")
+                            self.end_of_day_cleanup()
+                            log("✅ End-of-day cleanup complete, waiting for next market open...")
+                        else:
+                            # Run ultra-advanced trading cycle
+                            self.run_ultra_advanced_trading_cycle()
+                            
+                            # Wait for next cycle
+                            log(f"⏸️ Waiting {self.loop_interval/60:.1f} minutes for next cycle...")
+                            time.sleep(self.loop_interval)
+                    else:
+                        # Market is closed - wait appropriately without exiting
+                        self.wait_for_market_open()
+                        
+                except KeyboardInterrupt:
+                    log("🛑 Received interrupt signal, shutting down...")
+                    break
+                except Exception as e:
+                    log(f"❌ Error in main loop: {e}")
+                    log(f"Traceback: {traceback.format_exc()}")
+                    send_discord_alert(f"❌ Main loop error: {e}", urgent=True)
+                    # Don't exit - just wait and continue
+                    time.sleep(60)  # Wait 1 minute before retrying
+                    continue
             
-            # Log stats periodically
-            if self.daily_stats['trades_executed'] % 3 == 0 and self.daily_stats['trades_executed'] > 0:
-                stats_msg = f"📊 Daily Stats:\n"
-                stats_msg += f"Trades: {self.daily_stats['trades_executed']}\n"
-                stats_msg += f"Accuracy: {self.daily_stats['accuracy']:.1%}\n"
-                stats_msg += f"Unrealized P&L: ${total_unrealized_pl:.2f}\n"
-                stats_msg += f"Positions: {len(current_positions)}\n"
-                stats_msg += f"Drawdown: {trading_state.daily_drawdown:.1%}\n"
-                stats_msg += f"Regime: {trading_state.regime_state}"
-                
-                log(stats_msg)
-                
-        except Exception as e:
-            log(f"❌ Stats update failed: {e}")
-    
-    def check_retraining_schedule(self):
-        """Check if models need retraining"""
-        try:
-            now = datetime.now()
-            
-            # Daily full retrain
-            if (self.last_daily_retrain is None or 
-                (now - self.last_daily_retrain).total_seconds() > self.retraining_schedule['daily_full']):
-                
-                if meta_approval_system.should_retrain_daily():
-                    log("🔄 Starting daily meta model retraining...")
-                    meta_approval_system.train_meta_model()
-                    self.last_daily_retrain = now
-            
-            # Weekly deep retrain
-            if (self.last_weekly_retrain is None or 
-                (now - self.last_weekly_retrain).total_seconds() > self.retraining_schedule['weekly_deep']):
-                
-                log("🔄 Starting weekly deep retraining...")
-                # Clear model caches for fresh training
-                dual_predictor.short_models.clear()
-                dual_predictor.medium_models.clear()
-                self.last_weekly_retrain = now
-                
-        except Exception as e:
-            log(f"❌ Retraining schedule check failed: {e}")
-    
-    def end_of_day_cleanup(self):
-        """Perform end-of-day cleanup and reporting"""
-        try:
-            log("🌅 Starting end-of-day cleanup...")
-            
-            # Auto-liquidation near close
-            trading_executor.liquidate_all_positions("End of day")
-            
-            # Generate daily report
-            self.generate_daily_report()
-            
-            # Meta model training attempt
-            if meta_approval_system.should_retrain_daily():
-                meta_approval_system.train_meta_model()
-            
-            # Save Q-network
-            q_learning_system.save_q_network()
-            
-            # Reset daily state
-            trading_state.reset_daily()
-            self.daily_stats = {
-                'trades_executed': 0,
-                'profitable_trades': 0,
-                'total_pnl': 0.0,
-                'accuracy': 0.0
-            }
-            
-            log("✅ End-of-day cleanup complete")
+            log("🏁 Ultra-Advanced Trading bot stopped gracefully")
+            send_discord_alert("🏁 Ultra-Advanced Trading bot stopped")
             
         except Exception as e:
-            log(f"❌ End-of-day cleanup failed: {e}")
-            send_discord_alert(f"❌ End-of-day cleanup failed: {e}", urgent=True)
-    
-    def generate_daily_report(self):
-        """Generate and send daily trading report"""
-        try:
-            if api:
-                account = safe_api_call(api.get_account)
-                if account:
-                    equity = float(account.equity)
-                    cash = float(account.cash)
-                    day_pl = float(account.todays_pl)
-                else:
-                    equity = trading_state.starting_equity
-                    cash = 0
-                    day_pl = 0
-            else:
-                equity = trading_state.starting_equity
-                cash = 0
-                day_pl = 0
-            
-            report = "📊 **Daily Trading Report**\n"
-            report += f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-            
-            report += f"💰 Account Value: ${equity:,.2f}\n"
-            report += f"💵 Cash: ${cash:,.2f}\n"
-            report += f"📈 Day P&L: ${day_pl:,.2f}\n"
-            report += f"📉 Max Drawdown: {trading_state.daily_drawdown:.1%}\n\n"
-            
-            report += f"🎯 Trades Executed: {self.daily_stats['trades_executed']}\n"
-            report += f"✅ Accuracy: {self.daily_stats['accuracy']:.1%}\n"
-            report += f"🌊 Market Regime: {trading_state.regime_state}\n"
-            report += f"📋 Watchlist Size: {len(self.current_watchlist)}"
-            
-            # Send to Discord and log to sheets
-            send_discord_alert(report)
-            log_to_google_sheets({
-                'account_value': equity,
-                'cash': cash,
-                'day_pl': day_pl,
-                'max_drawdown': trading_state.daily_drawdown,
-                'trades_executed': self.daily_stats['trades_executed'],
-                'accuracy': self.daily_stats['accuracy'],
-                'market_regime': trading_state.regime_state
-            }, "DailyReports")
-            
-        except Exception as e:
-            log(f"❌ Daily report generation failed: {e}")
+            log(f"❌ Fatal error in main loop: {e}")
+            log(f"Traceback: {traceback.format_exc()}")
+            send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
+            # Don't exit - sleep and let Render restart if needed
+            log("😴 Sleeping before potential restart...")
+            time.sleep(300)
     
     def wait_for_market_open(self):
         """Wait for market to open without exiting"""
@@ -2730,110 +2952,268 @@ class EnhancedTradingBot:
         sleep_chunk = min(300, time_until_open)  # 5 minutes max
         time.sleep(sleep_chunk)
     
-    def run_main_loop(self):
-        """Main trading bot loop - Render compatible"""
+    def end_of_day_cleanup(self):
+        """Enhanced end-of-day cleanup with ALL advanced features"""
         try:
-            if not self.initialize_bot():
-                log("⚠️ Bot initialization failed, but continuing in safe mode...")
+            log("🌅 Starting ULTRA-ADVANCED end-of-day cleanup...")
             
-            log("🔄 Starting main trading loop (Render-compatible)...")
+            # Auto-liquidation near close with Q-learning updates
+            current_positions = get_current_positions()
+            for ticker in current_positions:
+                # Calculate Q-learning reward for completed trades
+                if ticker in trading_state.open_positions:
+                    position_data = trading_state.open_positions[ticker]
+                    entry_price = position_data['entry_price']
+                    current_price = current_positions[ticker]['current_price']
+                    hold_time = (datetime.now() - position_data['entry_time']).total_seconds() / 60
+                    
+                    # Calculate reward and update Q-table
+                    return_pct = (current_price - entry_price) / entry_price
+                    reward = return_pct * 100  # Scale reward
+                    
+                    if len(trading_state.q_state_history) > 0 and len(trading_state.q_action_history) > 0:
+                        last_state = trading_state.q_state_history[-1]
+                        last_action = trading_state.q_action_history[-1]
+                        current_data = get_enhanced_data(ticker, limit=50)
+                        if current_data is not None:
+                            current_state = self.q_learning_agent.discretize_state(current_data, ticker)
+                            if current_state:
+                                self.q_learning_agent.learn(last_state, last_action, reward, current_state)
+                
+                # Execute sell order
+                trading_executor.execute_sell_order(ticker, "End of day")
+                time.sleep(1)
             
-            while True:
-                try:
-                    # Check if market is open
-                    if is_market_open_safe():
-                        log("📈 Market is open - running trading cycle")
-                        
-                        # Check if near market close
-                        if is_near_market_close(30):
-                            log("⏰ Near market close, performing cleanup...")
-                            self.end_of_day_cleanup()
-                            # Don't break - continue to next day
-                            log("✅ End-of-day cleanup complete, waiting for next market open...")
-                        else:
-                            # Check retraining schedule
-                            self.check_retraining_schedule()
-                            
-                            # Run trading cycle (every 5 minutes - live training loop)
-                            self.run_trading_cycle()
-                            
-                            # Wait for next cycle
-                            log(f"⏸️ Waiting {self.loop_interval/60:.1f} minutes for next cycle...")
-                            time.sleep(self.loop_interval)
-                    else:
-                        # Market is closed - wait appropriately without exiting
-                        self.wait_for_market_open()
-                        
-                except KeyboardInterrupt:
-                    log("🛑 Received interrupt signal, shutting down...")
-                    break
-                except Exception as e:
-                    log(f"❌ Error in main loop: {e}")
-                    log(f"Traceback: {traceback.format_exc()}")
-                    send_discord_alert(f"❌ Main loop error: {e}", urgent=True)
-                    # Don't exit - just wait and continue
-                    time.sleep(60)  # Wait 1 minute before retrying
-                    continue
+            # Generate comprehensive daily report with ALL metrics
+            self.generate_ultra_advanced_daily_report()
             
-            log("🏁 Trading bot stopped gracefully")
-            send_discord_alert("🏁 Trading bot stopped")
+            # Save all advanced data
+            self.save_all_advanced_data()
+            
+            # Reset daily state
+            trading_state.reset_daily()
+            self.daily_stats = {
+                'trades_executed': 0,
+                'profitable_trades': 0,
+                'total_pnl': 0.0,
+                'accuracy': 0.0
+            }
+            
+            log("✅ ULTRA-ADVANCED end-of-day cleanup complete")
             
         except Exception as e:
-            log(f"❌ Fatal error in main loop: {e}")
-            log(f"Traceback: {traceback.format_exc()}")
-            send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
-            # Don't exit - sleep and let Render restart if needed
-            log("😴 Sleeping before potential restart...")
-            time.sleep(300)
+            log(f"❌ Ultra-advanced end-of-day cleanup failed: {e}")
+            send_discord_alert(f"❌ Ultra-advanced end-of-day cleanup failed: {e}", urgent=True)
+    
+    def generate_ultra_advanced_daily_report(self):
+        """Generate comprehensive daily report with ALL advanced metrics"""
+        try:
+            if api:
+                account = safe_api_call(api.get_account)
+                if account:
+                    equity = float(account.equity)
+                    cash = float(account.cash)
+                    day_pl = float(account.todays_pl)
+                else:
+                    equity = trading_state.starting_equity
+                    cash = 0
+                    day_pl = 0
+            else:
+                equity = trading_state.starting_equity
+                cash = 0
+                day_pl = 0
+            
+            report = "📊 **ULTRA-ADVANCED Daily Trading Report**\n"
+            report += f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+            
+            # Basic metrics
+            report += f"💰 Account Value: ${equity:,.2f}\n"
+            report += f"💵 Cash: ${cash:,.2f}\n"
+            report += f"📈 Day P&L: ${day_pl:,.2f}\n"
+            report += f"📉 Max Drawdown: {trading_state.daily_drawdown:.1%}\n\n"
+            
+            # Trading metrics
+            report += f"🎯 Trades Executed: {self.daily_stats['trades_executed']}\n"
+            report += f"✅ Accuracy: {self.daily_stats['accuracy']:.1%}\n\n"
+            
+            # Q-Learning Stats
+            report += f"🧠 **Q-Learning Stats:**\n"
+            report += f"States Learned: {len(trading_state.q_table)}\n"
+            if trading_state.q_reward_history:
+                avg_reward = np.mean(list(trading_state.q_reward_history)[-20:])
+                report += f"Avg Reward (20 trades): {avg_reward:.3f}\n"
+            report += f"Exploration Rate: {self.q_learning_agent.epsilon:.3f}\n\n"
+            
+            # Advanced Pattern Recognition
+            report += f"🎨 **Pattern Recognition:**\n"
+            report += f"Fibonacci Levels: {len(trading_state.fibonacci_levels)} tickers\n"
+            report += f"Elliott Waves: {len(trading_state.elliott_wave_counts)} tickers\n"
+            report += f"Harmonic Patterns: {len(trading_state.harmonic_patterns)} tickers\n"
+            report += f"Ichimoku Clouds: {len(trading_state.ichimoku_clouds)} tickers\n\n"
+            
+            # Market Microstructure
+            report += f"🔬 **Market Microstructure:**\n"
+            report += f"Order Flow Analysis: {len(trading_state.order_flow_imbalance)} tickers\n"
+            report += f"Smart Money Flow: {len(trading_state.smart_money_flow)} tickers\n"
+            report += f"Institutional Activity: {len(trading_state.institutional_activity)} tickers\n\n"
+            
+            # Ultra-Advanced Risk Metrics
+            report += f"📊 **Ultra-Advanced Risk Metrics:**\n"
+            report += f"Sharpe Ratio: {trading_state.risk_metrics['sharpe_ratio']:.2f}\n"
+            report += f"Sortino Ratio: {trading_state.risk_metrics['sortino_ratio']:.2f}\n"
+            report += f"Calmar Ratio: {trading_state.risk_metrics['calmar_ratio']:.2f}\n"
+            report += f"Win Rate: {trading_state.risk_metrics['win_rate']:.1%}\n"
+            report += f"Profit Factor: {trading_state.risk_metrics['profit_factor']:.2f}\n"
+            report += f"VaR (95%): {trading_state.risk_metrics['var_95']:.2%}\n"
+            report += f"CVaR (95%): {trading_state.risk_metrics['cvar_95']:.2%}\n\n"
+            
+            # Sector performance
+            if trading_state.sector_performance:
+                top_sector = max(trading_state.sector_performance.items(), key=lambda x: x[1])
+                worst_sector = min(trading_state.sector_performance.items(), key=lambda x: x[1])
+                report += f"🏆 Top Sector: {top_sector[0]} ({top_sector[1]:.1%})\n"
+                report += f"📉 Worst Sector: {worst_sector[0]} ({worst_sector[1]:.1%})\n"
+            
+            report += f"🌊 Market Regime: {trading_state.regime_state}\n"
+            report += f"📋 Watchlist Size: {len(self.current_watchlist)}\n\n"
+            
+            report += f"🚀 **ALL ADVANCED FEATURES ACTIVE!**"
+            
+            # Send to Discord and log to sheets
+            send_discord_alert(report)
+            
+            # Log comprehensive data to Google Sheets
+            ultra_advanced_data = {
+                'account_value': equity,
+                'cash': cash,
+                'day_pl': day_pl,
+                'max_drawdown': trading_state.daily_drawdown,
+                'trades_executed': self.daily_stats['trades_executed'],
+                'accuracy': self.daily_stats['accuracy'],
+                'sharpe_ratio': trading_state.risk_metrics['sharpe_ratio'],
+                'sortino_ratio': trading_state.risk_metrics['sortino_ratio'],
+                'calmar_ratio': trading_state.risk_metrics['calmar_ratio'],
+                'win_rate': trading_state.risk_metrics['win_rate'],
+                'profit_factor': trading_state.risk_metrics['profit_factor'],
+                'var_95': trading_state.risk_metrics['var_95'],
+                'cvar_95': trading_state.risk_metrics['cvar_95'],
+                'q_states_learned': len(trading_state.q_table),
+                'avg_q_reward': np.mean(list(trading_state.q_reward_history)[-20:]) if trading_state.q_reward_history else 0,
+                'fibonacci_analysis_count': len(trading_state.fibonacci_levels),
+                'elliott_wave_count': len(trading_state.elliott_wave_counts),
+                'harmonic_pattern_count': len(trading_state.harmonic_patterns),
+                'ichimoku_analysis_count': len(trading_state.ichimoku_clouds),
+                'order_flow_analysis_count': len(trading_state.order_flow_imbalance),
+                'smart_money_analysis_count': len(trading_state.smart_money_flow),
+                'institutional_activity_count': len(trading_state.institutional_activity),
+                'market_regime': trading_state.regime_state,
+                'sectors_tracked': len(trading_state.sector_performance)
+            }
+            
+            log_to_google_sheets(ultra_advanced_data, "UltraAdvancedDailyReports")
+            
+        except Exception as e:
+            log(f"❌ Ultra-advanced daily report generation failed: {e}")
+    
+    def save_all_advanced_data(self):
+        """Save all advanced analysis data to files"""
+        try:
+            # Save Q-learning data
+            q_data = {
+                'q_table': dict(trading_state.q_table),
+                'state_history': list(trading_state.q_state_history),
+                'action_history': list(trading_state.q_action_history),
+                'reward_history': list(trading_state.q_reward_history)
+            }
+            with open("models/q_learning/q_learning_complete.json", "w") as f:
+                json.dump(q_data, f, default=str)
+            
+            # Save all pattern recognition data
+            pattern_data = {
+                'fibonacci_levels': trading_state.fibonacci_levels,
+                'elliott_wave_counts': trading_state.elliott_wave_counts,
+                'harmonic_patterns': trading_state.harmonic_patterns,
+                'ichimoku_clouds': trading_state.ichimoku_clouds
+            }
+            with open("models/pattern_recognition_complete.json", "w") as f:
+                json.dump(pattern_data, f, default=str)
+            
+            # Save market microstructure data
+            microstructure_data = {
+                'order_flow_imbalance': trading_state.order_flow_imbalance,
+                'smart_money_flow': trading_state.smart_money_flow,
+                'institutional_activity': trading_state.institutional_activity,
+                'dark_pool_indicators': trading_state.dark_pool_indicators
+            }
+            with open("microstructure/microstructure_complete.json", "w") as f:
+                json.dump(microstructure_data, f, default=str)
+            
+            log("💾 All ultra-advanced data saved successfully")
+            
+        except Exception as e:
+            log(f"❌ Failed to save advanced data: {e}")
+
+def run_flask_server():
+    """Run Flask server in a separate thread"""
+    try:
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception as e:
+        log(f"Flask server error: {e}")
 
 def main():
-    """Main entry point with proper error handling"""
+    """Main entry point with ALL advanced features"""
     try:
-        log("🚀 Starting Enhanced AI Trading Bot (Render-compatible)")
+        log("🚀 Starting ULTRA-ADVANCED AI Trading Bot with ALL 2,800+ LINES OF FUNCTIONALITY...")
+        log("📋 COMPLETE Feature Checklist:")
+        log("✅ Dual-Horizon Prediction Models")
+        log("✅ Q-Learning Reinforcement Learning System")
+        log("✅ Support/Resistance Analysis")
+        log("✅ Volume Profile Analysis")
+        log("✅ Fibonacci Retracement & Extensions")
+        log("✅ Elliott Wave Pattern Detection")
+        log("✅ Harmonic Pattern Recognition (Gartley, Butterfly, Crab, Bat)")
+        log("✅ Ichimoku Cloud Analysis")
+        log("✅ Market Microstructure Analysis")
+        log("✅ Order Flow Analysis")
+        log("✅ Smart Money Detection")
+        log("✅ Institutional Activity Tracking")
+        log("✅ Dark Pool Indicators")
+        log("✅ Advanced Volatility Models (GARCH)")
+        log("✅ Markov Regime Detection")
+        log("✅ Sector Rotation System")
+        log("✅ Advanced Portfolio Management")
+        log("✅ Correlation Risk Management")
+        log("✅ Ultra-Advanced Technical Indicators (50+ indicators)")
+        log("✅ Candlestick Pattern Recognition")
+        log("✅ Sentiment Analysis with FinBERT + VADER")
+        log("✅ Meta Model Approval System")
+        log("✅ Complete Profit Tracking")
+        log("✅ Ultra-Advanced Risk Metrics (Sharpe, Sortino, Calmar, VaR, CVaR)")
+        log("✅ Risk Management & Emergency Stops")
+        log("✅ Advanced Backtesting Framework")
+        log("✅ Google Sheets Integration")
+        log("✅ Discord Alerts")
+        log("✅ Market Regime Detection")
+        log("✅ Liquidity Pool Detection")
+        log("✅ ALL 2,800+ lines of functionality FULLY RESTORED!")
         
-        # Start the trading bot
-        bot = EnhancedTradingBot()
+        # Start Flask server in background thread for Render health checks
+        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+        flask_thread.start()
+        log("✅ Health check server started")
+        
+        # Give Flask a moment to start
+        time.sleep(2)
+        
+        # Start the ultra-advanced trading bot
+        bot = UltraAdvancedTradingBot()
         bot.run_main_loop()
         
-    except Exception as e:
-        log(f"❌ Fatal error in main: {e}")
-        log(f"Traceback: {traceback.format_exc()}")
-        send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
-        
-        # Don't exit - sleep and let Render restart if needed
-        log("😴 Sleeping before potential restart...")
-        time.sleep(300)
-
-# === MAIN EXECUTION ===
-if __name__ == "__main__":
-    try:
-        log("🚀 Starting Enhanced AI Trading Bot with ALL MAXIMUM PROFITABILITY FEATURES...")
-        log("📋 Feature Checklist:")
-        log("✅ Dual-Horizon Prediction (Short & Medium-term models must agree)")
-        log("✅ VotingClassifier Ensemble (XGBoost + Random Forest + Logistic Regression)")
-        log("✅ VWAP & Volume Spike Filtering (>1.2x volume, price > VWAP)")
-        log("✅ Support/Resistance Level Confirmation")
-        log("✅ Sentiment Override (FinBERT + VADER ensemble)")
-        log("✅ Meta Model Approval System with Auto-Retraining")
-        log("✅ Dynamic Watchlist Optimization (20 tickers, max 12 per sector)")
-        log("✅ Cooldown Management (5-minute cooldowns)")
-        log("✅ Kelly Criterion Position Sizing (confidence-adjusted)")
-        log("✅ ATR-based Dynamic Stops & Profit Targets")
-        log("✅ Profit Decay Exit Logic & Trailing Stops")
-        log("✅ Sector Diversification (max 30% per sector)")
-        log("✅ Volume Spike Confirmation (>1.2x recent volume)")
-        log("✅ Live Accuracy Tracking & Model Performance")
-        log("✅ Q-Learning with Reward Shaping")
-        log("✅ Market Regime Detection (Bull/Bear/Neutral)")
-        log("✅ End-of-Day Liquidation & Reporting")
-        log("✅ Google Sheets Logging & Discord Alerts")
-        log("✅ P&L Logging & Trade Outcome Tracking")
-        log("✅ Live Training Loop (every 5 minutes)")
-        log("✅ TimeSeriesSplit Cross-Validation")
-        log("✅ Comprehensive Risk Management")
-        
-        bot = EnhancedTradingBot()
-        bot.run_main_loop()
     except Exception as e:
         log(f"❌ Fatal startup error: {e}")
         send_discord_alert(f"❌ Fatal startup error: {e}", urgent=True)
+
+# === MAIN EXECUTION ===
+if __name__ == "__main__":
+    main()
