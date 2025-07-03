@@ -71,9 +71,9 @@ def log(msg):
             f.write(f"[{timestamp}] {msg}\n")
 
 # === API SETUP ===
-ALPACA_API_KEY = os.getenv("APCA_API_KEY_ID")
-ALPACA_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-ALPACA_BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
+ALPACA_API_KEY = os.getenv("AlPACA_API_KEY_ID")
+ALPACA_SECRET_KEY = os.getenv("ALPACA_API_SECRET_KEY")
+ALPACA_BASE_URL = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
 if not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
     log("❌ Missing Alpaca API credentials")
