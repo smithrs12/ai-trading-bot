@@ -2,7 +2,7 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install system dependencies for TA-Lib and other libraries
+# Install system dependencies including ta-lib and other libraries
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -13,31 +13,18 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     liblapack-dev \
     libatlas-base-dev \
+    libta-lib0 \
+    libta-lib-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install TA-Lib from source (C library)
-RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
-    tar -xzf ta-lib-0.4.0-src.tar.gz && \
-    cd ta-lib && \
-    ./configure --prefix=/usr && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
-
-# ✅ Tell the linker where to find libta_lib.so
-ENV LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
-ENV CFLAGS="-I/usr/include"
-ENV LDFLAGS="-L/usr/lib"
-
-# Install Python wrapper for TA-Lib
+# Install Python wrapper for TA-Lib (no source build needed)
 RUN pip install --no-cache-dir TA-Lib
 
-# Copy requirements first for better caching
+# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy the rest of the app
 COPY . .
 
 # Create necessary directories
@@ -47,8 +34,8 @@ RUN mkdir -p logs models/short models/medium models/meta models/q_learning \
     harmonic_patterns ichimoku_analysis microstructure volatility_models \
     regime_analysis
 
-# Expose port for health checks
+# Optional: expose health check port
 EXPOSE 5000
 
-# Run the application
+# Run your bot
 CMD ["python", "main.py"]
