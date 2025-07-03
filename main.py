@@ -1,3 +1,4 @@
+main.py
 import os
 import time
 import pytz
@@ -30,12 +31,39 @@ from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
 import json
 import warnings
+import sys
+import traceback
+from flask import Flask, jsonify
+import threading
+
 warnings.filterwarnings('ignore')
 
 # === ENHANCED CONFIGURATION ===
 DEBUG = True
 load_dotenv()
 pacific = timezone('US/Pacific')
+
+# Create Flask app for health checks (required for Render)
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'market_open': is_market_open_safe(),
+        'bot_running': True
+    })
+
+@app.route('/')
+def home():
+    """Root endpoint"""
+    return jsonify({
+        'service': 'AI Trading Bot',
+        'status': 'running',
+        'timestamp': datetime.now().isoformat()
+    })
 
 # Enhanced model directories
 os.makedirs("models/short", exist_ok=True)
@@ -63,27 +91,116 @@ THRESHOLDS = {
 }
 
 def log(msg):
-    if DEBUG:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] {msg}")
-        # Also log to file
-        with open("logs/trading_bot.log", "a") as f:
-            f.write(f"[{timestamp}] {msg}\n")
+    """Enhanced logging with better error handling"""
+    try:
+        if DEBUG:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_message = f"[{timestamp}] {msg}"
+            print(log_message)
+            
+            # Safe file logging
+            try:
+                with open("logs/trading_bot.log", "a") as f:
+                    f.write(f"{log_message}\n")
+            except Exception as file_error:
+                print(f"[{timestamp}] Warning: Could not write to log file: {file_error}")
+    except Exception as e:
+        print(f"Logging error: {e}")
 
-# === API SETUP ===
+def safe_api_call(func, *args, **kwargs):
+    """Wrapper for safe API calls with retry logic"""
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            log(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                log(f"API call failed after {max_retries} attempts")
+                return None
+
+def is_market_open_safe():
+    """Safe market open check with fallback"""
+    try:
+        if api:
+            clock = safe_api_call(api.get_clock)
+            if clock:
+                return clock.is_open
+        
+        # Fallback: check market hours manually
+        now = datetime.now(pytz.timezone("US/Eastern"))
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        # Check if it's a weekday and within market hours
+        if now.weekday() < 5:  # Monday = 0, Friday = 4
+            return market_open <= now <= market_close
+        
+        return False
+        
+    except Exception as e:
+        log(f"Market status check failed: {e}")
+        # Conservative fallback - assume market is closed
+        return False
+
+# === API SETUP WITH BETTER ERROR HANDLING ===
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-BASE_URL = os.getenv("ALPACA_BASE_URL")
+BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
-if not API_KEY or not SECRET_KEY:
-    log("❌ Missing Alpaca API credentials")
-    exit(1)
-
-api = REST(API_KEY, SECRET_KEY, base_url=BASE_URL)
+api = None
+if API_KEY and SECRET_KEY:
+    try:
+        api = REST(API_KEY, SECRET_KEY, base_url=BASE_URL)
+        # Test the connection
+        account = safe_api_call(api.get_account)
+        if account:
+            log("✅ Alpaca API connected successfully")
+        else:
+            log("⚠️ Alpaca API connection test failed")
+    except Exception as e:
+        log(f"❌ Alpaca API setup failed: {e}")
+        api = None
+else:
+    log("⚠️ Missing Alpaca API credentials - running in demo mode")
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-newsapi = NewsApiClient(api_key=NEWS_API_KEY) if NEWS_API_KEY else None
+
+def send_discord_alert(message, urgent=False):
+    """Safe Discord alert with error handling"""
+    try:
+        if not DISCORD_WEBHOOK_URL:
+            log(f"Discord alert (no webhook): {message}")
+            return
+            
+        if urgent:
+            message = f"🚨 **URGENT** 🚨\n{message}"
+        
+        payload = {"content": message}
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            log(f"📬 Discord alert sent: {message[:50]}...")
+        else:
+            log(f"⚠️ Discord alert failed: {response.status_code}")
+            
+    except Exception as e:
+        log(f"❌ Discord alert error: {e}")
+
+# Initialize other components safely
+newsapi = None
+if NEWS_API_KEY:
+    try:
+        newsapi = NewsApiClient(api_key=NEWS_API_KEY)
+        log("✅ News API connected")
+    except Exception as e:
+        log(f"⚠️ News API setup failed: {e}")
+
 analyzer = SentimentIntensityAnalyzer()
 
 # Google Sheets Setup
@@ -184,26 +301,6 @@ else:
 q_net.eval()
 
 # === UTILITY FUNCTIONS ===
-def send_discord_alert(message, urgent=False):
-    """Send Discord alert with optional urgency"""
-    try:
-        if not DISCORD_WEBHOOK_URL:
-            return
-            
-        if urgent:
-            message = f"🚨 **URGENT** 🚨\n{message}"
-        
-        payload = {"content": message}
-        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        
-        if response.status_code == 200:
-            log(f"📬 Discord alert sent: {message[:50]}...")
-        else:
-            log(f"⚠️ Discord alert failed: {response.status_code}")
-            
-    except Exception as e:
-        log(f"❌ Discord alert error: {e}")
-
 def log_to_google_sheets(data, sheet_name="TradingLog"):
     """Log data to Google Sheets"""
     try:
@@ -345,12 +442,7 @@ def add_technical_indicators(df):
 
 def is_market_open():
     """Check if market is currently open"""
-    try:
-        clock = api.get_clock()
-        return clock.is_open
-    except Exception as e:
-        log(f"❌ Market status check failed: {e}")
-        return False
+    return is_market_open_safe()
 
 def is_near_market_close(minutes_before=30):
     """Check if we're near market close"""
@@ -1758,7 +1850,10 @@ class EnhancedTradingExecutor:
             
             # Check sector exposure limits
             current_positions = get_current_positions()
-            account = api.get_account()
+            account = safe_api_call(api.get_account)
+            if not account:
+                return True, "Could not check account"
+                
             portfolio_value = float(account.equity)
             
             sector_exposure = defaultdict(float)
@@ -1807,7 +1902,11 @@ class EnhancedTradingExecutor:
                 return False
             
             # Get current price and ATR
-            bar = api.get_latest_bar(ticker)
+            bar = safe_api_call(api.get_latest_bar, ticker)
+            if not bar:
+                log(f"⚠️ Could not get current price for {ticker}")
+                return False
+                
             current_price = bar.c
             
             atr_value = market_data['atr'].iloc[-1] if 'atr' in market_data.columns else current_price * 0.02
@@ -1821,13 +1920,17 @@ class EnhancedTradingExecutor:
             )
             
             # Execute the buy order
-            order = api.submit_order(
+            order = safe_api_call(api.submit_order,
                 symbol=ticker,
                 qty=position_size,
                 side="buy",
                 type="market",
                 time_in_force="gtc"
             )
+            
+            if not order:
+                log(f"❌ Failed to submit buy order for {ticker}")
+                return False
             
             # Track position details
             self.position_tracker[ticker] = {
@@ -1892,13 +1995,17 @@ class EnhancedTradingExecutor:
             profit_loss = (current_price - entry_price) / entry_price
             
             # Execute sell order
-            order = api.submit_order(
+            order = safe_api_call(api.submit_order,
                 symbol=ticker,
                 qty=quantity,
                 side="sell",
                 type="market",
                 time_in_force="gtc"
             )
+            
+            if not order:
+                log(f"❌ Failed to submit sell order for {ticker}")
+                return False
             
             # Determine outcome
             if profit_loss > 0.005:  # More than 0.5% profit
@@ -2225,8 +2332,16 @@ class EnhancedTradingBot:
             log("🚀 Initializing Enhanced AI Trading Bot...")
             
             # Set starting equity for drawdown tracking
-            account = api.get_account()
-            trading_state.starting_equity = float(account.equity)
+            if api:
+                account = safe_api_call(api.get_account)
+                if account:
+                    trading_state.starting_equity = float(account.equity)
+                else:
+                    log("⚠️ Could not get account info, using default equity")
+                    trading_state.starting_equity = 100000  # Default
+            else:
+                log("⚠️ No API connection, using demo mode")
+                trading_state.starting_equity = 100000  # Demo mode
             
             # Detect initial market regime
             detect_market_regime()
@@ -2571,14 +2686,27 @@ class EnhancedTradingBot:
     def generate_daily_report(self):
         """Generate and send daily trading report"""
         try:
-            account = api.get_account()
+            if api:
+                account = safe_api_call(api.get_account)
+                if account:
+                    equity = float(account.equity)
+                    cash = float(account.cash)
+                    day_pl = float(account.todays_pl)
+                else:
+                    equity = trading_state.starting_equity
+                    cash = 0
+                    day_pl = 0
+            else:
+                equity = trading_state.starting_equity
+                cash = 0
+                day_pl = 0
             
             report = "📊 **Daily Trading Report**\n"
             report += f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
             
-            report += f"💰 Account Value: ${float(account.equity):,.2f}\n"
-            report += f"💵 Cash: ${float(account.cash):,.2f}\n"
-            report += f"📈 Day P&L: ${float(account.todays_pl):,.2f}\n"
+            report += f"💰 Account Value: ${equity:,.2f}\n"
+            report += f"💵 Cash: ${cash:,.2f}\n"
+            report += f"📈 Day P&L: ${day_pl:,.2f}\n"
             report += f"📉 Max Drawdown: {trading_state.daily_drawdown:.1%}\n\n"
             
             report += f"🎯 Trades Executed: {self.daily_stats['trades_executed']}\n"
@@ -2589,9 +2717,9 @@ class EnhancedTradingBot:
             # Send to Discord and log to sheets
             send_discord_alert(report)
             log_to_google_sheets({
-                'account_value': float(account.equity),
-                'cash': float(account.cash),
-                'day_pl': float(account.todays_pl),
+                'account_value': equity,
+                'cash': cash,
+                'day_pl': day_pl,
                 'max_drawdown': trading_state.daily_drawdown,
                 'trades_executed': self.daily_stats['trades_executed'],
                 'accuracy': self.daily_stats['accuracy'],
@@ -2601,53 +2729,120 @@ class EnhancedTradingBot:
         except Exception as e:
             log(f"❌ Daily report generation failed: {e}")
     
+    def wait_for_market_open(self):
+        """Wait for market to open without exiting"""
+        log("⏳ Market is closed, waiting...")
+        
+        # Calculate time until next market open
+        now = datetime.now(pytz.timezone("US/Eastern"))
+        
+        if now.weekday() >= 5:  # Weekend
+            # Wait until Monday 9:30 AM
+            days_until_monday = 7 - now.weekday()
+            next_open = now.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(days=days_until_monday)
+        else:
+            # Wait until next day 9:30 AM if after market close
+            if now.hour >= 16:
+                next_open = (now + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
+            else:
+                next_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        
+        time_until_open = (next_open - now).total_seconds()
+        log(f"⏰ Market opens in {time_until_open/3600:.1f} hours")
+        
+        # Sleep in chunks to allow health checks
+        sleep_chunk = min(300, time_until_open)  # 5 minutes max
+        time.sleep(sleep_chunk)
+    
     def run_main_loop(self):
-        """Main trading bot loop"""
+        """Main trading bot loop - Render compatible"""
         try:
             if not self.initialize_bot():
-                return
+                log("⚠️ Bot initialization failed, but continuing in safe mode...")
             
-            log("🔄 Starting main trading loop...")
+            log("🔄 Starting main trading loop (Render-compatible)...")
             
             while True:
                 try:
                     # Check if market is open
-                    if not is_market_open():
-                        log("⏳ Market closed, waiting...")
-                        time.sleep(300)  # Check every 5 minutes
-                        continue
-                    
-                    # Check if near market close
-                    if is_near_market_close(30):
-                        log("⏰ Near market close, performing cleanup...")
-                        self.end_of_day_cleanup()
-                        break
-                    
-                    # Check retraining schedule
-                    self.check_retraining_schedule()
-                    
-                    # Run trading cycle (every 5 minutes - live training loop)
-                    self.run_trading_cycle()
-                    
-                    # Wait for next cycle
-                    log(f"⏸️ Waiting {self.loop_interval/60:.1f} minutes for next cycle...")
-                    time.sleep(self.loop_interval)
-                    
+                    if is_market_open_safe():
+                        log("📈 Market is open - running trading cycle")
+                        
+                        # Check if near market close
+                        if is_near_market_close(30):
+                            log("⏰ Near market close, performing cleanup...")
+                            self.end_of_day_cleanup()
+                            # Don't break - continue to next day
+                            log("✅ End-of-day cleanup complete, waiting for next market open...")
+                        else:
+                            # Check retraining schedule
+                            self.check_retraining_schedule()
+                            
+                            # Run trading cycle (every 5 minutes - live training loop)
+                            self.run_trading_cycle()
+                            
+                            # Wait for next cycle
+                            log(f"⏸️ Waiting {self.loop_interval/60:.1f} minutes for next cycle...")
+                            time.sleep(self.loop_interval)
+                    else:
+                        # Market is closed - wait appropriately without exiting
+                        self.wait_for_market_open()
+                        
                 except KeyboardInterrupt:
                     log("🛑 Received interrupt signal, shutting down...")
                     break
                 except Exception as e:
                     log(f"❌ Error in main loop: {e}")
+                    log(f"Traceback: {traceback.format_exc()}")
                     send_discord_alert(f"❌ Main loop error: {e}", urgent=True)
+                    # Don't exit - just wait and continue
                     time.sleep(60)  # Wait 1 minute before retrying
                     continue
             
-            log("🏁 Trading bot stopped")
+            log("🏁 Trading bot stopped gracefully")
             send_discord_alert("🏁 Trading bot stopped")
             
         except Exception as e:
             log(f"❌ Fatal error in main loop: {e}")
+            log(f"Traceback: {traceback.format_exc()}")
             send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
+            # Don't exit - sleep and let Render restart if needed
+            log("😴 Sleeping before potential restart...")
+            time.sleep(300)
+
+def run_flask_server():
+    """Run Flask server in a separate thread"""
+    try:
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception as e:
+        log(f"Flask server error: {e}")
+
+def main():
+    """Main entry point with proper error handling"""
+    try:
+        log("🚀 Starting Enhanced AI Trading Bot (Render-compatible)")
+        
+        # Start Flask server in background thread for Render health checks
+        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+        flask_thread.start()
+        log("✅ Health check server started")
+        
+        # Give Flask a moment to start
+        time.sleep(2)
+        
+        # Start the trading bot
+        bot = EnhancedTradingBot()
+        bot.run_main_loop()
+        
+    except Exception as e:
+        log(f"❌ Fatal error in main: {e}")
+        log(f"Traceback: {traceback.format_exc()}")
+        send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
+        
+        # Don't exit - sleep and let Render restart if needed
+        log("😴 Sleeping before potential restart...")
+        time.sleep(300)
 
 # === MAIN EXECUTION ===
 if __name__ == "__main__":
