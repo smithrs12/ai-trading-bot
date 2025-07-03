@@ -32,7 +32,6 @@ import json
 import warnings
 import sys
 import traceback
-from flask import Flask, jsonify
 import threading
 
 warnings.filterwarnings('ignore')
@@ -41,9 +40,6 @@ warnings.filterwarnings('ignore')
 DEBUG = True
 load_dotenv()
 pacific = timezone('US/Pacific')
-
-# Create Flask app for health checks (required for Render)
-app = Flask(__name__)
 
 @app.route('/health')
 def health_check():
@@ -2809,26 +2805,10 @@ class EnhancedTradingBot:
             log("😴 Sleeping before potential restart...")
             time.sleep(300)
 
-def run_flask_server():
-    """Run Flask server in a separate thread"""
-    try:
-        port = int(os.environ.get('PORT', 5000))
-        app.run(host='0.0.0.0', port=port, debug=False)
-    except Exception as e:
-        log(f"Flask server error: {e}")
-
 def main():
     """Main entry point with proper error handling"""
     try:
         log("🚀 Starting Enhanced AI Trading Bot (Render-compatible)")
-        
-        # Start Flask server in background thread for Render health checks
-        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-        flask_thread.start()
-        log("✅ Health check server started")
-        
-        # Give Flask a moment to start
-        time.sleep(2)
         
         # Start the trading bot
         bot = EnhancedTradingBot()
