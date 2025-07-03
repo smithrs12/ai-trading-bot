@@ -10,12 +10,9 @@ RUN apt-get update && apt-get install -y \
     wget \
     build-essential \
     libffi-dev \
-    libssl-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    zlib1g-dev \
     libopenblas-dev \
-    gfortran \
+    liblapack-dev \
+    libatlas-base-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install TA-Lib from source (C library)
@@ -28,8 +25,10 @@ RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
     cd .. && \
     rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
-# Set path so TA-Lib can be found by pip install TA-Lib
+# ✅ Tell the linker where to find libta_lib.so
 ENV LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
+ENV CFLAGS="-I/usr/include"
+ENV LDFLAGS="-L/usr/lib"
 
 # Install Python wrapper for TA-Lib
 RUN pip install --no-cache-dir TA-Lib
