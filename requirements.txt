@@ -6,7 +6,7 @@ wheel==0.40.0
 alpaca-trade-api==3.0.0
 python-dotenv==1.0.0
 
-# Data Analysis & Machine Learning (Compatible versions)
+# Data Analysis & Machine Learning
 pandas==2.0.3
 numpy==1.24.3
 scipy==1.11.1
@@ -15,9 +15,8 @@ xgboost==1.7.6
 torch==2.0.1
 joblib==1.3.2
 
-# Technical Analysis (FIXED - using talib-binary)
+# Technical Analysis (ta library only - NO TA-Lib)
 ta==0.10.2
-talib-binary==0.4.24
 
 # Time & Date
 pytz==2023.3
