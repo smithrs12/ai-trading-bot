@@ -66,3 +66,5 @@ colorlog==6.7.0
 
 # Advanced Time Series Analysis
 arch==5.3.1
+
+shap
