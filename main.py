@@ -35,7 +35,6 @@ import traceback
 import threading
 from scipy import stats
 from scipy.signal import find_peaks
-import talib
 from flask import Flask, jsonify
 
 warnings.filterwarnings('ignore')
