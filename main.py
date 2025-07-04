@@ -2713,3 +2713,12 @@ class UltraAdvancedTradingBot:
             # Decision threshold
             if weighted_score >= 4:
                 log(f"✅ {ticker} meets advanced criteria — executing trade.")
+                # 🔁 You could insert `execute_trade()` here
+                return True
+            else:
+                log(f"⏸️ {ticker} does NOT meet threshold (Score: {weighted_score:.2f})")
+                return False
+
+        except Exception as e:
+            log(f"❌ Failed to process {ticker}: {e}")
+            return False
