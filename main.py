@@ -2703,22 +2703,23 @@ class UltraAdvancedTradingBot:
                     advanced_score += 1
                     reasons.append("MACD bullish divergence")
                     confidence_factors.append(0.5)
-            
+
             # Calculate overall confidence
             overall_confidence = np.mean(confidence_factors) if confidence_factors else 0.5
-            
+
             # Final decision with confidence weighting
             weighted_score = advanced_score * overall_confidence
-            
+
             # Decision threshold
             if weighted_score >= 4:
                 log(f"✅ {ticker} meets advanced criteria — executing trade.")
-                # 🔁 You could insert `execute_trade()` here
-                return True
-            else:
-                log(f"⏸️ {ticker} does NOT meet threshold (Score: {weighted_score:.2f})")
-                return False
 
-        except Exception as e:
-            log(f"❌ Failed to process {ticker}: {e}")
-            return False
+                # Gather inputs (ensure these are correctly defined before this point)
+                prediction = 1  # or dynamically based on logic
+                proba = weighted_score / 10  # normalized confidence
+                cooldown_cache = trading_state.cooldown_cache
+                latest_row = short_data.iloc[-1]
+                df = short_data
+
+                execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df)
+                return True
