@@ -525,6 +525,20 @@ class UltraAdvancedTradingState:
 
 trading_state = UltraAdvancedTradingState()
 
+# === ULTRA-ADVANCED TECHNICAL ANALYSIS ===
+def add_ultra_advanced_technical_indicators(df):
+    """Add comprehensive technical indicators including ultra-advanced ones"""
+    try:
+        if df is None or df.empty:
+            return df
+        
+        # Convert to numpy arrays for calculations
+        high = df['high'].values
+        low = df['low'].values
+        close = df['close'].values
+        volume = df['volume'].values
+        open_price = df['open'].values
+        
         # Basic indicators
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
@@ -1240,7 +1254,7 @@ class HarmonicPatternAnalyzer:
             trading_state.harmonic_patterns[ticker] = result
             
             # Save to file
-            filename = f"harmonic_patterns/{ticker}_harmonic_patterns.json"
+            filename = f"harmonic_patterns/{_harmonic_patterns.json"
             with open(filename, 'w') as f:
                 json.dump(result, f, default=str)
             
@@ -1764,7 +1778,7 @@ class QLearningAgent:
             
             # Extract relevant features
             current_price = df['close'].iloc[-1]
-            rsi = df['rsi'].iloc[-1]
+            rsi = df['rsi_14'].iloc[-1]
             macd = df['macd'].iloc[-1]
             volume_ratio = df['volume_ratio'].iloc[-1]
             
@@ -1845,7 +1859,7 @@ class MarketMicrostructureAnalyzer:
             high_volume_areas = df[df['volume'] > volume_threshold]
             
             # Filter for significant price consolidation
-            consolidation_threshold = df['atr'].mean() * 0.5
+            consolidation_threshold = df['atr_14'].mean() * 0.5
             liquidity_pools = []
             
             for index, row in high_volume_areas.iterrows():
@@ -1941,11 +1955,6 @@ class MarketMicrostructureAnalyzer:
     def analyze_dark_pool_indicators(self, df, ticker):
         """Analyze dark pool indicators using volume and price action"""
         try:
-            if df is None or df.empty or len(df) < 50:
-                return {}
-            
-            # Calculate off-exchange volume (simplified)
-            off_exchange_volume = df['volume'].quantile(0.8)
             if df is None or df.empty or len(df) < 50:
                 return {}
             
@@ -2052,7 +2061,7 @@ class EnhancedTradingExecutor:
                     'q_action': q_action,
                     'order_id': order.id,
                     'market_data_snapshot': {
-                        'rsi': market_data['rsi'].iloc[-1] if 'rsi' in market_data else None,
+                        'rsi': market_data['rsi_14'].iloc[-1] if 'rsi_14' in market_data else None,
                         'macd': market_data['macd'].iloc[-1] if 'macd' in market_data else None,
                         'volume_ratio': market_data['volume_ratio'].iloc[-1] if 'volume_ratio' in market_data else None
                     }
@@ -2322,8 +2331,8 @@ class EnhancedTradingExecutor:
             signal_multiplier = min(signal_strength * 2, 2.0)  # Max 2x multiplier
             
             # Adjust based on volatility
-            if market_data is not None and 'atr' in market_data:
-                atr = market_data['atr'].iloc[-1]
+            if market_data is not None and 'atr_14' in market_data:
+                atr = market_data['atr_14'].iloc[-1]
                 current_price = market_data['close'].iloc[-1]
                 volatility_pct = atr / current_price
                 volatility_multiplier = max(0.5, 1 - volatility_pct)  # Reduce size for high volatility
@@ -2677,8 +2686,8 @@ class UltraAdvancedTradingBot:
                 reasons.append("Q-Learning: SELL")
             
             # Technical Indicators Scoring
-            if 'rsi' in short_data.columns:
-                rsi = short_data['rsi'].iloc[-1]
+            if 'rsi_14' in short_data.columns:
+                rsi = short_data['rsi_14'].iloc[-1]
                 if rsi < 30:  # Oversold
                     advanced_score += 1
                     reasons.append(f"RSI oversold: {rsi:.1f}")
@@ -2703,406 +2712,4 @@ class UltraAdvancedTradingBot:
             
             # Decision threshold
             if weighted_score >= 4:
-                log(f"✅ {ticker} APPROVED by ultra-advanced analysis:")
-                log(f"   Score: {advanced_score} (weighted: {weighted_score:.2f})")
-                log(f"   Confidence: {overall_confidence:.2f}")
-                log(f"   Reasons: {', '.join(reasons)}")
-                
-                # Execute trade with all tracking
-                success = trading_executor.execute_buy_order(
-                    ticker, 
-                    weighted_score / 10,  # Normalize signal strength
-                    short_data,
-                    q_action
-                )
-                
-                if success:
-                    self.daily_stats['trades_executed'] += 1
-                    
-                    # Store Q-learning state for future updates
-                    trading_state.q_state_history.append(q_state)
-                    trading_state.q_action_history.append(q_action)
-                
-                return success
-            else:
-                log(f"❌ {ticker} REJECTED by ultra-advanced analysis:")
-                log(f"   Score: {advanced_score} (weighted: {weighted_score:.2f})")
-                log(f"   Confidence: {overall_confidence:.2f}")
-                log(f"   Reasons: {', '.join(reasons) if reasons else 'No significant signals'}")
-                return False
-            
-        except Exception as e:
-            log(f"❌ Ultra-advanced processing failed for {ticker}: {e}")
-            return False
-    
-    def run_ultra_advanced_trading_cycle(self):
-        """Run trading cycle with ALL advanced features"""
-        try:
-            log("🔄 Starting ULTRA-ADVANCED trading cycle...")
-            
-            # Update all advanced systems
-            sector_rotation_analyzer.analyze_sector_performance()
-            
-            # Update risk metrics
-            trading_state.update_ultra_advanced_risk_metrics()
-            
-            # Process watchlist with complete advanced features
-            processed_count = 0
-            for ticker in self.current_watchlist[:10]:  # Limit for performance
-                try:
-                    if self.process_ticker_with_all_features(ticker):
-                        processed_count += 1
-                    
-                    time.sleep(3)  # Rate limiting
-                    
-                except Exception as e:
-                    log(f"❌ Error processing {ticker}: {e}")
-                    continue
-            
-            log(f"✅ Ultra-advanced trading cycle complete - processed {processed_count} tickers")
-            
-        except Exception as e:
-            log(f"❌ Ultra-advanced trading cycle failed: {e}")
-    
-    def run_main_loop(self):
-        """Main loop with ALL advanced features"""
-        try:
-            if not self.initialize_bot():
-                log("⚠️ Bot initialization failed, but continuing...")
-            
-            log("🔄 Starting ULTRA-ADVANCED main trading loop...")
-            
-            while True:
-                try:
-                    # Check if market is open
-                    if is_market_open_safe():
-                        log("📈 Market is open - running ULTRA-ADVANCED trading cycle")
-                        
-                        # Check if near market close
-                        if is_near_market_close(30):
-                            log("⏰ Near market close, performing cleanup...")
-                            self.end_of_day_cleanup()
-                            log("✅ End-of-day cleanup complete, waiting for next market open...")
-                        else:
-                            # Run ultra-advanced trading cycle
-                            self.run_ultra_advanced_trading_cycle()
-                            
-                            # Wait for next cycle
-                            log(f"⏸️ Waiting {self.loop_interval/60:.1f} minutes for next cycle...")
-                            time.sleep(self.loop_interval)
-                    else:
-                        # Market is closed - wait appropriately without exiting
-                        self.wait_for_market_open()
-                        
-                except KeyboardInterrupt:
-                    log("🛑 Received interrupt signal, shutting down...")
-                    break
-                except Exception as e:
-                    log(f"❌ Error in main loop: {e}")
-                    log(f"Traceback: {traceback.format_exc()}")
-                    send_discord_alert(f"❌ Main loop error: {e}", urgent=True)
-                    # Don't exit - just wait and continue
-                    time.sleep(60)  # Wait 1 minute before retrying
-                    continue
-            
-            log("🏁 Ultra-Advanced Trading bot stopped gracefully")
-            send_discord_alert("🏁 Ultra-Advanced Trading bot stopped")
-            
-        except Exception as e:
-            log(f"❌ Fatal error in main loop: {e}")
-            log(f"Traceback: {traceback.format_exc()}")
-            send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
-            # Don't exit - sleep and let Render restart if needed
-            log("😴 Sleeping before potential restart...")
-            time.sleep(300)
-    
-    def wait_for_market_open(self):
-        """Wait for market to open without exiting"""
-        log("⏳ Market is closed, waiting...")
-        
-        # Calculate time until next market open
-        now = datetime.now(pytz.timezone("US/Eastern"))
-        
-        if now.weekday() >= 5:  # Weekend
-            # Wait until Monday 9:30 AM
-            days_until_monday = 7 - now.weekday()
-            next_open = now.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(days=days_until_monday)
-        else:
-            # Wait until next day 9:30 AM if after market close
-            if now.hour >= 16:
-                next_open = (now + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
-            else:
-                next_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        
-        time_until_open = (next_open - now).total_seconds()
-        log(f"⏰ Market opens in {time_until_open/3600:.1f} hours")
-        
-        # Sleep in chunks to allow health checks
-        sleep_chunk = min(300, time_until_open)  # 5 minutes max
-        time.sleep(sleep_chunk)
-    
-    def end_of_day_cleanup(self):
-        """Enhanced end-of-day cleanup with ALL advanced features"""
-        try:
-            log("🌅 Starting ULTRA-ADVANCED end-of-day cleanup...")
-            
-            # Auto-liquidation near close with Q-learning updates
-            current_positions = get_current_positions()
-            for ticker in current_positions:
-                # Calculate Q-learning reward for completed trades
-                if ticker in trading_state.open_positions:
-                    position_data = trading_state.open_positions[ticker]
-                    entry_price = position_data['entry_price']
-                    current_price = current_positions[ticker]['current_price']
-                    hold_time = (datetime.now() - position_data['entry_time']).total_seconds() / 60
-                    
-                    # Calculate reward and update Q-table
-                    return_pct = (current_price - entry_price) / entry_price
-                    reward = return_pct * 100  # Scale reward
-                    
-                    if len(trading_state.q_state_history) > 0 and len(trading_state.q_action_history) > 0:
-                        last_state = trading_state.q_state_history[-1]
-                        last_action = trading_state.q_action_history[-1]
-                        current_data = get_enhanced_data(ticker, limit=50)
-                        if current_data is not None:
-                            current_state = self.q_learning_agent.discretize_state(current_data, ticker)
-                            if current_state:
-                                self.q_learning_agent.learn(last_state, last_action, reward, current_state)
-                
-                # Execute sell order
-                trading_executor.execute_sell_order(ticker, "End of day")
-                time.sleep(1)
-            
-            # Generate comprehensive daily report with ALL metrics
-            self.generate_ultra_advanced_daily_report()
-            
-            # Save all advanced data
-            self.save_all_advanced_data()
-            
-            # Reset daily state
-            trading_state.reset_daily()
-            self.daily_stats = {
-                'trades_executed': 0,
-                'profitable_trades': 0,
-                'total_pnl': 0.0,
-                'accuracy': 0.0
-            }
-            
-            log("✅ ULTRA-ADVANCED end-of-day cleanup complete")
-            
-        except Exception as e:
-            log(f"❌ Ultra-advanced end-of-day cleanup failed: {e}")
-            send_discord_alert(f"❌ Ultra-advanced end-of-day cleanup failed: {e}", urgent=True)
-    
-    def generate_ultra_advanced_daily_report(self):
-        """Generate comprehensive daily report with ALL advanced metrics"""
-        try:
-            if api:
-                account = safe_api_call(api.get_account)
-                if account:
-                    equity = float(account.equity)
-                    cash = float(account.cash)
-                    day_pl = float(account.todays_pl)
-                else:
-                    equity = trading_state.starting_equity
-                    cash = 0
-                    day_pl = 0
-            else:
-                equity = trading_state.starting_equity
-                cash = 0
-                day_pl = 0
-            
-            report = "📊 **ULTRA-ADVANCED Daily Trading Report**\n"
-            report += f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-            
-            # Basic metrics
-            report += f"💰 Account Value: ${equity:,.2f}\n"
-            report += f"💵 Cash: ${cash:,.2f}\n"
-            report += f"📈 Day P&L: ${day_pl:,.2f}\n"
-            report += f"📉 Max Drawdown: {trading_state.daily_drawdown:.1%}\n\n"
-            
-            # Trading metrics
-            report += f"🎯 Trades Executed: {self.daily_stats['trades_executed']}\n"
-            report += f"✅ Accuracy: {self.daily_stats['accuracy']:.1%}\n\n"
-            
-            # Q-Learning Stats
-            report += f"🧠 **Q-Learning Stats:**\n"
-            report += f"States Learned: {len(trading_state.q_table)}\n"
-            if trading_state.q_reward_history:
-                avg_reward = np.mean(list(trading_state.q_reward_history)[-20:])
-                report += f"Avg Reward (20 trades): {avg_reward:.3f}\n"
-            report += f"Exploration Rate: {self.q_learning_agent.epsilon:.3f}\n\n"
-            
-            # Advanced Pattern Recognition
-            report += f"🎨 **Pattern Recognition:**\n"
-            report += f"Fibonacci Levels: {len(trading_state.fibonacci_levels)} tickers\n"
-            report += f"Elliott Waves: {len(trading_state.elliott_wave_counts)} tickers\n"
-            report += f"Harmonic Patterns: {len(trading_state.harmonic_patterns)} tickers\n"
-            report += f"Ichimoku Clouds: {len(trading_state.ichimoku_clouds)} tickers\n\n"
-            
-            # Market Microstructure
-            report += f"🔬 **Market Microstructure:**\n"
-            report += f"Order Flow Analysis: {len(trading_state.order_flow_imbalance)} tickers\n"
-            report += f"Smart Money Flow: {len(trading_state.smart_money_flow)} tickers\n"
-            report += f"Institutional Activity: {len(trading_state.institutional_activity)} tickers\n\n"
-            
-            # Ultra-Advanced Risk Metrics
-            report += f"📊 **Ultra-Advanced Risk Metrics:**\n"
-            report += f"Sharpe Ratio: {trading_state.risk_metrics['sharpe_ratio']:.2f}\n"
-            report += f"Sortino Ratio: {trading_state.risk_metrics['sortino_ratio']:.2f}\n"
-            report += f"Calmar Ratio: {trading_state.risk_metrics['calmar_ratio']:.2f}\n"
-            report += f"Win Rate: {trading_state.risk_metrics['win_rate']:.1%}\n"
-            report += f"Profit Factor: {trading_state.risk_metrics['profit_factor']:.2f}\n"
-            report += f"VaR (95%): {trading_state.risk_metrics['var_95']:.2%}\n"
-            report += f"CVaR (95%): {trading_state.risk_metrics['cvar_95']:.2%}\n\n"
-            
-            # Sector performance
-            if trading_state.sector_performance:
-                top_sector = max(trading_state.sector_performance.items(), key=lambda x: x[1])
-                worst_sector = min(trading_state.sector_performance.items(), key=lambda x: x[1])
-                report += f"🏆 Top Sector: {top_sector[0]} ({top_sector[1]:.1%})\n"
-                report += f"📉 Worst Sector: {worst_sector[0]} ({worst_sector[1]:.1%})\n"
-            
-            report += f"🌊 Market Regime: {trading_state.regime_state}\n"
-            report += f"📋 Watchlist Size: {len(self.current_watchlist)}\n\n"
-            
-            report += f"🚀 **ALL ADVANCED FEATURES ACTIVE!**"
-            
-            # Send to Discord and log to sheets
-            send_discord_alert(report)
-            
-            # Log comprehensive data to Google Sheets
-            ultra_advanced_data = {
-                'account_value': equity,
-                'cash': cash,
-                'day_pl': day_pl,
-                'max_drawdown': trading_state.daily_drawdown,
-                'trades_executed': self.daily_stats['trades_executed'],
-                'accuracy': self.daily_stats['accuracy'],
-                'sharpe_ratio': trading_state.risk_metrics['sharpe_ratio'],
-                'sortino_ratio': trading_state.risk_metrics['sortino_ratio'],
-                'calmar_ratio': trading_state.risk_metrics['calmar_ratio'],
-                'win_rate': trading_state.risk_metrics['win_rate'],
-                'profit_factor': trading_state.risk_metrics['profit_factor'],
-                'var_95': trading_state.risk_metrics['var_95'],
-                'cvar_95': trading_state.risk_metrics['cvar_95'],
-                'q_states_learned': len(trading_state.q_table),
-                'avg_q_reward': np.mean(list(trading_state.q_reward_history)[-20:]) if trading_state.q_reward_history else 0,
-                'fibonacci_analysis_count': len(trading_state.fibonacci_levels),
-                'elliott_wave_count': len(trading_state.elliott_wave_counts),
-                'harmonic_pattern_count': len(trading_state.harmonic_patterns),
-                'ichimoku_analysis_count': len(trading_state.ichimoku_clouds),
-                'order_flow_analysis_count': len(trading_state.order_flow_imbalance),
-                'smart_money_analysis_count': len(trading_state.smart_money_flow),
-                'institutional_activity_count': len(trading_state.institutional_activity),
-                'market_regime': trading_state.regime_state,
-                'sectors_tracked': len(trading_state.sector_performance)
-            }
-            
-            log_to_google_sheets(ultra_advanced_data, "UltraAdvancedDailyReports")
-            
-        except Exception as e:
-            log(f"❌ Ultra-advanced daily report generation failed: {e}")
-    
-    def save_all_advanced_data(self):
-        """Save all advanced analysis data to files"""
-        try:
-            # Save Q-learning data
-            q_data = {
-                'q_table': dict(trading_state.q_table),
-                'state_history': list(trading_state.q_state_history),
-                'action_history': list(trading_state.q_action_history),
-                'reward_history': list(trading_state.q_reward_history)
-            }
-            with open("models/q_learning/q_learning_complete.json", "w") as f:
-                json.dump(q_data, f, default=str)
-            
-            # Save all pattern recognition data
-            pattern_data = {
-                'fibonacci_levels': trading_state.fibonacci_levels,
-                'elliott_wave_counts': trading_state.elliott_wave_counts,
-                'harmonic_patterns': trading_state.harmonic_patterns,
-                'ichimoku_clouds': trading_state.ichimoku_clouds
-            }
-            with open("models/pattern_recognition_complete.json", "w") as f:
-                json.dump(pattern_data, f, default=str)
-            
-            # Save market microstructure data
-            microstructure_data = {
-                'order_flow_imbalance': trading_state.order_flow_imbalance,
-                'smart_money_flow': trading_state.smart_money_flow,
-                'institutional_activity': trading_state.institutional_activity,
-                'dark_pool_indicators': trading_state.dark_pool_indicators
-            }
-            with open("microstructure/microstructure_complete.json", "w") as f:
-                json.dump(microstructure_data, f, default=str)
-            
-            log("💾 All ultra-advanced data saved successfully")
-            
-        except Exception as e:
-            log(f"❌ Failed to save advanced data: {e}")
-
-def run_flask_server():
-    """Run Flask server in a separate thread"""
-    try:
-        port = int(os.environ.get('PORT', 5000))
-        app.run(host='0.0.0.0', port=port, debug=False)
-    except Exception as e:
-        log(f"Flask server error: {e}")
-
-def main():
-    """Main entry point with ALL advanced features"""
-    try:
-        log("🚀 Starting ULTRA-ADVANCED AI Trading Bot with ALL 2,800+ LINES OF FUNCTIONALITY...")
-        log("📋 COMPLETE Feature Checklist:")
-        log("✅ Dual-Horizon Prediction Models")
-        log("✅ Q-Learning Reinforcement Learning System")
-        log("✅ Support/Resistance Analysis")
-        log("✅ Volume Profile Analysis")
-        log("✅ Fibonacci Retracement & Extensions")
-        log("✅ Elliott Wave Pattern Detection")
-        log("✅ Harmonic Pattern Recognition (Gartley, Butterfly, Crab, Bat)")
-        log("✅ Ichimoku Cloud Analysis")
-        log("✅ Market Microstructure Analysis")
-        log("✅ Order Flow Analysis")
-        log("✅ Smart Money Detection")
-        log("✅ Institutional Activity Tracking")
-        log("✅ Dark Pool Indicators")
-        log("✅ Advanced Volatility Models (GARCH)")
-        log("✅ Markov Regime Detection")
-        log("✅ Sector Rotation System")
-        log("✅ Advanced Portfolio Management")
-        log("✅ Correlation Risk Management")
-        log("✅ Ultra-Advanced Technical Indicators (50+ indicators)")
-        log("✅ Candlestick Pattern Recognition")
-        log("✅ Sentiment Analysis with FinBERT + VADER")
-        log("✅ Meta Model Approval System")
-        log("✅ Complete Profit Tracking")
-        log("✅ Ultra-Advanced Risk Metrics (Sharpe, Sortino, Calmar, VaR, CVaR)")
-        log("✅ Risk Management & Emergency Stops")
-        log("✅ Advanced Backtesting Framework")
-        log("✅ Google Sheets Integration")
-        log("✅ Discord Alerts")
-        log("✅ Market Regime Detection")
-        log("✅ Liquidity Pool Detection")
-        log("✅ ALL 2,800+ lines of functionality FULLY RESTORED!")
-        
-        # Start Flask server in background thread for Render health checks
-        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-        flask_thread.start()
-        log("✅ Health check server started")
-        
-        # Give Flask a moment to start
-        time.sleep(2)
-        
-        # Start the ultra-advanced trading bot
-        bot = UltraAdvancedTradingBot()
-        bot.run_main_loop()
-        
-    except Exception as e:
-        log(f"❌ Fatal startup error: {e}")
-        send_discord_alert(f"❌ Fatal startup error: {e}", urgent=True)
-
-# === MAIN EXECUTION ===
-if __name__ == "__main__":
-    main()
+                log(f"✅ {ticker
