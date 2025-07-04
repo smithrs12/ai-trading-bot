@@ -2712,4 +2712,4 @@ class UltraAdvancedTradingBot:
             
             # Decision threshold
             if weighted_score >= 4:
-                log(f"✅ {ticker
+                log(f"✅ {ticker} meets advanced criteria — executing trade.")
