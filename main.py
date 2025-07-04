@@ -525,20 +525,6 @@ class UltraAdvancedTradingState:
 
 trading_state = UltraAdvancedTradingState()
 
-# === ULTRA-ADVANCED TECHNICAL ANALYSIS ===
-def add_ultra_advanced_technical_indicators(df):
-    """Add comprehensive technical indicators including ultra-advanced ones"""
-    try:
-        if df is None or df.empty:
-            return df
-        
-        # Convert to numpy arrays for TA-Lib
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        volume = df['volume'].values
-        open_price = df['open'].values
-        
         # Basic indicators
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
@@ -620,102 +606,6 @@ def add_ultra_advanced_technical_indicators(df):
             df['kc_upper'] = kc.keltner_channel_hband()
             df['kc_lower'] = kc.keltner_channel_lband()
             df['kc_middle'] = kc.keltner_channel_mband()
-        
-        # ULTRA-ADVANCED INDICATORS USING TA-LIB
-        try:
-            # Parabolic SAR
-            df['sar'] = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
-            
-            # Commodity Channel Index
-            df['cci'] = talib.CCI(high, low, close, timeperiod=14)
-            df['cci_20'] = talib.CCI(high, low, close, timeperiod=20)
-            
-            # Rate of Change (multiple timeframes)
-            df['roc_10'] = talib.ROC(close, timeperiod=10)
-            df['roc_20'] = talib.ROC(close, timeperiod=20)
-            
-            # Triple Exponential Moving Average
-            if len(df) >= 30:
-                df['tema'] = talib.TEMA(close, timeperiod=30)
-            
-            # Kaufman Adaptive Moving Average
-            if len(df) >= 30:
-                df['kama'] = talib.KAMA(close, timeperiod=30)
-            
-            # Mesa Adaptive Moving Average
-            df['mama'], df['fama'] = talib.MAMA(close, fastlimit=0.5, slowlimit=0.05)
-            
-            # Hilbert Transform indicators
-            df['ht_trendmode'] = talib.HT_TRENDMODE(close)
-            df['ht_dcperiod'] = talib.HT_DCPERIOD(close)
-            df['ht_dcphase'] = talib.HT_DCPHASE(close)
-            df['ht_phasor_inphase'], df['ht_phasor_quadrature'] = talib.HT_PHASOR(close)
-            df['ht_sine'], df['ht_leadsine'] = talib.HT_SINE(close)
-            df['ht_trendline'] = talib.HT_TRENDLINE(close)
-            
-            # Aroon indicators
-            df['aroon_up'], df['aroon_down'] = talib.AROON(high, low, timeperiod=14)
-            df['aroon_osc'] = talib.AROONOSC(high, low, timeperiod=14)
-            
-            # Balance of Power
-            df['bop'] = talib.BOP(open_price, high, low, close)
-            
-            # Chande Momentum Oscillator
-            df['cmo'] = talib.CMO(close, timeperiod=14)
-            
-            # Directional Movement Index
-            df['dx'] = talib.DX(high, low, close, timeperiod=14)
-            df['minus_di'] = talib.MINUS_DI(high, low, close, timeperiod=14)
-            df['plus_di'] = talib.PLUS_DI(high, low, close, timeperiod=14)
-            
-            # Momentum
-            df['mom'] = talib.MOM(close, timeperiod=10)
-            
-            # Percentage Price Oscillator
-            df['ppo'] = talib.PPO(close, fastperiod=12, slowperiod=26, matype=0)
-            
-            # Ultimate Oscillator
-            df['ultosc'] = talib.ULTOSC(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28)
-            
-            # Normalized Average True Range
-            df['natr'] = talib.NATR(high, low, close, timeperiod=14)
-            
-            # True Range
-            df['trange'] = talib.TRANGE(high, low, close)
-            
-            # Average Directional Movement Index Rating
-            df['adxr'] = talib.ADXR(high, low, close, timeperiod=14)
-            
-            # Absolute Price Oscillator
-            df['apo'] = talib.APO(close, fastperiod=12, slowperiod=26, matype=0)
-            
-            # Chaikin A/D Line
-            df['ad'] = talib.AD(high, low, close, volume)
-            
-            # Chaikin A/D Oscillator
-            df['adosc'] = talib.ADOSC(high, low, close, volume, fastperiod=3, slowperiod=10)
-            
-            # On Balance Volume
-            df['obv_talib'] = talib.OBV(close, volume)
-            
-            # CANDLESTICK PATTERNS
-            df['cdl_doji'] = talib.CDLDOJI(open_price, high, low, close)
-            df['cdl_hammer'] = talib.CDLHAMMER(open_price, high, low, close)
-            df['cdl_hangingman'] = talib.CDLHANGINGMAN(open_price, high, low, close)
-            df['cdl_shootingstar'] = talib.CDLSHOOTINGSTAR(open_price, high, low, close)
-            df['cdl_engulfing'] = talib.CDLENGULFING(open_price, high, low, close)
-            df['cdl_harami'] = talib.CDLHARAMI(open_price, high, low, close)
-            df['cdl_piercing'] = talib.CDLPIERCING(open_price, high, low, close)
-            df['cdl_darkcloud'] = talib.CDLDARKCLOUDCOVER(open_price, high, low, close)
-            df['cdl_morningstar'] = talib.CDLMORNINGSTAR(open_price, high, low, close)
-            df['cdl_eveningstar'] = talib.CDLEVENINGSTAR(open_price, high, low, close)
-            df['cdl_3whitesoldiers'] = talib.CDL3WHITESOLDIERS(open_price, high, low, close)
-            df['cdl_3blackcrows'] = talib.CDL3BLACKCROWS(open_price, high, low, close)
-            df['cdl_spinningtop'] = talib.CDLSPINNINGTOP(open_price, high, low, close)
-            df['cdl_marubozu'] = talib.CDLMARUBOZU(open_price, high, low, close)
-            
-        except Exception as talib_error:
-            log(f"⚠️ TA-Lib indicators failed: {talib_error}")
         
         # VWAP and price vs VWAP
         df['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
