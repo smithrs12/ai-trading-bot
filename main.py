@@ -2723,3 +2723,10 @@ class UltraAdvancedTradingBot:
 
                 execute_trade(ticker, prediction, proba, cooldown_cache, latest_row, df)
                 return True
+            else:
+                log(f"⏸️ {ticker} does NOT meet threshold (Score: {weighted_score:.2f})")
+                return False
+
+        except Exception as e:
+            log(f"❌ Failed to process {ticker}: {e}")
+            return False
