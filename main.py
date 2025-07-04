@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import defaultdict, deque
 import logging
+import re
+import requests
+from transformers import pipeline
 
 # Core scientific computing
 import numpy as np
@@ -63,6 +66,9 @@ from newsapi import NewsApiClient
 
 # NLP & Entity Recognition
 import spacy
+
+# Run backtest on top tickers
+run_backtest(["AAPL", "MSFT", "NVDA", "TSLA"], days=60)
 
 # Reinforcement Learning
 try:
@@ -388,6 +394,28 @@ class UltraAdvancedTradingConfig:
     
     # === MINIMUM TICKERS FOR TRAINING ===
     MIN_TICKERS_FOR_TRAINING: int = 10
+
+ner_model = pipeline("ner", grouped_entities=True)
+
+def detect_news_catalyst(ticker, max_articles=5):
+    try:
+        headlines = []
+        url = f"https://newsapi.org/v2/everything?q={ticker}&sortBy=publishedAt&pageSize={max_articles}&apiKey={os.getenv('NEWS_API_KEY')}"
+        resp = requests.get(url)
+        data = resp.json()
+
+        for article in data.get("articles", []):
+            headline = article["title"]
+            if any(keyword in headline.lower() for keyword in ["earnings", "fed", "fda", "merger", "approval", "downgrade", "upgrade"]):
+                return True, headline
+            ner_tags = ner_model(headline)
+            for tag in ner_tags:
+                if tag["entity_group"] in ["ORG", "MISC"] and "event" in tag["word"].lower():
+                    return True, headline
+        return False, None
+    except Exception as e:
+        print(f"❌ Error in catalyst detection: {e}")
+        return False, None
 
     def __post_init__(self):
         """Initialize default values for complex types"""
@@ -4009,6 +4037,78 @@ def main():
         traceback.print_exc()
     finally:
         logger.info("👋 Ultra-Advanced Trading Bot shutdown complete")
+
+def run_backtest(tickers, days=30):
+    from collections import defaultdict
+
+    print("🚀 Running Backtest...")
+    results = []
+    equity = config.INITIAL_CAPITAL
+    equity_curve = []
+
+    for ticker in tickers:
+        df = get_data(ticker, days=days)
+        if df is None or len(df) < 50:
+            print(f"⚠️ Skipping {ticker} — insufficient data")
+            continue
+
+        signals = []
+        position = None
+        entry_price = 0
+
+        for i in range(50, len(df)):
+            sample = df.iloc[:i]
+            latest = df.iloc[i]
+
+            pred_short, pred_medium = predict(ticker, sample)
+            if pred_short is None:
+                continue
+
+            signal = "HOLD"
+            if pred_short > 0.6 and pred_medium > 0.55:
+                signal = "BUY"
+            elif pred_short < 0.45 and pred_medium < 0.45:
+                signal = "SELL"
+
+            # simulate position logic
+            if position is None and signal == "BUY":
+                position = latest["Close"]
+                entry_price = latest["Close"]
+            elif position and signal == "SELL":
+                pnl = latest["Close"] - entry_price
+                results.append({
+                    "ticker": ticker,
+                    "entry": entry_price,
+                    "exit": latest["Close"],
+                    "pnl": pnl
+                })
+                equity += pnl
+                position = None
+
+            equity_curve.append(equity)
+
+    # Summary
+    total_trades = len(results)
+    profitable = sum(1 for r in results if r["pnl"] > 0)
+    win_rate = profitable / total_trades if total_trades > 0 else 0
+
+    print(f"\n📊 Backtest Summary:")
+    print(f"Trades: {total_trades}")
+    print(f"Win Rate: {win_rate:.2%}")
+    print(f"Final Equity: ${equity:,.2f}")
+    print(f"Return: {(equity - config.INITIAL_CAPITAL)/config.INITIAL_CAPITAL:.2%}")
+
+    # Optional: plot equity curve
+    try:
+        import matplotlib.pyplot as plt
+        plt.plot(equity_curve)
+        plt.title("Backtest Equity Curve")
+        plt.xlabel("Trade")
+        plt.ylabel("Equity")
+        plt.grid(True)
+        plt.show()
+    except:
+        pass
 
 if __name__ == "__main__":
     main()
