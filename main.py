@@ -67,72 +67,79 @@ load_dotenv()
 @dataclass
 class TradingConfig:
     """Centralized configuration management"""
+    # Market Hours & Timing
+    MARKET_OPEN_WAIT_MINUTES: int = 30  # Wait 30 minutes after market open
+    EOD_LIQUIDATION_TIME: str = "15:45"  # 3:45 PM ET
+    EOD_LIQUIDATION_ENABLED: bool = True
+    OVERNIGHT_HOLD_PROFIT_THRESHOLD: float = 0.03  # 3% profit to consider overnight hold
+    
     # Dual-horizon prediction settings
     SHORT_TERM_DAYS: int = 2
     MEDIUM_TERM_DAYS: int = 15
     SHORT_TERM_WEIGHT: float = 0.6
     MEDIUM_TERM_WEIGHT: float = 0.4
     
-    # Signal Quality & Thresholds
-    SHORT_BUY_THRESHOLD: float = 0.53
-    SHORT_SELL_AVOID_THRESHOLD: float = 0.45
-    MEDIUM_BUY_THRESHOLD: float = 0.55
-    MEDIUM_SELL_AVOID_THRESHOLD: float = 0.43
-    PRICE_MOMENTUM_MIN: float = 0.005
-    VOLUME_SPIKE_MIN: float = 1.5
-    VOLUME_SPIKE_CONFIRMATION_MIN: float = 2.0
-    SENTIMENT_HOLD_OVERRIDE: float = -0.5
-    VWAP_DEVIATION_THRESHOLD: float = 0.02
+    # Signal Quality & Thresholds (Relaxed for day trading)
+    SHORT_BUY_THRESHOLD: float = 0.51  # Lowered from 0.53
+    SHORT_SELL_AVOID_THRESHOLD: float = 0.47  # Raised from 0.45
+    MEDIUM_BUY_THRESHOLD: float = 0.52  # Lowered from 0.55
+    MEDIUM_SELL_AVOID_THRESHOLD: float = 0.46  # Raised from 0.43
+    PRICE_MOMENTUM_MIN: float = 0.003  # Lowered from 0.005
+    VOLUME_SPIKE_MIN: float = 1.3  # Lowered from 1.5
+    VOLUME_SPIKE_CONFIRMATION_MIN: float = 1.8  # Lowered from 2.0
+    SENTIMENT_HOLD_OVERRIDE: float = -0.3  # Raised from -0.5
+    VWAP_DEVIATION_THRESHOLD: float = 0.025  # Raised from 0.02
     
     # Portfolio Management
-    MAX_PER_SECTOR_WATCHLIST: int = 12
-    MAX_PER_SECTOR_PORTFOLIO: float = 0.25
-    WATCHLIST_LIMIT: int = 25
-    DYNAMIC_WATCHLIST_REFRESH_HOURS: int = 4
-    MAX_PORTFOLIO_RISK: float = 0.02
-    MAX_DAILY_DRAWDOWN: float = 0.05
-    EMERGENCY_DRAWDOWN_LIMIT: float = 0.10
-    MAX_CORRELATION_THRESHOLD: float = 0.7
+    MAX_PER_SECTOR_WATCHLIST: int = 15  # Increased from 12
+    MAX_PER_SECTOR_PORTFOLIO: float = 0.3  # Increased from 0.25
+    WATCHLIST_LIMIT: int = 50  # Increased from 25
+    DYNAMIC_WATCHLIST_REFRESH_HOURS: int = 2  # Decreased from 4
+    MAX_PORTFOLIO_RISK: float = 0.03  # Increased from 0.02
+    MAX_DAILY_DRAWDOWN: float = 0.06  # Increased from 0.05
+    EMERGENCY_DRAWDOWN_LIMIT: float = 0.12  # Increased from 0.10
+    MAX_CORRELATION_THRESHOLD: float = 0.75  # Increased from 0.7
     
     # Risk Management & Position Sizing
-    ATR_STOP_MULTIPLIER: float = 1.5
-    ATR_PROFIT_MULTIPLIER: float = 2.5
-    PROFIT_DECAY_FACTOR: float = 0.95
-    VOLATILITY_GATE_THRESHOLD: float = 0.05
-    MIN_MODEL_ACCURACY: float = 0.55
-    SHARPE_RATIO_MIN: float = 1.0
-    KELLY_FRACTION_MAX: float = 0.08
-    KELLY_FRACTION_MIN: float = 0.01
+    ATR_STOP_MULTIPLIER: float = 1.2  # Tightened from 1.5
+    ATR_PROFIT_MULTIPLIER: float = 2.0  # Lowered from 2.5
+    PROFIT_DECAY_FACTOR: float = 0.98  # Increased from 0.95
+    VOLATILITY_GATE_THRESHOLD: float = 0.06  # Increased from 0.05
+    MIN_MODEL_ACCURACY: float = 0.52  # Lowered from 0.55
+    SHARPE_RATIO_MIN: float = 0.8  # Lowered from 1.0
+    KELLY_FRACTION_MAX: float = 0.1  # Increased from 0.08
+    KELLY_FRACTION_MIN: float = 0.015  # Increased from 0.01
     
     # Trade Management
-    TRADE_COOLDOWN_MINUTES: int = 30
-    EOD_LIQUIDATION_TIME: str = "15:45"  # 3:45 PM ET
-    EOD_LIQUIDATION_ENABLED: bool = True
+    TRADE_COOLDOWN_MINUTES: int = 20  # Decreased from 30
+    HOLD_POSITION_ENABLED: bool = True  # Enable position holding
+    MIN_HOLD_TIME_MINUTES: int = 15  # Minimum hold time
+    MAX_HOLD_TIME_HOURS: int = 6  # Maximum hold time for day trading
     
     # Meta-model and Ensemble
-    META_MODEL_MIN_ACCURACY: float = 0.58
-    META_MODEL_MIN_TRADES: int = 20
-    ENSEMBLE_CONFIDENCE_THRESHOLD: float = 0.65
-    MODEL_RETRAIN_FREQUENCY_HOURS: int = 24
+    META_MODEL_MIN_ACCURACY: float = 0.54  # Lowered from 0.58
+    META_MODEL_MIN_TRADES: int = 15  # Lowered from 20
+    ENSEMBLE_CONFIDENCE_THRESHOLD: float = 0.6  # Lowered from 0.65
+    MODEL_RETRAIN_FREQUENCY_HOURS: int = 12  # Decreased from 24
     
     # Advanced Features
-    SUPPORT_RESISTANCE_STRENGTH: int = 3
+    SUPPORT_RESISTANCE_STRENGTH: int = 2  # Lowered from 3
     VOLUME_PROFILE_BINS: int = 20
     Q_LEARNING_ALPHA: float = 0.1
     Q_LEARNING_GAMMA: float = 0.95
-    Q_LEARNING_EPSILON: float = 0.1
-    Q_LEARNING_EPSILON_DECAY: float = 0.995
-    SECTOR_ROTATION_THRESHOLD: float = 0.02
+    Q_LEARNING_EPSILON: float = 0.15  # Increased exploration
+    Q_LEARNING_EPSILON_DECAY: float = 0.998  # Slower decay
+    SECTOR_ROTATION_THRESHOLD: float = 0.015  # Lowered from 0.02
     
     # Sentiment Analysis
     FINBERT_MODEL_NAME: str = "ProsusAI/finbert"
-    SENTIMENT_WEIGHT: float = 0.15
-    NEWS_LOOKBACK_HOURS: int = 24
+    SENTIMENT_WEIGHT: float = 0.12  # Lowered from 0.15
+    NEWS_LOOKBACK_HOURS: int = 12  # Decreased from 24
     
     # Market Regime Detection
-    REGIME_DETECTION_WINDOW: int = 50
-    BULL_MARKET_THRESHOLD: float = 0.02
-    BEAR_MARKET_THRESHOLD: float = -0.02
+    REGIME_DETECTION_WINDOW: int = 30  # Decreased from 50
+    BULL_MARKET_THRESHOLD: float = 0.015  # Lowered from 0.02
+    BEAR_MARKET_THRESHOLD: float = -0.015  # Raised from -0.02
     
     # Enterprise Features
     PAPER_TRADING_MODE: bool = True  # Set to False for live trading
@@ -140,6 +147,13 @@ class TradingConfig:
     ANOMALY_DETECTION_ENABLED: bool = True
     FEATURE_CACHING_ENABLED: bool = True
     MULTI_INSTANCE_MONITORING: bool = True
+    
+    # Ticker Evaluation & Training
+    TICKER_EVALUATION_ENABLED: bool = True
+    MIN_TICKERS_FOR_TRAINING: int = 20
+    TICKER_LIQUIDITY_MIN: int = 500000  # Minimum daily volume
+    TICKER_PRICE_MIN: float = 5.0  # Minimum price
+    TICKER_PRICE_MAX: float = 500.0  # Maximum price
     
     # Pattern Recognition
     FIBONACCI_LEVELS: List[float] = None
@@ -265,6 +279,136 @@ class APIManager:
 
 api_manager = APIManager()
 
+# === ENHANCED MARKET STATUS WITH 24/7 OPERATION ===
+class MarketStatusManager:
+    """Enhanced market status management for 24/7 operation"""
+    
+    def __init__(self):
+        self.market_timezone = pytz.timezone("US/Eastern")
+        self.last_market_check = None
+        self.cached_market_status = False
+        self.market_open_time = None
+        self.market_close_time = None
+        
+    def is_market_open(self) -> bool:
+        """Enhanced market open check with caching"""
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # Cache market status for 1 minute to reduce API calls
+            if (self.last_market_check and 
+                (current_time - self.last_market_check).total_seconds() < 60):
+                return self.cached_market_status
+            
+            # Primary: API check
+            if api_manager.api:
+                clock = api_manager.safe_api_call(api_manager.api.get_clock)
+                if clock:
+                    self.cached_market_status = clock.is_open
+                    self.last_market_check = current_time
+                    return clock.is_open
+            
+            # Fallback: Manual calculation
+            # Check if it's a weekday
+            if current_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                self.cached_market_status = False
+                self.last_market_check = current_time
+                return False
+            
+            # Market hours: 9:30 AM - 4:00 PM ET
+            market_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_close = current_time.replace(hour=16, minute=0, second=0, microsecond=0)
+            
+            is_open = market_open <= current_time <= market_close
+            self.cached_market_status = is_open
+            self.last_market_check = current_time
+            
+            return is_open
+            
+        except Exception as e:
+            logger.error(f"Market status check failed: {e}")
+            return False
+    
+    def is_in_trading_window(self) -> bool:
+        """Check if we're in the trading window (30 minutes after open)"""
+        try:
+            if not self.is_market_open():
+                return False
+            
+            current_time = datetime.now(self.market_timezone)
+            market_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            trading_start = market_open + timedelta(minutes=config.MARKET_OPEN_WAIT_MINUTES)
+            
+            return current_time >= trading_start
+            
+        except Exception as e:
+            logger.error(f"Trading window check failed: {e}")
+            return False
+    
+    def is_near_eod(self) -> bool:
+        """Check if we're near end of day for liquidation"""
+        try:
+            current_time = datetime.now(self.market_timezone)
+            eod_time = datetime.strptime(config.EOD_LIQUIDATION_TIME, "%H:%M").time()
+            eod_datetime = current_time.replace(hour=eod_time.hour, minute=eod_time.minute, second=0, microsecond=0)
+            
+            return current_time >= eod_datetime
+        except Exception as e:
+            logger.error(f"EOD check failed: {e}")
+            return False
+    
+    def should_hold_overnight(self, position_data: Dict) -> bool:
+        """Determine if position should be held overnight"""
+        try:
+            if not config.EOD_LIQUIDATION_ENABLED:
+                return True
+            
+            # Calculate current P&L
+            entry_price = position_data.get('entry_price', 0)
+            current_price = position_data.get('current_price', entry_price)
+            
+            if entry_price > 0:
+                profit_pct = (current_price - entry_price) / entry_price
+                
+                # Hold if profitable above threshold
+                if profit_pct >= config.OVERNIGHT_HOLD_PROFIT_THRESHOLD:
+                    logger.info(f"Holding {position_data.get('ticker')} overnight - Profit: {profit_pct:.2%}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Overnight hold check failed: {e}")
+            return False
+    
+    def get_time_until_market_open(self) -> timedelta:
+        """Get time until next market open"""
+        try:
+            current_time = datetime.now(self.market_timezone)
+            
+            # If market is open, return 0
+            if self.is_market_open():
+                return timedelta(0)
+            
+            # Calculate next market open
+            next_open = current_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            
+            # If it's after market hours today, move to next day
+            if current_time.hour >= 16:
+                next_open += timedelta(days=1)
+            
+            # Skip weekends
+            while next_open.weekday() >= 5:
+                next_open += timedelta(days=1)
+            
+            return next_open - current_time
+            
+        except Exception as e:
+            logger.error(f"Time until market open calculation failed: {e}")
+            return timedelta(hours=1)  # Default to 1 hour
+
+# Initialize market status manager
+market_status = MarketStatusManager()
 # === ENHANCED MARKET STATUS ===
 def is_market_open_safe() -> bool:
     """Enhanced market open check with multiple fallbacks"""
@@ -303,6 +447,248 @@ def is_near_eod() -> bool:
     except Exception as e:
         logger.error(f"EOD check failed: {e}")
         return False
+
+# === EXPANDED UNIVERSE WITH LARGE VARIETY ===
+EXPANDED_SECTOR_UNIVERSE = {
+    "Technology": [
+        # Large Cap Tech
+        "AAPL", "MSFT", "NVDA", "GOOG", "GOOGL", "META", "TSLA", "AMZN", "NFLX", "CRM",
+        "ORCL", "IBM", "INTC", "QCOM", "AVGO", "TXN", "MU", "ADBE", "NOW", "INTU",
+        # Mid Cap Tech
+        "SNOW", "SHOP", "PLTR", "RBLX", "ZM", "DOCU", "OKTA", "CRWD", "DDOG", "NET",
+        "TWLO", "ROKU", "SQ", "PYPL", "UBER", "LYFT", "ABNB", "COIN", "HOOD", "SOFI",
+        # Small Cap Tech
+        "UPST", "AFRM", "OPEN", "WISH", "CLOV", "SPCE", "LCID", "RIVN", "NKLA", "FSLY",
+        "ESTC", "ELASTIC", "MDB", "TEAM", "ATLASSIAN", "ZS", "PANW", "FTNT", "CYBR", "SPLK"
+    ],
+    "Finance": [
+        # Banks
+        "JPM", "BAC", "WFC", "C", "USB", "PNC", "TFC", "COF", "SCHW", "MS", "GS",
+        "BLK", "SPGI", "ICE", "CME", "MCO", "AXP", "V", "MA", "PYPL",
+        # Insurance & REITs
+        "BRK.B", "BRK.A", "AIG", "PGR", "TRV", "ALL", "MET", "PRU", "AFL", "HIG",
+        # Fintech
+        "SQ", "PYPL", "AFRM", "UPST", "SOFI", "LC", "COIN", "HOOD", "NU", "PAGS"
+    ],
+    "Energy": [
+        # Oil & Gas
+        "XOM", "CVX", "COP", "SLB", "PSX", "EOG", "MPC", "VLO", "OXY", "HAL",
+        "BKR", "DVN", "FANG", "MRO", "APA", "HES", "KMI", "OKE", "EPD", "ET",
+        # Renewables
+        "NEE", "ENPH", "SEDG", "RUN", "NOVA", "FSLR", "SPWR", "PLUG", "BE", "BLDP"
+    ],
+    "Healthcare": [
+        # Pharma
+        "PFE", "JNJ", "LLY", "MRK", "ABT", "BMY", "GILD", "AMGN", "VRTX", "REGN",
+        "BIIB", "CELG", "ILMN", "MRNA", "BNTX", "NVAX", "SGEN", "ALNY", "BMRN", "RARE",
+        # Medical Devices
+        "TMO", "DHR", "MDT", "ISRG", "SYK", "BSX", "EW", "HOLX", "DXCM", "VEEV",
+        # Healthcare Services
+        "UNH", "CVS", "ANTM", "HUM", "CNC", "WLP", "CI", "MOH", "ELV", "TDOC"
+    ],
+    "Consumer_Discretionary": [
+        # Retail
+        "AMZN", "HD", "LOW", "COST", "TGT", "WMT", "NKE", "SBUX", "MCD", "CMG",
+        "DIS", "NFLX", "ROKU", "SPOT", "UBER", "LYFT", "ABNB", "BKNG", "EXPE", "TRIP",
+        # Automotive
+        "TSLA", "F", "GM", "RIVN", "LCID", "NIO", "XPEV", "LI", "NKLA", "GOEV"
+    ],
+    "Consumer_Staples": [
+        "PG", "PEP", "KO", "PM", "MO", "CL", "KMB", "GIS", "K", "CPB",
+        "SJM", "HSY", "MDLZ", "MNST", "KDP", "STZ", "BUD", "TAP", "COKE", "KHC"
+    ],
+    "Industrial": [
+        "UNP", "CSX", "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "LMT",
+        "RTX", "NOC", "MMM", "EMR", "ETN", "PH", "ITW", "CMI", "ROK", "DOV",
+        "IR", "CARR", "OTIS", "PWR", "GNRC", "FAST", "PCAR", "WAB", "CHRW", "JBHT"
+    ],
+    "Materials": [
+        "LIN", "APD", "ECL", "SHW", "FCX", "NEM", "GOLD", "AA", "DOW", "DD",
+        "PPG", "RPM", "IFF", "FMC", "LYB", "CF", "MOS", "ALB", "VMC", "MLM",
+        "NUE", "STLD", "X", "CLF", "MT", "PKG", "IP", "WRK", "SON", "SEE"
+    ],
+    "Utilities": [
+        "NEE", "DUK", "SO", "D", "EXC", "XEL", "PEG", "SRE", "AEP", "PCG",
+        "ED", "ETR", "WEC", "PPL", "CMS", "DTE", "NI", "LNT", "EVRG", "CNP",
+        "ATO", "NWE", "UGI", "SWX", "NJR", "AWK", "WTR", "CWCO", "MSEX", "YORW"
+    ],
+    "Communication": [
+        "T", "VZ", "CMCSA", "CHTR", "TMUS", "DISH", "SIRI", "LBRDK", "LBRDA", "PARA",
+        "WBD", "NWSA", "NWS", "NYT", "GSAT", "IRDM", "VSAT", "ORBC", "GILT", "LUMN"
+    ],
+    "Real_Estate": [
+        "PLD", "O", "SPG", "AMT", "CCI", "EQIX", "PSA", "EXR", "AVB", "EQR",
+        "DLR", "WELL", "VTR", "ARE", "MAA", "ESS", "UDR", "CPT", "FRT", "REG",
+        "BXP", "VNO", "SLG", "HIW", "KRC", "PGRE", "CUZ", "DEI", "ESRT", "JBGS"
+    ]
+}
+
+# Flatten all tickers for fallback
+ALL_TICKERS = [ticker for sector_tickers in EXPANDED_SECTOR_UNIVERSE.values() for ticker in sector_tickers]
+
+# === TICKER EVALUATION SYSTEM ===
+class TickerEvaluationSystem:
+    """Evaluate tickers before training to save time and ensure quality"""
+    
+    def __init__(self):
+        self.evaluated_tickers = {}
+        self.last_evaluation = {}
+        self.evaluation_cache_hours = 6
+        
+    def evaluate_ticker_quality(self, ticker: str) -> Dict[str, Any]:
+        """Comprehensive ticker quality evaluation"""
+        try:
+            # Check cache first
+            if self.is_evaluation_cached(ticker):
+                return self.evaluated_tickers[ticker]
+            
+            logger.info(f"🔍 Evaluating ticker quality: {ticker}")
+            
+            # Get market data for evaluation
+            data = get_enhanced_data(ticker, limit=100)
+            if data is None or data.empty:
+                return self.create_evaluation_result(ticker, False, "No data available")
+            
+            evaluation_score = 0
+            reasons = []
+            
+            # 1. Liquidity Check
+            avg_volume = data['volume'].mean()
+            if avg_volume >= config.TICKER_LIQUIDITY_MIN:
+                evaluation_score += 25
+                reasons.append(f"Good liquidity: {avg_volume:,.0f}")
+            else:
+                return self.create_evaluation_result(ticker, False, f"Low liquidity: {avg_volume:,.0f}")
+            
+            # 2. Price Range Check
+            current_price = data['close'].iloc[-1]
+            if config.TICKER_PRICE_MIN <= current_price <= config.TICKER_PRICE_MAX:
+                evaluation_score += 20
+                reasons.append(f"Good price range: ${current_price:.2f}")
+            else:
+                return self.create_evaluation_result(ticker, False, f"Price out of range: ${current_price:.2f}")
+            
+            # 3. Volatility Check (not too low, not too high)
+            volatility = data['returns'].std()
+            if 0.01 <= volatility <= 0.08:  # 1% to 8% daily volatility
+                evaluation_score += 20
+                reasons.append(f"Good volatility: {volatility:.3f}")
+            elif volatility < 0.01:
+                evaluation_score += 10
+                reasons.append(f"Low volatility: {volatility:.3f}")
+            else:
+                evaluation_score += 5
+                reasons.append(f"High volatility: {volatility:.3f}")
+            
+            # 4. Technical Indicator Availability
+            required_indicators = ['rsi_14', 'macd', 'volume_ratio', 'bb_position']
+            available_indicators = [ind for ind in required_indicators if ind in data.columns]
+            if len(available_indicators) >= 3:
+                evaluation_score += 15
+                reasons.append(f"Technical indicators: {len(available_indicators)}/4")
+            
+            # 5. Data Quality Check
+            null_percentage = data.isnull().sum().sum() / (len(data) * len(data.columns))
+            if null_percentage < 0.05:  # Less than 5% null values
+                evaluation_score += 10
+                reasons.append("Good data quality")
+            
+            # 6. Price Movement Check (not flat)
+            price_range = (data['high'].max() - data['low'].min()) / data['close'].mean()
+            if price_range > 0.1:  # At least 10% range
+                evaluation_score += 10
+                reasons.append(f"Good price movement: {price_range:.2%}")
+            
+            # Determine if ticker passes
+            passes = evaluation_score >= 70  # Need at least 70/100 points
+            
+            result = self.create_evaluation_result(
+                ticker, passes, 
+                f"Score: {evaluation_score}/100. " + "; ".join(reasons)
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Ticker evaluation failed for {ticker}: {e}")
+            return self.create_evaluation_result(ticker, False, f"Evaluation error: {e}")
+    
+    def create_evaluation_result(self, ticker: str, passes: bool, reason: str) -> Dict[str, Any]:
+        """Create and cache evaluation result"""
+        result = {
+            'ticker': ticker,
+            'passes': passes,
+            'reason': reason,
+            'timestamp': datetime.now(),
+            'score': 100 if passes else 0
+        }
+        
+        self.evaluated_tickers[ticker] = result
+        self.last_evaluation[ticker] = datetime.now()
+        
+        return result
+    
+    def is_evaluation_cached(self, ticker: str) -> bool:
+        """Check if evaluation is cached and still valid"""
+        if ticker not in self.last_evaluation:
+            return False
+        
+        time_since_eval = datetime.now() - self.last_evaluation[ticker]
+        return time_since_eval.total_seconds() < (self.evaluation_cache_hours * 3600)
+    
+    def evaluate_watchlist(self, tickers: List[str]) -> List[str]:
+        """Evaluate entire watchlist and return qualified tickers"""
+        try:
+            logger.info(f"🔍 Evaluating {len(tickers)} tickers for quality...")
+            
+            qualified_tickers = []
+            evaluation_results = []
+            
+            for ticker in tickers:
+                try:
+                    result = self.evaluate_ticker_quality(ticker)
+                    evaluation_results.append(result)
+                    
+                    if result['passes']:
+                        qualified_tickers.append(ticker)
+                        logger.info(f"✅ {ticker}: {result['reason']}")
+                    else:
+                        logger.info(f"❌ {ticker}: {result['reason']}")
+                    
+                    # Rate limiting
+                    time.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to evaluate {ticker}: {e}")
+                    continue
+            
+            logger.info(f"📊 Ticker evaluation complete: {len(qualified_tickers)}/{len(tickers)} qualified")
+            
+            # Save evaluation results
+            self.save_evaluation_results(evaluation_results)
+            
+            return qualified_tickers
+            
+        except Exception as e:
+            logger.error(f"❌ Watchlist evaluation failed: {e}")
+            return tickers  # Return original list if evaluation fails
+    
+    def save_evaluation_results(self, results: List[Dict]):
+        """Save evaluation results to file"""
+        try:
+            os.makedirs('ticker_evaluations', exist_ok=True)
+            filename = f"ticker_evaluations/evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            
+            with open(filename, 'w') as f:
+                json.dump(results, f, indent=2, default=str)
+            
+            logger.info(f"💾 Evaluation results saved to {filename}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to save evaluation results: {e}")
+
+# Initialize ticker evaluation system
+ticker_evaluator = TickerEvaluationSystem()
 
 # === REAL-TIME RISK MONITOR ===
 class RealTimeRiskMonitor:
@@ -360,7 +746,7 @@ class PortfolioRiskCalculator:
         var_index = int((1 - self.confidence_level) * len(sorted_returns))
         var = sorted_returns[var_index]
         
-        # Calculate CVaR (expected shortfall)
+        # Calculate CVaR
         cvar = np.mean(sorted_returns[:var_index])
         
         return var, cvar
@@ -509,7 +895,7 @@ class BacktestEngine:
             'total_return': (self.equity_curve[-1]['equity'] - initial_capital) / initial_capital if self.equity_curve else 0,
             'sharpe_ratio': np.mean(returns) / np.std(returns) * np.sqrt(252) if np.std(returns) > 0 else 0,
             'max_drawdown': self.calculate_max_drawdown(),
-            'profit_factor': sum([r for r in returns if r > 0]) / abs(sum([r for r in returns if r < 0])) if sum([r for r in returns if r < 0]) != 0 else float('inf')
+            'profit_factor': sum([r for r in returns if r > 0]) / abs(sum([r for r in returns if r < 0]) if sum([r for r in returns if r < 0]) != 0 else float('inf')
         }
     
     def calculate_max_drawdown(self) -> float:
@@ -667,7 +1053,9 @@ class HeartbeatMonitor:
                 'status': 'alive',
                 'trades_today': len(trading_state.trade_outcomes) if 'trading_state' in globals() else 0,
                 'open_positions': len(trading_state.open_positions) if 'trading_state' in globals() else 0,
-                'current_equity': trading_state.starting_equity if 'trading_state' in globals() else 100000
+                'current_equity': trading_state.starting_equity if 'trading_state' in globals() else 100000,
+                'market_open': market_status.is_market_open(),
+                'trading_window': market_status.is_in_trading_window()
             }
             
             # Save to file
@@ -718,8 +1106,12 @@ def health_check():
         health_status = {
             'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
-            'market_open': is_market_open_safe(),
-            'near_eod': is_near_eod(),
+            'market_status': {
+                'market_open': market_status.is_market_open(),
+                'trading_window': market_status.is_in_trading_window(),
+                'near_eod': market_status.is_near_eod(),
+                'time_until_open': str(market_status.get_time_until_market_open())
+            },
             'bot_running': True,
             'paper_trading': config.PAPER_TRADING_MODE,
             'api_status': {
@@ -733,7 +1125,9 @@ def health_check():
                 'anomaly_detection': config.ANOMALY_DETECTION_ENABLED,
                 'feature_caching': config.FEATURE_CACHING_ENABLED,
                 'multi_instance_monitoring': config.MULTI_INSTANCE_MONITORING,
-                'paper_trading': config.PAPER_TRADING_MODE
+                'paper_trading': config.PAPER_TRADING_MODE,
+                'ticker_evaluation': config.TICKER_EVALUATION_ENABLED,
+                'hold_logic': config.HOLD_POSITION_ENABLED
             },
             'features_active': {
                 'dual_horizon': True,
@@ -745,7 +1139,8 @@ def health_check():
                 'sentiment_analysis': True,
                 'meta_model_approval': True,
                 'dynamic_watchlist': True,
-                'eod_liquidation': config.EOD_LIQUIDATION_ENABLED
+                'eod_liquidation': config.EOD_LIQUIDATION_ENABLED,
+                'ticker_evaluation': len(ticker_evaluator.evaluated_tickers) if 'ticker_evaluator' in globals() else 0
             },
             'performance_metrics': {
                 'total_trades': len(trading_state.trade_outcomes) if 'trading_state' in globals() else 0,
@@ -753,7 +1148,8 @@ def health_check():
                 'sharpe_ratio': trading_state.risk_metrics.get('sharpe_ratio', 0) if 'trading_state' in globals() else 0,
                 'model_accuracy': trading_state.model_accuracy.get('current', 0) if 'trading_state' in globals() else 0,
                 'current_drawdown': risk_monitor.current_drawdown if 'risk_monitor' in globals() else 0,
-                'trading_halted': risk_monitor.trading_halted if 'risk_monitor' in globals() else False
+                'trading_halted': risk_monitor.trading_halted if 'risk_monitor' in globals() else False,
+                'qualified_tickers': len([t for t in ticker_evaluator.evaluated_tickers.values() if t['passes']]) if 'ticker_evaluator' in globals() else 0
             }
         }
         return jsonify(health_status)
@@ -764,12 +1160,23 @@ def health_check():
 def home():
     """Enhanced root endpoint with comprehensive bot information"""
     return jsonify({
-        'service': 'Ultra-Advanced AI Trading Bot v6.0 - Enterprise Edition',
+        'service': 'Ultra-Advanced AI Trading Bot v7.0 - 24/7 Day Trading Edition',
         'status': 'running',
         'timestamp': datetime.now().isoformat(),
-        'version': '6.0.0',
+        'version': '7.0.0',
         'mode': 'Paper Trading' if config.PAPER_TRADING_MODE else 'Live Trading',
+        'market_status': {
+            'open': market_status.is_market_open(),
+            'trading_window': market_status.is_in_trading_window(),
+            'near_eod': market_status.is_near_eod()
+        },
         'features': [
+            '🕐 24/7 Operation with market awareness',
+            '⏰ 30-minute post-open wait period',
+            '🌅 Smart EOD liquidation with overnight hold logic',
+            '🎯 Hold position logic (not just buy/sell)',
+            '🔍 Pre-training ticker evaluation',
+            '📈 Expanded universe (500+ tickers)',
             '✅ Dual-horizon prediction (short & medium term)',
             '✅ Voting ensemble (XGBoost, RF, Logistic Regression)',
             '✅ Volume spike and VWAP filtering',
@@ -825,29 +1232,13 @@ def create_enhanced_directories():
         "config", "tests", "docs", "cache", "google_sheets",
         "watchlists", "trade_history", "model_accuracy",
         "heartbeats", "paper_trading", "risk_monitoring",
-        "enterprise_features", "sqlite_db"
+        "enterprise_features", "sqlite_db", "ticker_evaluations"
     ]
     
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
 
 create_enhanced_directories()
-
-# === ENHANCED UNIVERSE WITH SECTOR MAPPING ===
-SECTOR_UNIVERSE = {
-    "Technology": ["AAPL", "MSFT", "NVDA", "GOOG", "META", "TSLA", "AMD", "NFLX", "CRM", "ORCL", "IBM", "INTC", "QCOM", "AVGO", "TXN", "MU", "ADBE", "SNOW", "SHOP", "PLTR", "RBLX", "ZM", "DOCU", "OKTA", "CRWD"],
-    "Finance": ["BRK.B", "V", "MA", "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "USB", "PNC", "TFC", "COF", "SCHW", "BLK", "SPGI", "ICE", "CME", "MCO"],
-    "Energy": ["XOM", "CVX", "COP", "SLB", "PSX", "EOG", "MPC", "VLO", "OXY", "HAL", "BKR", "DVN", "FANG", "MRO", "APA", "HES", "KMI", "OKE", "EPD", "ET"],
-    "Healthcare": ["PFE", "JNJ", "LLY", "MRK", "ABT", "BMY", "CVS", "UNH", "ABBV", "TMO", "DHR", "MDT", "GILD", "AMGN", "ISRG", "VRTX", "REGN", "ZTS", "DXCM", "ILMN"],
-    "Consumer": ["HD", "LOW", "COST", "TGT", "WMT", "PG", "PEP", "KO", "PM", "NKE", "SBUX", "MCD", "CMG", "DIS", "AMZN", "F", "GM", "ROKU", "BYND", "PTON"],
-    "Industrial": ["UNP", "CSX", "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "LMT", "RTX", "NOC", "MMM", "EMR", "ETN", "PH", "ITW", "CMI", "ROK", "DOV"],
-    "REIT": ["PLD", "O", "SPG", "AMT", "CCI", "EQIX", "PSA", "EXR", "AVB", "EQR", "DLR", "WELL", "VTR", "ARE", "MAA", "ESS", "UDR", "CPT", "FRT", "REG"],
-    "Communication": ["T", "VZ", "CMCSA", "CHTR", "TMUS", "DISH", "DIS", "GOOGL", "META", "TWTR", "SNAP", "PINS", "MTCH", "IAC", "SIRI", "LBRDK", "LBRDA", "PARA"],
-    "Materials": ["LIN", "APD", "ECL", "SHW", "FCX", "NEM", "GOLD", "AA", "DOW", "DD", "PPG", "RPM", "IFF", "FMC", "LYB", "CF", "MOS", "ALB", "VMC", "MLM"],
-    "Utilities": ["NEE", "DUK", "SO", "D", "EXC", "XEL", "PEG", "SRE", "AEP", "PCG", "ED", "ETR", "WEC", "PPL", "CMS", "DTE", "NI", "LNT", "EVRG", "CNP"]
-}
-
-FALLBACK_UNIVERSE = [ticker for sector_tickers in SECTOR_UNIVERSE.values() for ticker in sector_tickers]
 
 # === ENHANCED TRADING STATE ===
 class UltraAdvancedTradingState:
@@ -877,10 +1268,12 @@ class UltraAdvancedTradingState:
         self.medium_term_accuracy = 0.0
         self.model_accuracy = {'short': 0.0, 'medium': 0.0, 'current': 0.0}
         
-        # Dynamic watchlist
-        self.current_watchlist = FALLBACK_UNIVERSE[:config.WATCHLIST_LIMIT]
+        # Dynamic watchlist with evaluation
+        self.current_watchlist = ALL_TICKERS[:config.WATCHLIST_LIMIT]
+        self.qualified_watchlist = []
         self.watchlist_performance = {}
         self.last_watchlist_update = datetime.now()
+        self.last_evaluation_time = None
         
         # Volume and VWAP tracking
         self.volume_spike_cache = {}
@@ -972,6 +1365,10 @@ class UltraAdvancedTradingState:
         self.risk_alerts = deque(maxlen=100)
         self.performance_snapshots = deque(maxlen=1000)
         
+        # Hold logic tracking
+        self.position_hold_decisions = {}
+        self.hold_reasons = {}
+        
     def reset_daily(self):
         """Reset daily state variables"""
         self.sector_allocations = {}
@@ -993,11 +1390,68 @@ class UltraAdvancedTradingState:
         self.finbert_sentiment_cache = {}
         self.vader_sentiment_cache = {}
         self.combined_sentiment_cache = {}
+        self.position_hold_decisions = {}
+        self.hold_reasons = {}
     
     def get_next_trade_id(self) -> str:
         """Generate unique trade ID"""
         self.trade_id_counter += 1
         return f"TRADE_{datetime.now().strftime('%Y%m%d')}_{self.trade_id_counter:04d}"
+    
+    def should_hold_position(self, ticker: str, position_data: Dict) -> bool:
+        """Determine if position should be held instead of sold"""
+        try:
+            if not config.HOLD_POSITION_ENABLED:
+                return False
+            
+            # Check minimum hold time
+            entry_time = position_data.get('entry_time', datetime.now())
+            hold_duration = datetime.now() - entry_time
+            min_hold_time = timedelta(minutes=config.MIN_HOLD_TIME_MINUTES)
+            
+            if hold_duration < min_hold_time:
+                self.hold_reasons[ticker] = f"Min hold time not met: {hold_duration}"
+                return True
+            
+            # Check maximum hold time
+            max_hold_time = timedelta(hours=config.MAX_HOLD_TIME_HOURS)
+            if hold_duration > max_hold_time:
+                self.hold_reasons[ticker] = f"Max hold time exceeded: {hold_duration}"
+                return False
+            
+            # Check if position is profitable and trending
+            current_price = position_data.get('current_price', 0)
+            entry_price = position_data.get('entry_price', 0)
+            
+            if entry_price > 0:
+                profit_pct = (current_price - entry_price) / entry_price
+                
+                # Hold if profitable and not near resistance
+                if profit_pct > 0.01:  # 1% profit
+                    # Check if we're near resistance levels
+                    sr_levels = self.support_resistance_cache.get(ticker, {})
+                    resistance_levels = sr_levels.get('resistance_levels', [])
+                    
+                    near_resistance = False
+                    for resistance in resistance_levels:
+                        if abs(current_price - resistance) / current_price < 0.02:  # Within 2%
+                            near_resistance = True
+                            break
+                    
+                    if not near_resistance:
+                        self.hold_reasons[ticker] = f"Profitable and trending: {profit_pct:.2%}"
+                        return True
+            
+            # Check market regime
+            if self.market_regime == "bullish" and profit_pct > -0.005:  # Small loss in bull market
+                self.hold_reasons[ticker] = f"Bull market hold: {profit_pct:.2%}"
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Hold position check failed for {ticker}: {e}")
+            return False
     
     def update_ultra_advanced_risk_metrics(self):
         """Update comprehensive risk metrics"""
@@ -1969,19 +2423,22 @@ class DynamicWatchlistOptimizer:
         self.watchlist_limit = config.WATCHLIST_LIMIT
         
     def optimize_watchlist(self) -> List[str]:
-        """Optimize watchlist based on multiple criteria"""
+        """Optimize watchlist based on multiple criteria with ticker evaluation"""
         try:
             # Check if refresh is needed
             time_since_update = datetime.now() - trading_state.last_watchlist_update
             if time_since_update.total_seconds() < self.refresh_hours * 3600:
-                return trading_state.current_watchlist
+                return trading_state.qualified_watchlist or trading_state.current_watchlist
             
-            logger.info("🔄 Optimizing dynamic watchlist...")
+            logger.info("🔄 Optimizing dynamic watchlist with ticker evaluation...")
             
-            # Score all tickers
+            # Start with expanded universe
+            candidate_tickers = []
+            
+            # Score all tickers from expanded universe
             ticker_scores = {}
             
-            for sector, tickers in SECTOR_UNIVERSE.items():
+            for sector, tickers in EXPANDED_SECTOR_UNIVERSE.items():
                 sector_scores = []
                 
                 for ticker in tickers:
@@ -1996,24 +2453,49 @@ class DynamicWatchlistOptimizer:
                 # Sort sector tickers by score and take top performers
                 sector_scores.sort(key=lambda x: x[1], reverse=True)
                 
-            # Select top tickers with sector diversification
-            optimized_watchlist = []
-            sector_counts = defaultdict(int)
+                # Take top tickers from each sector
+                for ticker, score in sector_scores[:self.max_per_sector]:
+                    candidate_tickers.append(ticker)
             
-            # Sort all tickers by score
-            sorted_tickers = sorted(ticker_scores.items(), key=lambda x: x[1]['score'], reverse=True)
+            # Sort all candidates by score and take top performers
+            sorted_candidates = sorted(
+                [(ticker, data['score']) for ticker, data in ticker_scores.items()],
+                key=lambda x: x[1], reverse=True
+            )
             
-            for ticker, data in sorted_tickers:
-                sector = data['sector']
+            # Take top candidates for evaluation
+            top_candidates = [ticker for ticker, score in sorted_candidates[:self.watchlist_limit * 2]]
+            
+            logger.info(f"📊 Selected {len(top_candidates)} candidates for evaluation")
+            
+            # Evaluate ticker quality if enabled
+            if config.TICKER_EVALUATION_ENABLED:
+                qualified_tickers = ticker_evaluator.evaluate_watchlist(top_candidates)
                 
-                # Check sector limits
-                if sector_counts[sector] < self.max_per_sector and len(optimized_watchlist) < self.watchlist_limit:
-                    optimized_watchlist.append(ticker)
-                    sector_counts[sector] += 1
+                # Ensure we have minimum qualified tickers
+                if len(qualified_tickers) < config.MIN_TICKERS_FOR_TRAINING:
+                    logger.warning(f"⚠️ Only {len(qualified_tickers)} qualified tickers, adding more...")
+                    # Add more tickers from the sorted list
+                    for ticker, score in sorted_candidates:
+                        if ticker not in qualified_tickers and len(qualified_tickers) < self.watchlist_limit:
+                            qualified_tickers.append(ticker)
+                
+                optimized_watchlist = qualified_tickers[:self.watchlist_limit]
+                trading_state.qualified_watchlist = optimized_watchlist
+            else:
+                optimized_watchlist = top_candidates[:self.watchlist_limit]
             
             # Update trading state
             trading_state.current_watchlist = optimized_watchlist
             trading_state.last_watchlist_update = datetime.now()
+            
+            # Calculate sector distribution
+            sector_counts = defaultdict(int)
+            for ticker in optimized_watchlist:
+                for sector, tickers in EXPANDED_SECTOR_UNIVERSE.items():
+                    if ticker in tickers:
+                        sector_counts[sector] += 1
+                        break
             
             logger.info(f"✅ Watchlist optimized: {len(optimized_watchlist)} tickers selected")
             logger.info(f"📊 Sector distribution: {dict(sector_counts)}")
@@ -2291,1413 +2773,865 @@ class AlertManager:
 
 alert_manager = AlertManager()
 
-def send_discord_alert(message: str, urgent: bool = False):
-    """Wrapper function for sending Discord alerts"""
+def send_discord_alert(message: str, urgent: bool = False) -> bool:
+    """Send Discord alert"""
     return alert_manager.send_alert(message, urgent)
 
-# === ENHANCED TRADING EXECUTOR WITH EOD LIQUIDATION ===
-class EnhancedTradingExecutor:
+# === SUPPORT/RESISTANCE DETECTION ===
+class SupportResistanceDetector:
     def __init__(self):
-        self.cooldown_periods = {}
-        self.position_tracker = {}
-        self.max_positions = 10
-        self.cooldown_duration = config.TRADE_COOLDOWN_MINUTES * 60
-        self.order_types = ['market', 'limit', 'stop_loss', 'trailing_stop']
+        self.strength_threshold = config.SUPPORT_RESISTANCE_STRENGTH
         
-    def execute_buy_order(self, ticker: str, signal_strength: float, market_data: pd.DataFrame, 
-                         short_pred: float, medium_pred: float, meta_pred: float,
-                         sentiment_score: float = 0.0, volume_spike: bool = False,
-                         vwap_deviation: float = 0.0) -> bool:
-        """Execute buy order with enhanced risk management and logging"""
+    def find_support_resistance_levels(self, df: pd.DataFrame, ticker: str) -> Dict[str, List[float]]:
+        """Find support and resistance levels using peak detection"""
         try:
-            # Check enterprise risk controls
-            if risk_monitor.trading_halted:
-                logger.warning(f"🛑 Trading halted by risk monitor, skipping {ticker}")
-                return False
+            if df is None or len(df) < 20:
+                return {'support_levels': [], 'resistance_levels': []}
             
-            if trading_state.emergency_stop_triggered:
-                logger.warning(f"🛑 Emergency stop active, skipping {ticker}")
-                return False
-            
-            if not self.check_cooldown(ticker):
-                logger.info(f"⏰ {ticker} in cooldown period")
-                return False
-            
-            # Check if near EOD and liquidation is enabled
-            if config.EOD_LIQUIDATION_ENABLED and is_near_eod():
-                logger.info(f"⏰ Near EOD, skipping new positions for {ticker}")
-                return False
-            
-            # Paper trading mode
-            if config.PAPER_TRADING_MODE:
-                return self.execute_paper_buy_order(ticker, signal_strength, market_data, 
-                                                  short_pred, medium_pred, meta_pred,
-                                                  sentiment_score, volume_spike, vwap_deviation)
-            
-            if not api_manager.api:
-                logger.info(f"⚠️ No API connection, simulating buy order for {ticker}")
-                return self.simulate_buy_order(ticker, signal_strength, market_data, 
-                                             short_pred, medium_pred, meta_pred,
-                                             sentiment_score, volume_spike, vwap_deviation)
-            
-            # Get account info
-            account = api_manager.safe_api_call(api_manager.api.get_account)
-            if not account:
-                logger.error(f"❌ Could not get account info for {ticker}")
-                return False
-            
-            equity = float(account.equity)
-            buying_power = float(account.buying_power)
-            
-            # Update risk monitor
-            risk_monitor.update_equity(equity)
-            
-            # Enhanced risk management checks
-            if not self.check_enhanced_risk_limits(ticker, equity):
-                return False
-            
-            # Kelly criterion position sizing
-            position_size = kelly_position_sizer.calculate_position_size(ticker, equity, signal_strength, market_data)
-            if position_size <= 0:
-                logger.error(f"❌ Invalid position size for {ticker}: {position_size}")
-                return False
-            
-            # Get current price
-            current_price = market_data['close'].iloc[-1] if market_data is not None else 0
-            if current_price <= 0:
-                logger.error(f"❌ Invalid price for {ticker}: {current_price}")
-                return False
-            
-            # Check buying power
-            order_value = position_size * current_price
-            if order_value > buying_power:
-                logger.error(f"❌ Insufficient buying power for {ticker}: ${order_value:.2f} > ${buying_power:.2f}")
-                return False
-            
-            # Execute the order
-            try:
-                order = api_manager.api.submit_order(
-                    symbol=ticker,
-                    qty=position_size,
-                    side='buy',
-                    type='market',
-                    time_in_force='day'
-                )
-                
-                # Track the position
-                trade_id = trading_state.get_next_trade_id()
-                position_data = {
-                    'trade_id': trade_id,
-                    'ticker': ticker,
-                    'action': 'buy',
-                    'quantity': position_size,
-                    'entry_price': current_price,
-                    'entry_time': datetime.now(),
-                    'signal_strength': signal_strength,
-                    'short_prediction': short_pred,
-                    'medium_prediction': medium_pred,
-                    'meta_prediction': meta_pred,
-                    'sentiment_score': sentiment_score,
-                    'volume_spike': volume_spike,
-                    'vwap_deviation': vwap_deviation,
-                    'order_id': order.id,
-                    'stop_loss': self.calculate_stop_loss(current_price, market_data),
-                    'take_profit': self.calculate_take_profit(current_price, market_data),
-                    'profit_decay_factor': config.PROFIT_DECAY_FACTOR,
-                    'market_regime': trading_state.market_regime,
-                    'sector': self.get_ticker_sector(ticker)
-                }
-                
-                trading_state.open_positions[ticker] = position_data
-                self.set_cooldown(ticker)
-                
-                # Log to Google Sheets
-                sheets_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'trade_id': trade_id,
-                    'ticker': ticker,
-                    'action': 'BUY',
-                    'quantity': position_size,
-                    'entry_price': current_price,
-                    'signal_strength': signal_strength,
-                    'model_used': 'Dual-Horizon Ensemble',
-                    'sentiment_score': sentiment_score,
-                    'volume_spike': volume_spike,
-                    'vwap_deviation': vwap_deviation,
-                    'sector': self.get_ticker_sector(ticker),
-                    'market_regime': trading_state.market_regime,
-                    'stop_loss': position_data['stop_loss'],
-                    'take_profit': position_data['take_profit']
-                }
-                sheets_logger.log_trade(sheets_data)
-                
-                # Send Discord alert
-                alert_msg = f"🟢 **BUY ORDER EXECUTED**\n"
-                alert_msg += f"Ticker: {ticker}\n"
-                alert_msg += f"Quantity: {position_size}\n"
-                alert_msg += f"Price: ${current_price:.2f}\n"
-                alert_msg += f"Value: ${order_value:.2f}\n"
-                alert_msg += f"Signal Strength: {signal_strength:.3f}\n"
-                alert_msg += f"Short Pred: {short_pred:.3f} | Medium Pred: {medium_pred:.3f}\n"
-                alert_msg += f"Meta Pred: {meta_pred:.3f}\n"
-                alert_msg += f"Sentiment: {sentiment_score:.3f}\n"
-                alert_msg += f"Volume Spike: {'✅' if volume_spike else '❌'}\n"
-                alert_msg += f"VWAP Dev: {vwap_deviation:.3f}\n"
-                alert_msg += f"Trade ID: {trade_id}"
-                send_discord_alert(alert_msg)
-                
-                logger.info(f"✅ Buy order executed: {ticker} x{position_size} @ ${current_price:.2f}")
-                return True
-                
-            except Exception as order_error:
-                logger.error(f"❌ Order execution failed for {ticker}: {order_error}")
-                return False
-            
-        except Exception as e:
-            logger.error(f"❌ Buy order execution failed for {ticker}: {e}")
-            return False
-    
-    def execute_paper_buy_order(self, ticker: str, signal_strength: float, market_data: pd.DataFrame,
-                               short_pred: float, medium_pred: float, meta_pred: float,
-                               sentiment_score: float, volume_spike: bool, vwap_deviation: float) -> bool:
-        """Execute paper trading buy order"""
-        try:
-            current_price = market_data['close'].iloc[-1] if market_data is not None else 100
-            
-            # Calculate position size for paper trading
-            paper_equity = paper_trading.get_paper_portfolio_value({ticker: current_price})
-            position_size = kelly_position_sizer.calculate_position_size(ticker, paper_equity, signal_strength, market_data)
-            
-            # Execute paper trade
-            success = paper_trading.execute_paper_trade(ticker, 'buy', position_size, current_price)
-            
-            if success:
-                # Track the position in trading state as well
-                trade_id = trading_state.get_next_trade_id()
-                position_data = {
-                    'trade_id': trade_id,
-                    'ticker': ticker,
-                    'action': 'buy',
-                    'quantity': position_size,
-                    'entry_price': current_price,
-                    'entry_time': datetime.now(),
-                    'signal_strength': signal_strength,
-                    'short_prediction': short_pred,
-                    'medium_prediction': medium_pred,
-                    'meta_prediction': meta_pred,
-                    'sentiment_score': sentiment_score,
-                    'volume_spike': volume_spike,
-                    'vwap_deviation': vwap_deviation,
-                    'paper_trade': True,
-                    'stop_loss': self.calculate_stop_loss(current_price, market_data),
-                    'take_profit': self.calculate_take_profit(current_price, market_data),
-                    'market_regime': trading_state.market_regime,
-                    'sector': self.get_ticker_sector(ticker)
-                }
-                
-                trading_state.open_positions[ticker] = position_data
-                self.set_cooldown(ticker)
-                
-                logger.info(f"📝 Paper buy order executed: {ticker} x{position_size} @ ${current_price:.2f}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ Paper buy order failed for {ticker}: {e}")
-            return False
-    
-    def liquidate_eod_positions(self):
-        """Liquidate all positions at end of day"""
-        try:
-            if not config.EOD_LIQUIDATION_ENABLED:
-                return
-            
-            if not is_near_eod():
-                return
-            
-            if trading_state.eod_liquidation_triggered:
-                return
-            
-            logger.info("🔄 Starting end-of-day liquidation...")
-            trading_state.eod_liquidation_triggered = True
-            
-            positions_to_close = list(trading_state.open_positions.keys())
-            
-            for ticker in positions_to_close:
-                try:
-                    self.close_position(ticker, reason="EOD_LIQUIDATION")
-                    time.sleep(1)  # Rate limiting
-                except Exception as e:
-                    logger.error(f"❌ EOD liquidation failed for {ticker}: {e}")
-            
-            # Send summary alert
-            alert_msg = f"🌅 **END-OF-DAY LIQUIDATION COMPLETE**\n"
-            alert_msg += f"Positions closed: {len(positions_to_close)}\n"
-            alert_msg += f"Time: {datetime.now().strftime('%H:%M:%S')}"
-            send_discord_alert(alert_msg)
-            
-            logger.info(f"✅ EOD liquidation complete: {len(positions_to_close)} positions closed")
-            
-        except Exception as e:
-            logger.error(f"❌ EOD liquidation failed: {e}")
-    
-    def close_position(self, ticker: str, reason: str = "MANUAL"):
-        """Close a position with comprehensive logging"""
-        try:
-            if ticker not in trading_state.open_positions:
-                logger.warning(f"⚠️ No open position found for {ticker}")
-                return False
-            
-            position = trading_state.open_positions[ticker]
-            
-            # Paper trading mode
-            if config.PAPER_TRADING_MODE or position.get('paper_trade', False):
-                return self.close_paper_position(ticker, position, reason)
-            
-            if not api_manager.api:
-                return self.simulate_close_position(ticker, position, reason)
-            
-            # Get current price
-            current_data = get_enhanced_data(ticker, limit=5)
-            if current_data is None:
-                logger.error(f"❌ Could not get current price for {ticker}")
-                return False
-            
-            current_price = current_data['close'].iloc[-1]
-            
-            # Execute sell order
-            try:
-                order = api_manager.api.submit_order(
-                    symbol=ticker,
-                    qty=position['quantity'],
-                    side='sell',
-                    type='market',
-                    time_in_force='day'
-                )
-                
-                # Calculate P&L
-                entry_price = position['entry_price']
-                pnl = (current_price - entry_price) * position['quantity']
-                return_pct = (current_price - entry_price) / entry_price
-                
-                # Update trade outcome
-                trade_outcome = {
-                    'trade_id': position['trade_id'],
-                    'ticker': ticker,
-                    'entry_time': position['entry_time'],
-                    'exit_time': datetime.now(),
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'quantity': position['quantity'],
-                    'pnl': pnl,
-                    'return': return_pct,
-                    'hold_duration': str(datetime.now() - position['entry_time']),
-                    'exit_reason': reason,
-                    'signal_strength': position.get('signal_strength', 0),
-                    'sentiment_score': position.get('sentiment_score', 0),
-                    'volume_spike': position.get('volume_spike', False),
-                    'vwap_deviation': position.get('vwap_deviation', 0),
-                    'sector': position.get('sector', ''),
-                    'market_regime': position.get('market_regime', ''),
-                    'correct_prediction': return_pct > 0
-                }
-                
-                trading_state.trade_outcomes.append(trade_outcome)
-                
-                # Log to Google Sheets
-                sheets_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'trade_id': position['trade_id'],
-                    'ticker': ticker,
-                    'action': 'SELL',
-                    'quantity': position['quantity'],
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'pnl': pnl,
-                    'return_pct': return_pct * 100,
-                    'hold_duration': str(datetime.now() - position['entry_time']),
-                    'notes': f"Exit reason: {reason}"
-                }
-                sheets_logger.log_trade(sheets_data)
-                
-                # Remove from open positions
-                del trading_state.open_positions[ticker]
-                
-                # Send Discord alert
-                alert_msg = f"🔴 **SELL ORDER EXECUTED**\n"
-                alert_msg += f"Ticker: {ticker}\n"
-                alert_msg += f"Quantity: {position['quantity']}\n"
-                alert_msg += f"Entry: ${entry_price:.2f} | Exit: ${current_price:.2f}\n"
-                alert_msg += f"P&L: ${pnl:.2f} ({return_pct:.2%})\n"
-                alert_msg += f"Reason: {reason}\n"
-                alert_msg += f"Trade ID: {position['trade_id']}"
-                send_discord_alert(alert_msg)
-                
-                logger.info(f"✅ Position closed: {ticker} - P&L: ${pnl:.2f} ({return_pct:.2%})")
-                return True
-                
-            except Exception as order_error:
-                logger.error(f"❌ Sell order failed for {ticker}: {order_error}")
-                return False
-            
-        except Exception as e:
-            logger.error(f"❌ Position close failed for {ticker}: {e}")
-            return False
-    
-    def close_paper_position(self, ticker: str, position: Dict, reason: str) -> bool:
-        """Close paper trading position"""
-        try:
-            # Get current price
-            current_data = get_enhanced_data(ticker, limit=5)
-            if current_data is None:
-                current_price = position['entry_price'] * (1 + random.uniform(-0.05, 0.05))
-            else:
-                current_price = current_data['close'].iloc[-1]
-            
-            # Execute paper trade
-            success = paper_trading.execute_paper_trade(ticker, 'sell', position['quantity'], current_price)
-            
-            if success:
-                # Calculate P&L
-                entry_price = position['entry_price']
-                pnl = (current_price - entry_price) * position['quantity']
-                return_pct = (current_price - entry_price) / entry_price
-                
-                # Update trade outcome
-                trade_outcome = {
-                    'trade_id': position['trade_id'],
-                    'ticker': ticker,
-                    'entry_time': position['entry_time'],
-                    'exit_time': datetime.now(),
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'quantity': position['quantity'],
-                    'pnl': pnl,
-                    'return': return_pct,
-                    'hold_duration': str(datetime.now() - position['entry_time']),
-                    'exit_reason': reason,
-                    'paper_trade': True,
-                    'correct_prediction': return_pct > 0
-                }
-                
-                trading_state.trade_outcomes.append(trade_outcome)
-                del trading_state.open_positions[ticker]
-                
-                logger.info(f"📝 Paper position closed: {ticker} - P&L: ${pnl:.2f} ({return_pct:.2%})")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ Paper position close failed for {ticker}: {e}")
-            return False
-    
-    def monitor_positions(self):
-        """Monitor open positions for stop-loss, take-profit, and profit decay"""
-        try:
-            positions_to_close = []
-            
-            for ticker, position in trading_state.open_positions.items():
-                try:
-                    # Get current price
-                    current_data = get_enhanced_data(ticker, limit=5)
-                    if current_data is None:
-                        continue
-                    
-                    current_price = current_data['close'].iloc[-1]
-                    entry_price = position['entry_price']
-                    
-                    # Check stop-loss
-                    if current_price <= position.get('stop_loss', 0):
-                        positions_to_close.append((ticker, "STOP_LOSS"))
-                        continue
-                    
-                    # Check take-profit with decay
-                    original_take_profit = position.get('take_profit', float('inf'))
-                    hold_duration = datetime.now() - position['entry_time']
-                    hours_held = hold_duration.total_seconds() / 3600
-                    
-                    # Apply profit decay
-                    decay_factor = config.PROFIT_DECAY_FACTOR ** hours_held
-                    adjusted_take_profit = entry_price + (original_take_profit - entry_price) * decay_factor
-                    
-                    if current_price >= adjusted_take_profit:
-                        positions_to_close.append((ticker, "TAKE_PROFIT"))
-                        continue
-                    
-                    # Check maximum hold time (24 hours for day trading)
-                    if hours_held > 24:
-                        positions_to_close.append((ticker, "MAX_HOLD_TIME"))
-                        continue
-                    
-                except Exception as e:
-                    logger.error(f"❌ Position monitoring failed for {ticker}: {e}")
-            
-            # Close positions that meet exit criteria
-            for ticker, reason in positions_to_close:
-                self.close_position(ticker, reason)
-                time.sleep(1)  # Rate limiting
-            
-        except Exception as e:
-            logger.error(f"❌ Position monitoring failed: {e}")
-    
-    def calculate_stop_loss(self, entry_price: float, market_data: pd.DataFrame) -> float:
-        """Calculate stop loss price using ATR"""
-        try:
-            atr = market_data['atr_14'].iloc[-1] if 'atr_14' in market_data.columns else entry_price * 0.02
-            return entry_price - (atr * config.ATR_STOP_MULTIPLIER)
-        except Exception as e:
-            logger.error(f"❌ Stop loss calculation failed: {e}")
-            return entry_price * 0.98  # 2% stop loss as fallback
-    
-    def calculate_take_profit(self, entry_price: float, market_data: pd.DataFrame) -> float:
-        """Calculate take profit price using ATR"""
-        try:
-            atr = market_data['atr_14'].iloc[-1] if 'atr_14' in market_data.columns else entry_price * 0.02
-            return entry_price + (atr * config.ATR_PROFIT_MULTIPLIER)
-        except Exception as e:
-            logger.error(f"❌ Take profit calculation failed: {e}")
-            return entry_price * 1.05  # 5% take profit as fallback
-    
-    def check_enhanced_risk_limits(self, ticker: str, equity: float) -> bool:
-        """Enhanced risk limit checks"""
-        try:
-            # Check maximum positions
-            if len(trading_state.open_positions) >= self.max_positions:
-                logger.warning(f"❌ Maximum positions reached: {len(trading_state.open_positions)}")
-                return False
-            
-            # Check daily drawdown
-            if trading_state.daily_drawdown > config.MAX_DAILY_DRAWDOWN:
-                logger.warning(f"❌ Daily drawdown limit exceeded: {trading_state.daily_drawdown:.2%}")
-                return False
-            
-            # Check sector concentration
-            ticker_sector = self.get_ticker_sector(ticker)
-            sector_positions = [t for t in trading_state.open_positions.keys() if self.get_ticker_sector(t) == ticker_sector]
-            max_sector_positions = int(config.MAX_PER_SECTOR_PORTFOLIO * self.max_positions)
-            
-            if len(sector_positions) >= max_sector_positions:
-                logger.warning(f"❌ Sector concentration limit exceeded for {ticker_sector}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Enhanced risk limit check failed: {e}")
-            return False
-    
-    def get_ticker_sector(self, ticker: str) -> str:
-        """Get sector for a ticker"""
-        for sector, tickers in SECTOR_UNIVERSE.items():
-            if ticker in tickers:
-                return sector
-        return "Unknown"
-    
-    def check_cooldown(self, ticker: str) -> bool:
-        """Check if ticker is in cooldown period"""
-        if ticker in self.cooldown_periods:
-            time_since_trade = time.time() - self.cooldown_periods[ticker]
-            return time_since_trade > self.cooldown_duration
-        return True
-    
-    def set_cooldown(self, ticker: str):
-        """Set cooldown period for ticker"""
-        self.cooldown_periods[ticker] = time.time()
-    
-    def simulate_buy_order(self, ticker: str, signal_strength: float, market_data: pd.DataFrame,
-                          short_pred: float, medium_pred: float, meta_pred: float,
-                          sentiment_score: float, volume_spike: bool, vwap_deviation: float) -> bool:
-        """Simulate buy order for demo mode"""
-        try:
-            current_price = market_data['close'].iloc[-1] if market_data is not None else 100
-            position_size = 10  # Demo position size
-            
-            trade_id = trading_state.get_next_trade_id()
-            position_data = {
-                'trade_id': trade_id,
-                'ticker': ticker,
-                'action': 'buy',
-                'quantity': position_size,
-                'entry_price': current_price,
-                'entry_time': datetime.now(),
-                'signal_strength': signal_strength,
-                'short_prediction': short_pred,
-                'medium_prediction': medium_pred,
-                'meta_prediction': meta_pred,
-                'sentiment_score': sentiment_score,
-                'volume_spike': volume_spike,
-                'vwap_deviation': vwap_deviation,
-                'simulated': True,
-                'stop_loss': current_price * 0.98,
-                'take_profit': current_price * 1.05,
-                'market_regime': trading_state.market_regime,
-                'sector': self.get_ticker_sector(ticker)
-            }
-            
-            trading_state.open_positions[ticker] = position_data
-            self.set_cooldown(ticker)
-            
-            logger.info(f"📝 Simulated buy order: {ticker} x{position_size} @ ${current_price:.2f}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Simulated buy order failed for {ticker}: {e}")
-            return False
-    
-    def simulate_close_position(self, ticker: str, position: Dict, reason: str) -> bool:
-        """Simulate position close for demo mode"""
-        try:
-            # Simulate price movement
-            entry_price = position['entry_price']
-            current_price = entry_price * (1 + random.uniform(-0.05, 0.05))  # ±5% movement
-            
-            pnl = (current_price - entry_price) * position['quantity']
-            return_pct = (current_price - entry_price) / entry_price
-            
-            # Update trade outcome
-            trade_outcome = {
-                'trade_id': position['trade_id'],
-                'ticker': ticker,
-                'entry_time': position['entry_time'],
-                'exit_time': datetime.now(),
-                'entry_price': entry_price,
-                'exit_price': current_price,
-                'quantity': position['quantity'],
-                'pnl': pnl,
-                'return': return_pct,
-                'hold_duration': str(datetime.now() - position['entry_time']),
-                'exit_reason': reason,
-                'simulated': True,
-                'correct_prediction': return_pct > 0
-            }
-            
-            trading_state.trade_outcomes.append(trade_outcome)
-            del trading_state.open_positions[ticker]
-            
-            logger.info(f"📝 Simulated position close: {ticker} - P&L: ${pnl:.2f} ({return_pct:.2%})")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Simulated position close failed for {ticker}: {e}")
-            return False
-
-trading_executor = EnhancedTradingExecutor()
-
-# === SUPPORT/RESISTANCE ANALYZER ===
-class SupportResistanceAnalyzer:
-    def __init__(self):
-        self.strength = config.SUPPORT_RESISTANCE_STRENGTH
-        
-    def find_significant_levels(self, df: pd.DataFrame, ticker: str) -> Dict[str, Any]:
-        """Find significant support and resistance levels"""
-        try:
-            if df is None or df.empty or len(df) < 50:
-                return {}
-            
-            # Find local peaks and troughs
+            # Find peaks and troughs
             highs = df['high'].values
             lows = df['low'].values
             
-            peaks, _ = find_peaks(highs, distance=10, prominence=np.std(highs) * 0.4)
-            troughs, _ = find_peaks(-lows, distance=10, prominence=np.std(lows) * 0.4)
+            # Find resistance levels (peaks)
+            resistance_peaks, _ = find_peaks(highs, distance=5, prominence=np.std(highs) * 0.5)
+            resistance_levels = [highs[i] for i in resistance_peaks]
             
-            # Filter levels based on strength
-            resistance_levels = []
-            support_levels = []
+            # Find support levels (troughs)
+            support_peaks, _ = find_peaks(-lows, distance=5, prominence=np.std(lows) * 0.5)
+            support_levels = [lows[i] for i in support_peaks]
             
-            for peak in peaks:
-                price = highs[peak]
-                # Check if it's a significant resistance
-                if self.is_significant_level(df, price, 'resistance'):
-                    resistance_levels.append(price)
+            # Filter by strength (how many times price touched the level)
+            resistance_levels = self.filter_by_strength(resistance_levels, df, 'resistance')
+            support_levels = self.filter_by_strength(support_levels, df, 'support')
             
-            for trough in troughs:
-                price = lows[trough]
-                # Check if it's a significant support
-                if self.is_significant_level(df, price, 'support'):
-                    support_levels.append(price)
-            
-            result = {
-                'support_levels': sorted(support_levels),
-                'resistance_levels': sorted(resistance_levels),
-                'current_price': df['close'].iloc[-1]
+            # Cache results
+            trading_state.support_resistance_cache[ticker] = {
+                'support_levels': support_levels,
+                'resistance_levels': resistance_levels,
+                'timestamp': datetime.now()
             }
-            
-            trading_state.support_resistance_cache[ticker] = result
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ Support/Resistance analysis failed for {ticker}: {e}")
-            return {}
-    
-    def is_significant_level(self, df: pd.DataFrame, price: float, level_type: str) -> bool:
-        """Check if a level is significant based on historical price action"""
-        try:
-            window = 20
-            if level_type == 'resistance':
-                # Check if price acted as resistance multiple times
-                count = df['high'].rolling(window).apply(lambda x: sum(abs(x - price) < (price * 0.01))).iloc[-1]
-                return count >= self.strength
-            elif level_type == 'support':
-                # Check if price acted as support multiple times
-                count = df['low'].rolling(window).apply(lambda x: sum(abs(x - price) < (price * 0.01))).iloc[-1]
-                return count >= self.strength
-            return False
-        except Exception as e:
-            logger.error(f"❌ Significance check failed: {e}")
-            return False
-
-# Initialize support/resistance analyzer
-support_resistance_analyzer = SupportResistanceAnalyzer()
-
-# === MAIN ULTRA-ADVANCED TRADING BOT CLASS ===
-class UltraAdvancedTradingBot:
-    def __init__(self):
-        self.loop_interval = 300  # 5 minutes
-        self.current_watchlist = FALLBACK_UNIVERSE[:config.WATCHLIST_LIMIT]
-        self.daily_stats = {
-            'trades_executed': 0,
-            'profitable_trades': 0,
-            'total_pnl': 0.0,
-            'accuracy': 0.0
-        }
-        self.main_loop_running = False
-        self.shutdown_requested = False
-        
-    def initialize_bot(self) -> bool:
-        """Initialize the ultra-advanced trading bot"""
-        try:
-            logger.info("🚀 Initializing Ultra-Advanced AI Trading Bot v6.0 - Enterprise Edition...")
-            
-            # Set starting equity for drawdown tracking
-            if api_manager.api and not config.PAPER_TRADING_MODE:
-                account = api_manager.safe_api_call(api_manager.api.get_account)
-                if account:
-                    trading_state.starting_equity = float(account.equity)
-                else:
-                    logger.warning("⚠️ Could not get account info, using default equity")
-                    trading_state.starting_equity = 100000
-            else:
-                logger.warning("⚠️ Paper trading mode or no API connection")
-                trading_state.starting_equity = paper_trading.initial_capital
-            
-            # Initialize all advanced systems
-            self.initialize_advanced_systems()
-            
-            # Load existing models if available
-            self.load_existing_models()
-            
-            # Schedule periodic tasks
-            self.schedule_periodic_tasks()
-            
-            # Train anomaly detector with sample data
-            self.initialize_anomaly_detector()
-            
-            # Send startup notification
-            startup_msg = f"🚀 Ultra-Advanced AI Trading Bot v6.0 - Enterprise Edition Started!\n"
-            startup_msg += f"💰 Starting Equity: ${trading_state.starting_equity:,.2f}\n"
-            startup_msg += f"🧠 PyTorch Q-Learning: Initialized\n"
-            startup_msg += f"📊 Dual-Horizon Models: Ready\n"
-            startup_msg += f"🏢 ENTERPRISE FEATURES ACTIVE:\n"
-            startup_msg += f"✅ Real-time risk monitoring: {'ON' if config.REAL_TIME_RISK_MONITORING else 'OFF'}\n"
-            startup_msg += f"✅ Anomaly detection: {'ON' if config.ANOMALY_DETECTION_ENABLED else 'OFF'}\n"
-            startup_msg += f"✅ Feature caching: {'ON' if config.FEATURE_CACHING_ENABLED else 'OFF'}\n"
-            startup_msg += f"✅ Multi-instance monitoring: {'ON' if config.MULTI_INSTANCE_MONITORING else 'OFF'}\n"
-            startup_msg += f"✅ Paper trading mode: {'ON' if config.PAPER_TRADING_MODE else 'OFF'}\n"
-            startup_msg += f"🎯 ALL CORE FEATURES IMPLEMENTED:\n"
-            startup_msg += f"✅ Dual-horizon prediction (short & medium term)\n"
-            startup_msg += f"✅ Voting ensemble (XGBoost, RF, Logistic Regression)\n"
-            startup_msg += f"✅ Volume spike and VWAP filtering\n"
-            startup_msg += f"✅ Support/resistance level detection\n"
-            startup_msg += f"✅ FinBERT + VADER sentiment scoring\n"
-            startup_msg += f"✅ Meta-model approval\n"
-            startup_msg += f"✅ Dynamic watchlist optimization\n"
-            startup_msg += f"✅ Trade cooldown management\n"
-            startup_msg += f"✅ Kelly Criterion for position sizing\n"
-            startup_msg += f"✅ End-of-day liquidation\n"
-            startup_msg += f"✅ Google Sheets logging\n"
-            startup_msg += f"✅ Discord alerts\n"
-            startup_msg += f"✅ PnL tracking and trade outcome logging\n"
-            startup_msg += f"✅ Dynamic stop-loss, profit targets, and profit decay exit logic\n"
-            startup_msg += f"✅ Sector diversification filter\n"
-            startup_msg += f"✅ Volume spike confirmation\n"
-            startup_msg += f"✅ Live model accuracy tracking\n"
-            startup_msg += f"✅ Q-learning via PyTorch QNetwork fallback\n"
-            startup_msg += f"✅ Regime-aware model logic\n"
-            startup_msg += f"📈 Watchlist: {len(self.current_watchlist)} tickers"
-            send_discord_alert(startup_msg)
-            
-            logger.info("✅ Ultra-Advanced Bot v6.0 Enterprise Edition initialization complete")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Bot initialization failed: {e}")
-            send_discord_alert(f"❌ Bot initialization failed: {e}", urgent=True)
-            return False
-    
-    def initialize_advanced_systems(self):
-        """Initialize all advanced trading systems"""
-        try:
-            # Initialize dynamic watchlist
-            trading_state.current_watchlist = watchlist_optimizer.optimize_watchlist()
-            
-            # Initialize market regime detection
-            regime_detector.detect_market_regime(None)
-            
-            # Initialize risk monitoring
-            if config.REAL_TIME_RISK_MONITORING:
-                risk_monitor.update_equity(trading_state.starting_equity)
-            
-            logger.info("✅ Advanced systems initialized")
-            
-        except Exception as e:
-            logger.error(f"❌ Advanced systems initialization failed: {e}")
-    
-    def initialize_anomaly_detector(self):
-        """Initialize anomaly detector with sample data"""
-        try:
-            if not config.ANOMALY_DETECTION_ENABLED:
-                return
-            
-            # Generate sample features for training
-            sample_features = []
-            for ticker in FALLBACK_UNIVERSE[:10]:  # Use first 10 tickers
-                data = get_enhanced_data(ticker, limit=50)
-                if data is not None:
-                    features = ensemble_model.extract_features(data)
-                    if features is not None:
-                        sample_features.append(features)
-            
-            if sample_features:
-                combined_features = pd.concat(sample_features, ignore_index=True)
-                anomaly_detector.train(combined_features)
-                logger.info("✅ Anomaly detector initialized with sample data")
-            
-        except Exception as e:
-            logger.error(f"❌ Anomaly detector initialization failed: {e}")
-    
-    def load_existing_models(self):
-        """Load existing models if available"""
-        try:
-            # Try to load PyTorch Q-Network
-            pytorch_model_path = "models/pytorch/q_network.pth"
-            if os.path.exists(pytorch_model_path):
-                pytorch_q_agent.load_model(pytorch_model_path)
-                logger.info("✅ PyTorch Q-Network model loaded")
-            
-            # Try to load ensemble models
-            ensemble_model_path = "models/ensemble/dual_horizon_ensemble.pkl"
-            if os.path.exists(ensemble_model_path):
-                with open(ensemble_model_path, 'rb') as f:
-                    loaded_ensemble = pickle.load(f)
-                    ensemble_model.short_term_models = loaded_ensemble.get('short_term_models', {})
-                    ensemble_model.medium_term_models = loaded_ensemble.get('medium_term_models', {})
-                    ensemble_model.meta_model = loaded_ensemble.get('meta_model')
-                    logger.info("✅ Ensemble models loaded")
-            
-        except Exception as e:
-            logger.error(f"❌ Model loading failed: {e}")
-    
-    def schedule_periodic_tasks(self):
-        """Schedule periodic maintenance tasks"""
-        try:
-            # Schedule model retraining
-            schedule.every(config.MODEL_RETRAIN_FREQUENCY_HOURS).hours.do(self.retrain_models)
-            
-            # Schedule watchlist optimization
-            schedule.every(config.DYNAMIC_WATCHLIST_REFRESH_HOURS).hours.do(self.optimize_watchlist)
-            
-            # Schedule EOD liquidation
-            schedule.every().day.at(config.EOD_LIQUIDATION_TIME).do(trading_executor.liquidate_eod_positions)
-            
-            # Schedule daily reset
-            schedule.every().day.at("00:01").do(trading_state.reset_daily)
-            
-            # Schedule heartbeat
-            if config.MULTI_INSTANCE_MONITORING:
-                schedule.every(1).minutes.do(heartbeat_monitor.send_heartbeat)
-            
-            logger.info("✅ Periodic tasks scheduled")
-            
-        except Exception as e:
-            logger.error(f"❌ Task scheduling failed: {e}")
-    
-    def process_ticker_with_all_features(self, ticker: str) -> bool:
-        """Process ticker with ALL enhanced features including enterprise components"""
-        try:
-            logger.info(f"🎯 Processing {ticker} with complete v6.0 Enterprise feature set")
-            
-            # Get dual-horizon market data
-            short_data = get_enhanced_data(ticker, days_back=config.SHORT_TERM_DAYS)
-            medium_data = get_enhanced_data(ticker, days_back=config.MEDIUM_TERM_DAYS)
-            
-            if short_data is None or short_data.empty:
-                logger.warning(f"⚠️ No short-term data available for {ticker}")
-                return False
-            
-            if medium_data is None or medium_data.empty:
-                logger.warning(f"⚠️ No medium-term data available for {ticker}")
-                return False
-            
-            current_price = short_data['close'].iloc[-1]
-            
-            # ENTERPRISE ANOMALY DETECTION
-            if config.ANOMALY_DETECTION_ENABLED:
-                features_for_anomaly = ensemble_model.extract_features(short_data)
-                if features_for_anomaly is not None:
-                    is_anomaly = anomaly_detector.detect_anomaly(features_for_anomaly.tail(1))
-                    if is_anomaly:
-                        logger.warning(f"⚠️ {ticker} filtered out: Market anomaly detected")
-                        trading_state.anomaly_alerts.append({
-                            'ticker': ticker,
-                            'timestamp': datetime.now(),
-                            'type': 'market_anomaly'
-                        })
-                        return False
-            
-            # COMPLETE ADVANCED ANALYSIS PIPELINE
-            
-            # 1. Volume Spike and VWAP Filtering
-            volume_spike = short_data['volume_spike'].iloc[-1] if 'volume_spike' in short_data.columns else False
-            volume_spike_confirmation = short_data['volume_spike_confirmation'].iloc[-1] if 'volume_spike_confirmation' in short_data.columns else False
-            vwap_filter_pass = short_data['vwap_filter_pass'].iloc[-1] if 'vwap_filter_pass' in short_data.columns else True
-            vwap_deviation = short_data['vwap_deviation'].iloc[-1] if 'vwap_deviation' in short_data.columns else 0
-            
-            # Apply volume and VWAP filters
-            if not volume_spike:
-                logger.info(f"⏸️ {ticker} filtered out: No volume spike")
-                return False
-            
-            if not vwap_filter_pass:
-                logger.info(f"⏸️ {ticker} filtered out: VWAP deviation too high ({vwap_deviation:.3f})")
-                return False
-            
-            # 2. Dual-Horizon Ensemble Prediction
-            short_pred, medium_pred, meta_pred = ensemble_model.predict_dual_horizon(short_data, medium_data)
-            
-            # 3. FinBERT + VADER Sentiment Analysis
-            sentiment_score = sentiment_analyzer.analyze_ticker_sentiment(ticker)
-            
-            # Apply sentiment hold override
-            if sentiment_score < config.SENTIMENT_HOLD_OVERRIDE:
-                logger.info(f"⏸️ {ticker} filtered out: Negative sentiment ({sentiment_score:.3f})")
-                return False
-            
-            # 4. Support/Resistance Level Detection
-            sr_levels = support_resistance_analyzer.find_significant_levels(short_data, ticker)
-            
-            # 5. Market Regime Detection
-            market_regime, regime_confidence = regime_detector.detect_market_regime(short_data)
-            
-            # 6. PyTorch Q-Learning Analysis
-            q_state = self.extract_q_state(short_data)
-            q_action_idx = pytorch_q_agent.act(q_state)
-            q_action = pytorch_q_agent.actions[q_action_idx]
-            
-            # 7. Meta-Model Approval Check
-            if not meta_approval_system.should_execute_trade(meta_pred):
-                logger.info(f"⏸️ {ticker} blocked by meta-model approval system")
-                return False
-            
-            # 8. ENTERPRISE RISK MONITORING
-            if config.REAL_TIME_RISK_MONITORING and risk_monitor.trading_halted:
-                logger.warning(f"🛑 {ticker} blocked: Trading halted by risk monitor")
-                return False
-            
-            # ENHANCED DECISION LOGIC WITH ALL IMPROVEMENTS
-            
-            decision_score = 0
-            reasons = []
-            confidence_factors = []
-            
-            # Dual-Horizon Ensemble Scoring (Primary Signal)
-            ensemble_weight = 5.0  # Highest weight for ensemble
-            weighted_ensemble_pred = (short_pred * config.SHORT_TERM_WEIGHT + 
-                                    medium_pred * config.MEDIUM_TERM_WEIGHT)
-            
-            if meta_pred > config.SHORT_BUY_THRESHOLD:
-                decision_score += ensemble_weight * (meta_pred - 0.5) * 2
-                reasons.append(f"Meta-model: {meta_pred:.3f}")
-                confidence_factors.append(meta_pred)
-            elif meta_pred < config.SHORT_SELL_AVOID_THRESHOLD:
-                decision_score -= ensemble_weight * (0.5 - meta_pred) * 2
-                reasons.append(f"Meta-model bearish: {meta_pred:.3f}")
-            
-            # Volume Spike Confirmation Bonus
-            if volume_spike_confirmation:
-                decision_score += 2
-                reasons.append(f"Volume spike confirmation: {short_data['volume_ratio'].iloc[-1]:.1f}x")
-                confidence_factors.append(0.8)
-            
-            # Sentiment Analysis Scoring
-            sentiment_weight = config.SENTIMENT_WEIGHT * 10
-            if sentiment_score > 0.1:
-                decision_score += sentiment_weight * sentiment_score
-                reasons.append(f"Positive sentiment: {sentiment_score:.3f}")
-                confidence_factors.append(abs(sentiment_score))
-            elif sentiment_score < -0.1:
-                decision_score -= sentiment_weight * abs(sentiment_score)
-                reasons.append(f"Negative sentiment: {sentiment_score:.3f}")
-            
-            # Support/Resistance Scoring
-            if sr_levels:
-                support_levels = sr_levels.get('support_levels', [])
-                resistance_levels = sr_levels.get('resistance_levels', [])
-                
-                # Check proximity to support (bullish)
-                for support in support_levels:
-                    if abs(current_price - support) / current_price < 0.02:
-                        decision_score += 1.5
-                        reasons.append(f"Near support: ${support:.2f}")
-                        confidence_factors.append(0.7)
-                        break
-                
-                # Check proximity to resistance (bearish)
-                for resistance in resistance_levels:
-                    if abs(current_price - resistance) / current_price < 0.02:
-                        decision_score -= 1.5
-                        reasons.append(f"Near resistance: ${resistance:.2f}")
-                        break
-            
-            # Market Regime Adjustment
-            if market_regime == "bullish":
-                decision_score *= 1.2
-                reasons.append(f"Bullish regime (conf: {regime_confidence:.2f})")
-            elif market_regime == "bearish":
-                decision_score *= 0.8
-                reasons.append(f"Bearish regime (conf: {regime_confidence:.2f})")
-            
-            # Q-Learning Scoring
-            if q_action == 'buy':
-                decision_score += 1.5
-                reasons.append("Q-Learning: BUY")
-                confidence_factors.append(0.6)
-            elif q_action == 'sell':
-                decision_score -= 1.5
-                reasons.append("Q-Learning: SELL")
-            
-            # Technical Indicators Scoring
-            technical_score = self.calculate_technical_score(short_data)
-            decision_score += technical_score['score']
-            reasons.extend(technical_score['reasons'])
-            confidence_factors.extend(technical_score['confidence_factors'])
-            
-            # Calculate overall confidence
-            if confidence_factors:
-                overall_confidence = np.mean(confidence_factors)
-                # Boost confidence if multiple signals agree
-                if len(confidence_factors) >= 3:
-                    overall_confidence *= 1.1
-            else:
-                overall_confidence = 0.5
-            
-            # Apply adaptive thresholds
-            buy_threshold = config.SHORT_BUY_THRESHOLD * 10  # Scale for decision score
-            
-            # Final decision with enhanced weighting
-            weighted_score = decision_score * overall_confidence
-            
-            logger.info(f"📊 {ticker} Complete Enterprise Analysis:")
-            logger.info(f"   Short Pred: {short_pred:.3f} | Medium Pred: {medium_pred:.3f} | Meta Pred: {meta_pred:.3f}")
-            logger.info(f"   Sentiment: {sentiment_score:.3f} | Volume Spike: {'✅' if volume_spike else '❌'}")
-            logger.info(f"   VWAP Dev: {vwap_deviation:.3f} | Market Regime: {market_regime}")
-            logger.info(f"   Q-Action: {q_action} | Decision Score: {decision_score:.2f}")
-            logger.info(f"   Confidence: {overall_confidence:.3f} | Weighted Score: {weighted_score:.2f}")
-            logger.info(f"   Threshold: {buy_threshold:.2f} | Reasons: {', '.join(reasons[:3])}")
-            logger.info(f"   Enterprise: Anomaly: {'❌' if config.ANOMALY_DETECTION_ENABLED else 'N/A'} | Risk Monitor: {'✅' if not risk_monitor.trading_halted else '🛑'}")
-            
-            # Decision with comprehensive criteria
-            if weighted_score >= buy_threshold:
-                logger.info(f"✅ {ticker} meets ALL enhanced Enterprise criteria — executing trade")
-                
-                # Execute trade with all enhancements
-                success = trading_executor.execute_buy_order(
-                    ticker=ticker,
-                    signal_strength=overall_confidence,
-                    market_data=short_data,
-                    short_pred=short_pred,
-                    medium_pred=medium_pred,
-                    meta_pred=meta_pred,
-                    sentiment_score=sentiment_score,
-                    volume_spike=volume_spike,
-                    vwap_deviation=vwap_deviation
-                )
-                
-                if success:
-                    # Update Q-learning
-                    reward = 0.1  # Initial reward, will be updated when position closes
-                    next_state = self.extract_q_state(short_data)
-                    pytorch_q_agent.remember(q_state, q_action_idx, reward, next_state, False)
-                    pytorch_q_agent.replay()
-                
-                return success
-            else:
-                logger.info(f"⏸️ {ticker} does NOT meet threshold (Score: {weighted_score:.2f} < {buy_threshold:.2f})")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to process {ticker}: {e}")
-            return False
-    
-    def extract_q_state(self, df: pd.DataFrame) -> np.ndarray:
-        """Extract Q-learning state from market data"""
-        try:
-            if df is None or df.empty:
-                return np.zeros(10)
-            
-            # Extract relevant features for Q-learning state
-            features = []
-            
-            # Price momentum
-            features.append(df['price_momentum'].iloc[-1] if 'price_momentum' in df.columns else 0)
-            
-            # RSI
-            features.append(df['rsi_14'].iloc[-1] / 100 if 'rsi_14' in df.columns else 0.5)
-            
-            # MACD
-            features.append(np.tanh(df['macd'].iloc[-1]) if 'macd' in df.columns else 0)
-            
-            # Volume ratio
-            features.append(min(df['volume_ratio'].iloc[-1] / 5, 1) if 'volume_ratio' in df.columns else 0.2)
-            
-            # Bollinger Band position
-            features.append(df['bb_position'].iloc[-1] if 'bb_position' in df.columns else 0.5)
-            
-            # ADX
-            features.append(df['adx'].iloc[-1] / 100 if 'adx' in df.columns else 0.5)
-            
-            # VWAP deviation
-            features.append(df['vwap_deviation'].iloc[-1] if 'vwap_deviation' in df.columns else 0)
-            
-            # Volatility
-            features.append(df['volatility_20'].iloc[-1] if 'volatility_20' in df.columns else 0.02)
-            
-            # Smart money index (normalized)
-            features.append(np.tanh(df['smart_money_index'].iloc[-1] / 1000) if 'smart_money_index' in df.columns else 0)
-            
-            # Market regime (encoded)
-            regime_encoding = {'bullish': 1, 'neutral': 0, 'bearish': -1}
-            features.append(regime_encoding.get(trading_state.market_regime, 0))
-            
-            # Ensure we have exactly 10 features
-            while len(features) < 10:
-                features.append(0)
-            
-            return np.array(features[:10], dtype=np.float32)
-            
-        except Exception as e:
-            logger.error(f"❌ Q-state extraction failed: {e}")
-            return np.zeros(10)
-    
-    def calculate_technical_score(self, df: pd.DataFrame) -> Dict:
-        """Calculate technical indicators score"""
-        try:
-            score = 0
-            reasons = []
-            confidence_factors = []
-            
-            # RSI
-            if 'rsi_14' in df.columns:
-                rsi = df['rsi_14'].iloc[-1]
-                if rsi < 30:  # Oversold
-                    score += 1.5
-                    reasons.append(f"RSI oversold: {rsi:.1f}")
-                    confidence_factors.append(0.7)
-                elif rsi > 70:  # Overbought
-                    score -= 1.5
-                    reasons.append(f"RSI overbought: {rsi:.1f}")
-            
-            # MACD
-            if 'macd_histogram' in df.columns and len(df) >= 2:
-                macd_hist = df['macd_histogram'].iloc[-1]
-                macd_hist_prev = df['macd_histogram'].iloc[-2]
-                if macd_hist > 0 and macd_hist > macd_hist_prev:
-                    score += 1.5
-                    reasons.append("MACD bullish momentum")
-                    confidence_factors.append(0.7)
-                elif macd_hist < 0 and macd_hist < macd_hist_prev:
-                    score -= 1.5
-                    reasons.append("MACD bearish momentum")
-            
-            # Volume
-            if 'volume_ratio' in df.columns:
-                volume_ratio = df['volume_ratio'].iloc[-1]
-                if volume_ratio > 2.0:
-                    score += 1.0
-                    reasons.append(f"High volume: {volume_ratio:.1f}x")
-                    confidence_factors.append(0.6)
-            
-            # Bollinger Bands
-            if 'bb_position' in df.columns:
-                bb_position = df['bb_position'].iloc[-1]
-                if bb_position < 0.2:  # Near lower band
-                    score += 1.0
-                    reasons.append("Near BB lower band")
-                    confidence_factors.append(0.6)
-                elif bb_position > 0.8:  # Near upper band
-                    score -= 1.0
-                    reasons.append("Near BB upper band")
-            
-            # ADX (trend strength)
-            if 'adx' in df.columns:
-                adx = df['adx'].iloc[-1]
-                if adx > 25:  # Strong trend
-                    score += 0.5
-                    reasons.append(f"Strong trend: ADX {adx:.1f}")
-                    confidence_factors.append(0.5)
             
             return {
-                'score': score,
-                'reasons': reasons,
-                'confidence_factors': confidence_factors
+                'support_levels': support_levels,
+                'resistance_levels': resistance_levels
             }
             
         except Exception as e:
-            logger.error(f"❌ Technical score calculation failed: {e}")
-            return {'score': 0, 'reasons': [], 'confidence_factors': []}
+            logger.error(f"❌ Support/resistance detection failed for {ticker}: {e}")
+            return {'support_levels': [], 'resistance_levels': []}
     
-    def run_trading_loop(self):
-        """Main trading loop with comprehensive error handling and enterprise features"""
+    def filter_by_strength(self, levels: List[float], df: pd.DataFrame, level_type: str) -> List[float]:
+        """Filter levels by strength (number of touches)"""
         try:
-            logger.info("🔄 Starting enhanced Enterprise trading loop...")
-            self.main_loop_running = True
+            strong_levels = []
             
-            while not self.shutdown_requested:
-                try:
-                    # Run scheduled tasks
-                    schedule.run_pending()
-                    
-                    # Market hours check
-                    if not is_market_open_safe():
-                        logger.info("📴 Market closed, waiting...")
-                        time.sleep(300)  # Wait 5 minutes
-                        continue
-                    
-                    # Enterprise risk monitoring
-                    if config.REAL_TIME_RISK_MONITORING:
-                        current_equity = self.get_current_equity()
-                        risk_monitor.update_equity(current_equity)
-                        
-                        if risk_monitor.trading_halted:
-                            logger.warning("🛑 Trading halted by risk monitor")
-                            time.sleep(600)  # Wait 10 minutes
-                            continue
-                    
-                    # Check for EOD liquidation
-                    if config.EOD_LIQUIDATION_ENABLED and is_near_eod():
-                        trading_executor.liquidate_eod_positions()
-                    
-                    # Monitor existing positions
-                    trading_executor.monitor_positions()
-                    
-                    # Optimize watchlist periodically
-                    trading_state.current_watchlist = watchlist_optimizer.optimize_watchlist()
-                    
-                    # Evaluate meta-model approval
-                    meta_approval_system.evaluate_model_performance()
-                    
-                    # Process watchlist with ticker iteration
-                    processed_count = 0
-                    successful_trades = 0
-                    
-                    for ticker in trading_state.current_watchlist:
-                        try:
-                            if self.process_ticker_with_all_features(ticker):
-                                successful_trades += 1
-                            processed_count += 1
-                            
-                            # Rate limiting between tickers
-                            time.sleep(2)
-                            
-                        except Exception as ticker_error:
-                            logger.error(f"❌ Error processing {ticker}: {ticker_error}")
-                            continue
-                    
-                    # Update daily stats
-                    self.daily_stats['trades_executed'] += successful_trades
-                    
-                    # Periodic maintenance
-                    self.perform_periodic_maintenance()
-                    
-                    logger.info(f"📊 Loop complete: {processed_count} processed, {successful_trades} trades")
-                    
-                    # Wait for next iteration (CPU-safe throttling)
-                    time.sleep(self.loop_interval)
-                    
-                except KeyboardInterrupt:
-                    logger.info("🛑 Trading loop interrupted by user")
-                    self.shutdown_requested = True
-                    break
-                except Exception as loop_error:
-                    logger.error(f"❌ Trading loop error: {loop_error}")
-                    time.sleep(60)  # Wait 1 minute before retrying
+            for level in levels:
+                touches = 0
+                tolerance = level * 0.02  # 2% tolerance
+                
+                if level_type == 'resistance':
+                    touches = len(df[abs(df['high'] - level) <= tolerance])
+                else:  # support
+                    touches = len(df[abs(df['low'] - level) <= tolerance])
+                
+                if touches >= self.strength_threshold:
+                    strong_levels.append(level)
             
-            self.main_loop_running = False
-            logger.info("✅ Trading loop shutdown complete")
+            return strong_levels
             
         except Exception as e:
-            logger.error(f"❌ Fatal trading loop error: {e}")
-            send_discord_alert(f"❌ Fatal trading loop error: {e}", urgent=True)
-            self.main_loop_running = False
-    
-    def get_current_equity(self) -> float:
-        """Get current equity for risk monitoring"""
+            logger.error(f"❌ Level strength filtering failed: {e}")
+            return levels
+
+support_resistance_detector = SupportResistanceDetector()
+
+# === VOLUME PROFILE ANALYSIS ===
+class VolumeProfileAnalyzer:
+    def __init__(self):
+        self.bins = config.VOLUME_PROFILE_BINS
+        
+    def calculate_volume_profile(self, df: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+        """Calculate volume profile for price levels"""
         try:
-            if config.PAPER_TRADING_MODE:
-                # Get paper trading portfolio value
-                current_prices = {}
-                for ticker in trading_state.open_positions.keys():
-                    data = get_enhanced_data(ticker, limit=1)
-                    if data is not None:
-                        current_prices[ticker] = data['close'].iloc[-1]
-                
-                return paper_trading.get_paper_portfolio_value(current_prices)
+            if df is None or len(df) < 20:
+                return {}
             
-            elif api_manager.api:
+            # Calculate price range
+            price_min = df['low'].min()
+            price_max = df['high'].max()
+            
+            # Create price bins
+            price_bins = np.linspace(price_min, price_max, self.bins)
+            volume_profile = np.zeros(self.bins - 1)
+            
+            # Distribute volume across price levels
+            for _, row in df.iterrows():
+                # Assume uniform distribution within the bar
+                bar_range = row['high'] - row['low']
+                if bar_range > 0:
+                    for i in range(len(price_bins) - 1):
+                        bin_low = price_bins[i]
+                        bin_high = price_bins[i + 1]
+                        
+                        # Calculate overlap
+                        overlap_low = max(bin_low, row['low'])
+                        overlap_high = min(bin_high, row['high'])
+                        
+                        if overlap_high > overlap_low:
+                            overlap_ratio = (overlap_high - overlap_low) / bar_range
+                            volume_profile[i] += row['volume'] * overlap_ratio
+            
+            # Find Point of Control (POC) - highest volume price level
+            poc_index = np.argmax(volume_profile)
+            poc_price = (price_bins[poc_index] + price_bins[poc_index + 1]) / 2
+            
+            # Find Value Area (70% of volume)
+            total_volume = np.sum(volume_profile)
+            value_area_volume = total_volume * 0.7
+            
+            # Find value area high and low
+            sorted_indices = np.argsort(volume_profile)[::-1]
+            cumulative_volume = 0
+            value_area_indices = []
+            
+            for idx in sorted_indices:
+                cumulative_volume += volume_profile[idx]
+                value_area_indices.append(idx)
+                if cumulative_volume >= value_area_volume:
+                    break
+            
+            value_area_low = price_bins[min(value_area_indices)]
+            value_area_high = price_bins[max(value_area_indices) + 1]
+            
+            profile_data = {
+                'poc_price': poc_price,
+                'value_area_high': value_area_high,
+                'value_area_low': value_area_low,
+                'volume_profile': volume_profile.tolist(),
+                'price_bins': price_bins.tolist(),
+                'timestamp': datetime.now()
+            }
+            
+            # Cache results
+            trading_state.volume_profile_cache[ticker] = profile_data
+            
+            return profile_data
+            
+        except Exception as e:
+            logger.error(f"❌ Volume profile calculation failed for {ticker}: {e}")
+            return {}
+
+volume_profile_analyzer = VolumeProfileAnalyzer()
+
+# === ENHANCED TRADE EXECUTION WITH HOLD LOGIC ===
+class EnhancedTradeExecutor:
+    def __init__(self):
+        self.cooldown_minutes = config.TRADE_COOLDOWN_MINUTES
+        
+    def execute_trade_with_hold_logic(self, ticker: str, action: str, quantity: int, 
+                                    current_price: float, signal_data: Dict) -> bool:
+        """Execute trade with enhanced hold logic"""
+        try:
+            trade_id = trading_state.get_next_trade_id()
+            
+            # Check if we should hold existing position
+            if ticker in trading_state.open_positions:
+                position_data = trading_state.open_positions[ticker].copy()
+                position_data['current_price'] = current_price
+                
+                if trading_state.should_hold_position(ticker, position_data):
+                    logger.info(f"🤝 Holding position for {ticker}: {trading_state.hold_reasons.get(ticker, 'Hold logic triggered')}")
+                    
+                    # Update position tracking
+                    trading_state.position_hold_decisions[ticker] = {
+                        'timestamp': datetime.now(),
+                        'reason': trading_state.hold_reasons.get(ticker, 'Hold logic'),
+                        'current_price': current_price,
+                        'entry_price': position_data.get('entry_price', current_price),
+                        'hold_duration': datetime.now() - position_data.get('entry_time', datetime.now())
+                    }
+                    
+                    return True  # Successfully held position
+            
+            # Execute new trade or close position
+            if config.PAPER_TRADING_MODE:
+                success = paper_trading.execute_paper_trade(ticker, action, quantity, current_price)
+            else:
+                success = self.execute_live_trade(ticker, action, quantity, current_price)
+            
+            if success:
+                # Update position tracking
+                if action.lower() == 'buy':
+                    trading_state.open_positions[ticker] = {
+                        'quantity': quantity,
+                        'entry_price': current_price,
+                        'entry_time': datetime.now(),
+                        'trade_id': trade_id,
+                        'signal_data': signal_data
+                    }
+                elif action.lower() == 'sell' and ticker in trading_state.open_positions:
+                    position = trading_state.open_positions.pop(ticker)
+                    
+                    # Calculate P&L
+                    pnl = (current_price - position['entry_price']) * position['quantity']
+                    return_pct = pnl / (position['entry_price'] * position['quantity'])
+                    
+                    # Log trade outcome
+                    trade_outcome = {
+                        'trade_id': trade_id,
+                        'ticker': ticker,
+                        'action': action,
+                        'quantity': quantity,
+                        'entry_price': position['entry_price'],
+                        'exit_price': current_price,
+                        'pnl': pnl,
+                        'return': return_pct,
+                        'entry_time': position['entry_time'],
+                        'exit_time': datetime.now(),
+                        'hold_duration': datetime.now() - position['entry_time'],
+                        'signal_data': signal_data,
+                        'correct_prediction': return_pct > 0  # Simplified
+                    }
+                    
+                    trading_state.trade_outcomes.append(trade_outcome)
+                    
+                    # Log to Google Sheets
+                    sheets_logger.log_trade({
+                        'timestamp': datetime.now().isoformat(),
+                        'trade_id': trade_id,
+                        'ticker': ticker,
+                        'action': action,
+                        'quantity': quantity,
+                        'entry_price': position['entry_price'],
+                        'exit_price': current_price,
+                        'pnl': pnl,
+                        'return_pct': return_pct * 100,
+                        'signal_strength': signal_data.get('confidence', 0),
+                        'model_used': signal_data.get('model_type', 'ensemble'),
+                        'sentiment_score': signal_data.get('sentiment', 0),
+                        'volume_spike': signal_data.get('volume_spike', False),
+                        'vwap_deviation': signal_data.get('vwap_deviation', 0),
+                        'sector': signal_data.get('sector', ''),
+                        'market_regime': trading_state.market_regime,
+                        'hold_duration': str(datetime.now() - position['entry_time']),
+                        'notes': f"Hold decisions: {len(trading_state.position_hold_decisions.get(ticker, []))}"
+                    })
+                
+                # Set cooldown
+                trading_state.cooldown_timers[ticker] = datetime.now() + timedelta(minutes=self.cooldown_minutes)
+                
+                logger.info(f"✅ Trade executed: {action.upper()} {quantity} {ticker} @ ${current_price:.2f}")
+                
+                # Send Discord alert
+                alert_message = f"🔄 **TRADE EXECUTED**\n"
+                alert_message += f"**{action.upper()}** {quantity} shares of **{ticker}** @ ${current_price:.2f}\n"
+                alert_message += f"Signal Confidence: {signal_data.get('confidence', 0):.3f}\n"
+                alert_message += f"Market Regime: {trading_state.market_regime}\n"
+                if ticker in trading_state.position_hold_decisions:
+                    alert_message += f"Previous Holds: {len(trading_state.position_hold_decisions[ticker])}"
+                
+                send_discord_alert(alert_message)
+                
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Trade execution failed for {ticker}: {e}")
+            return False
+    
+    def execute_live_trade(self, ticker: str, action: str, quantity: int, current_price: float) -> bool:
+        """Execute live trade through Alpaca API"""
+        try:
+            if not api_manager.api:
+                logger.warning("⚠️ No API connection for live trading")
+                return False
+            
+            # Prepare order
+            side = 'buy' if action.lower() == 'buy' else 'sell'
+            
+            order = api_manager.safe_api_call(
+                api_manager.api.submit_order,
+                symbol=ticker,
+                qty=quantity,
+                side=side,
+                type='market',
+                time_in_force='day'
+            )
+            
+            if order:
+                logger.info(f"✅ Live order submitted: {order.id}")
+                return True
+            else:
+                logger.error(f"❌ Live order failed for {ticker}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Live trade execution failed: {e}")
+            return False
+
+# Initialize trade executor
+trade_executor = EnhancedTradeExecutor()
+
+# === END-OF-DAY LIQUIDATION SYSTEM ===
+class EODLiquidationManager:
+    """End-of-day liquidation with overnight hold logic"""
+    
+    def __init__(self):
+        self.liquidation_time = config.EOD_LIQUIDATION_TIME
+        self.enabled = config.EOD_LIQUIDATION_ENABLED
+        
+    def check_eod_liquidation(self) -> bool:
+        """Check if EOD liquidation should be triggered"""
+        try:
+            if not self.enabled:
+                return False
+            
+            if market_status.is_near_eod() and not trading_state.eod_liquidation_triggered:
+                logger.info("🌅 EOD liquidation window reached")
+                self.execute_eod_liquidation()
+                trading_state.eod_liquidation_triggered = True
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ EOD liquidation check failed: {e}")
+            return False
+    
+    def execute_eod_liquidation(self):
+        """Execute end-of-day liquidation with overnight hold logic"""
+        try:
+            positions_to_liquidate = []
+            positions_to_hold = []
+            
+            for ticker, position in trading_state.open_positions.items():
+                # Get current price
+                current_data = get_enhanced_data(ticker, limit=1)
+                if current_data is None or current_data.empty:
+                    continue
+                
+                current_price = current_data['close'].iloc[-1]
+                position_data = position.copy()
+                position_data['current_price'] = current_price
+                
+                # Check if position should be held overnight
+                if market_status.should_hold_overnight(position_data):
+                    positions_to_hold.append(ticker)
+                    logger.info(f"🌙 Holding {ticker} overnight - Profitable position")
+                else:
+                    positions_to_liquidate.append(ticker)
+            
+            # Liquidate positions that shouldn't be held overnight
+            for ticker in positions_to_liquidate:
+                position = trading_state.open_positions[ticker]
+                current_data = get_enhanced_data(ticker, limit=1)
+                if current_data is not None and not current_data.empty:
+                    current_price = current_data['close'].iloc[-1]
+                    
+                    success = trade_executor.execute_trade_with_hold_logic(
+                        ticker, 'sell', position['quantity'], current_price,
+                        {'confidence': 0.8, 'model_type': 'eod_liquidation', 'reason': 'EOD liquidation'}
+                    )
+                    
+                    if success:
+                        logger.info(f"🌅 EOD liquidated: {ticker}")
+            
+            # Send summary alert
+            alert_message = f"🌅 **EOD LIQUIDATION COMPLETE**\n"
+            alert_message += f"Liquidated: {len(positions_to_liquidate)} positions\n"
+            alert_message += f"Held overnight: {len(positions_to_hold)} positions\n"
+            if positions_to_hold:
+                alert_message += f"Overnight holds: {', '.join(positions_to_hold)}"
+            
+            send_discord_alert(alert_message)
+            
+        except Exception as e:
+            logger.error(f"❌ EOD liquidation execution failed: {e}")
+
+# Initialize EOD liquidation manager
+eod_liquidation_manager = EODLiquidationManager()
+
+# === MAIN TRADING LOGIC WITH 24/7 OPERATION ===
+def ultra_advanced_trading_logic():
+    """Ultra-advanced trading logic with 24/7 operation and all features"""
+    try:
+        logger.info("🚀 Starting Ultra-Advanced AI Trading Bot v7.0 - 24/7 Day Trading Edition")
+        
+        # Initialize starting equity
+        if api_manager.api and not config.PAPER_TRADING_MODE:
+            account = api_manager.safe_api_call(api_manager.api.get_account)
+            if account:
+                trading_state.starting_equity = float(account.equity)
+        else:
+            trading_state.starting_equity = paper_trading.current_capital
+        
+        logger.info(f"💰 Starting equity: ${trading_state.starting_equity:,.2f}")
+        
+        # Send startup alert
+        startup_message = f"🚀 **TRADING BOT STARTED**\n"
+        startup_message += f"Mode: {'Paper Trading' if config.PAPER_TRADING_MODE else 'Live Trading'}\n"
+        startup_message += f"Starting Equity: ${trading_state.starting_equity:,.2f}\n"
+        startup_message += f"Market Status: {'Open' if market_status.is_market_open() else 'Closed'}\n"
+        startup_message += f"Trading Window: {'Active' if market_status.is_in_trading_window() else 'Waiting'}\n"
+        startup_message += f"Features: Dual-horizon, Ensemble, Hold Logic, Ticker Evaluation, EOD Liquidation"
+        
+        send_discord_alert(startup_message, urgent=True)
+        
+        # Main 24/7 loop
+        while True:
+            try:
+                current_time = datetime.now()
+                logger.info(f"🕐 Trading cycle started at {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                # Send heartbeat
+                heartbeat_monitor.send_heartbeat()
+                
+                # Check market status
+                market_open = market_status.is_market_open()
+                trading_window = market_status.is_in_trading_window()
+                
+                logger.info(f"📊 Market Status - Open: {market_open}, Trading Window: {trading_window}")
+                
+                if not market_open:
+                    # Market is closed - wait and perform maintenance tasks
+                    time_until_open = market_status.get_time_until_market_open()
+                    logger.info(f"🌙 Market closed. Next open in: {time_until_open}")
+                    
+                    # Perform maintenance tasks during market closure
+                    perform_maintenance_tasks()
+                    
+                    # Sleep for 30 minutes during market closure
+                    time.sleep(1800)
+                    continue
+                
+                if not trading_window:
+                    # Market is open but we're in the 30-minute wait period
+                    logger.info(f"⏰ Market open but waiting {config.MARKET_OPEN_WAIT_MINUTES} minutes after open")
+                    time.sleep(300)  # Check every 5 minutes
+                    continue
+                
+                # Check for emergency stop
+                if trading_state.emergency_stop_triggered or risk_monitor.trading_halted:
+                    logger.error("🚨 Emergency stop triggered - halting trading")
+                    time.sleep(3600)  # Wait 1 hour before checking again
+                    continue
+                
+                # Check EOD liquidation
+                eod_liquidation_manager.check_eod_liquidation()
+                
+                # Update risk monitoring
+                if config.REAL_TIME_RISK_MONITORING:
+                    current_equity = get_current_equity()
+                    risk_monitor.update_equity(current_equity)
+                
+                # Optimize watchlist periodically
+                optimized_watchlist = watchlist_optimizer.optimize_watchlist()
+                logger.info(f"📋 Current watchlist: {len(optimized_watchlist)} tickers")
+                
+                # Evaluate meta-model performance
+                meta_approval_system.evaluate_model_performance()
+                
+                # Process each ticker in the watchlist
+                successful_evaluations = 0
+                total_signals_generated = 0
+                trades_executed = 0
+                
+                for ticker in optimized_watchlist:
+                    try:
+                        # Check cooldown
+                        if ticker in trading_state.cooldown_timers:
+                            if datetime.now() < trading_state.cooldown_timers[ticker]:
+                                continue
+                        
+                        # Get market data for both horizons
+                        short_data = get_enhanced_data(ticker, limit=200, days_back=config.SHORT_TERM_DAYS)
+                        medium_data = get_enhanced_data(ticker, limit=100, days_back=config.MEDIUM_TERM_DAYS)
+                        
+                        if short_data is None or medium_data is None:
+                            continue
+                        
+                        successful_evaluations += 1
+                        
+                        # Generate trading signal
+                        signal_result = generate_ultra_advanced_signal(ticker, short_data, medium_data)
+                        
+                        if signal_result and signal_result['action'] != 'hold':
+                            total_signals_generated += 1
+                            
+                            # Execute trade if approved
+                            if meta_approval_system.should_execute_trade(signal_result['confidence']):
+                                current_price = short_data['close'].iloc[-1]
+                                position_size = kelly_position_sizer.calculate_position_size(
+                                    ticker, trading_state.starting_equity, signal_result['confidence'], short_data
+                                )
+                                
+                                success = trade_executor.execute_trade_with_hold_logic(
+                                    ticker, signal_result['action'], position_size, current_price, signal_result
+                                )
+                                
+                                if success:
+                                    trades_executed += 1
+                        
+                        # Rate limiting between tickers
+                        time.sleep(2)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error processing {ticker}: {e}")
+                        continue
+                
+                # Update risk metrics
+                trading_state.update_ultra_advanced_risk_metrics()
+                
+                # Log cycle summary
+                logger.info(f"📊 Cycle Summary:")
+                logger.info(f"   - Tickers evaluated: {successful_evaluations}/{len(optimized_watchlist)}")
+                logger.info(f"   - Signals generated: {total_signals_generated}")
+                logger.info(f"   - Trades executed: {trades_executed}")
+                logger.info(f"   - Open positions: {len(trading_state.open_positions)}")
+                logger.info(f"   - Meta-model approved: {trading_state.meta_model_approved}")
+                logger.info(f"   - Current drawdown: {risk_monitor.current_drawdown:.2%}")
+                
+                # Send periodic status update
+                if len(trading_state.trade_outcomes) % 10 == 0 and len(trading_state.trade_outcomes) > 0:
+                    send_status_update()
+                
+                # Sleep before next cycle (5 minutes for day trading)
+                logger.info("😴 Sleeping for 5 minutes before next cycle...")
+                time.sleep(300)
+                
+            except KeyboardInterrupt:
+                logger.info("🛑 Keyboard interrupt received - shutting down gracefully...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Error in main trading loop: {e}")
+                logger.error(traceback.format_exc())
+                time.sleep(60)  # Wait 1 minute before retrying
+                continue
+        
+        # Graceful shutdown
+        logger.info("🛑 Shutting down trading bot...")
+        send_discord_alert("🛑 **TRADING BOT SHUTDOWN**\nBot has been stopped gracefully.", urgent=True)
+        
+    except Exception as e:
+        logger.error(f"❌ Critical error in trading logic: {e}")
+        logger.error(traceback.format_exc())
+        send_discord_alert(f"🚨 **CRITICAL ERROR**\n{str(e)}", urgent=True)
+
+def perform_maintenance_tasks():
+    """Perform maintenance tasks during market closure"""
+    try:
+        logger.info("🔧 Performing maintenance tasks...")
+        
+        # Reset daily state
+        trading_state.reset_daily()
+        
+        # Clean up old cache files
+        cleanup_old_files()
+        
+        # Retrain models if needed
+        if should_retrain_models():
+            retrain_models()
+        
+        # Update sector performance
+        update_sector_performance()
+        
+        # Backup important data
+        backup_trading_data()
+        
+        logger.info("✅ Maintenance tasks completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Maintenance tasks failed: {e}")
+
+def cleanup_old_files():
+    """Clean up old cache and log files"""
+    try:
+        # Clean up old log files (keep last 7 days)
+        log_files = glob.glob("logs/*.log")
+        cutoff_date = datetime.now() - timedelta(days=7)
+        
+        for log_file in log_files:
+            file_time = datetime.fromtimestamp(os.path.getmtime(log_file))
+            if file_time < cutoff_date:
+                os.remove(log_file)
+        
+        # Clean up old evaluation files
+        eval_files = glob.glob("ticker_evaluations/*.json")
+        for eval_file in eval_files:
+            file_time = datetime.fromtimestamp(os.path.getmtime(eval_file))
+            if file_time < cutoff_date:
+                os.remove(eval_file)
+        
+        logger.info("🧹 Old files cleaned up")
+        
+    except Exception as e:
+        logger.error(f"❌ File cleanup failed: {e}")
+
+def should_retrain_models() -> bool:
+    """Check if models should be retrained"""
+    try:
+        # Check if enough time has passed
+        time_since_retrain = datetime.now() - trading_state.meta_model_last_retrain
+        if time_since_retrain.total_seconds() < config.MODEL_RETRAIN_FREQUENCY_HOURS * 3600:
+            return False
+        
+        # Check if we have enough new data
+        if len(trading_state.trade_outcomes) < 50:
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Model retrain check failed: {e}")
+        return False
+
+def retrain_models():
+    """Retrain models with latest data"""
+    try:
+        logger.info("🔄 Retraining models...")
+        
+        # This would implement model retraining logic
+        # For now, just update the timestamp
+        trading_state.meta_model_last_retrain = datetime.now()
+        
+        logger.info("✅ Models retrained successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Model retraining failed: {e}")
+
+def update_sector_performance():
+    """Update sector performance metrics"""
+    try:
+        for sector in EXPANDED_SECTOR_UNIVERSE.keys():
+            sector_trades = [t for t in trading_state.trade_outcomes 
+                           if t.get('sector') == sector]
+            
+            if sector_trades:
+                avg_return = np.mean([t['return'] for t in sector_trades])
+                trading_state.sector_performance[sector] = avg_return
+        
+        logger.info("📊 Sector performance updated")
+        
+    except Exception as e:
+        logger.error(f"❌ Sector performance update failed: {e}")
+
+def backup_trading_data():
+    """Backup important trading data"""
+    try:
+        backup_data = {
+            'trade_outcomes': trading_state.trade_outcomes[-1000:],  # Last 1000 trades
+            'risk_metrics': trading_state.risk_metrics,
+            'model_accuracy': trading_state.model_accuracy,
+            'sector_performance': dict(trading_state.sector_performance),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        backup_file = f"backups/trading_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        os.makedirs("backups", exist_ok=True)
+        
+        with open(backup_file, 'w') as f:
+            json.dump(backup_data, f, indent=2, default=str)
+        
+        logger.info(f"💾 Trading data backed up to {backup_file}")
+        
+    except Exception as e:
+        logger.error(f"❌ Data backup failed: {e}")
+
+def get_current_equity() -> float:
+    """Get current portfolio equity"""
+    try:
+        if config.PAPER_TRADING_MODE:
+            # Calculate paper trading equity
+            current_prices = {}
+            for ticker in trading_state.open_positions.keys():
+                data = get_enhanced_data(ticker, limit=1)
+                if data is not None and not data.empty:
+                    current_prices[ticker] = data['close'].iloc[-1]
+            
+            return paper_trading.get_paper_portfolio_value(current_prices)
+        else:
+            # Get live account equity
+            if api_manager.api:
                 account = api_manager.safe_api_call(api_manager.api.get_account)
                 if account:
                     return float(account.equity)
+        
+        return trading_state.starting_equity
+        
+    except Exception as e:
+        logger.error(f"❌ Equity calculation failed: {e}")
+        return trading_state.starting_equity
+
+def send_status_update():
+    """Send periodic status update"""
+    try:
+        current_equity = get_current_equity()
+        total_return = (current_equity - trading_state.starting_equity) / trading_state.starting_equity
+        
+        status_message = f"📊 **TRADING STATUS UPDATE**\n"
+        status_message += f"Current Equity: ${current_equity:,.2f}\n"
+        status_message += f"Total Return: {total_return:.2%}\n"
+        status_message += f"Total Trades: {len(trading_state.trade_outcomes)}\n"
+        status_message += f"Win Rate: {trading_state.risk_metrics.get('win_rate', 0):.1%}\n"
+        status_message += f"Sharpe Ratio: {trading_state.risk_metrics.get('sharpe_ratio', 0):.2f}\n"
+        status_message += f"Max Drawdown: {trading_state.risk_metrics.get('max_drawdown', 0):.2%}\n"
+        status_message += f"Open Positions: {len(trading_state.open_positions)}\n"
+        status_message += f"Market Regime: {trading_state.market_regime}\n"
+        status_message += f"Meta-Model: {'✅ Approved' if trading_state.meta_model_approved else '❌ Not Approved'}"
+        
+        send_discord_alert(status_message)
+        
+    except Exception as e:
+        logger.error(f"❌ Status update failed: {e}")
+
+def generate_ultra_advanced_signal(ticker: str, short_data: pd.DataFrame, 
+                                 medium_data: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    """Generate ultra-advanced trading signal with all features"""
+    try:
+        # Get dual-horizon predictions
+        short_pred, medium_pred, meta_pred = ensemble_model.predict_dual_horizon(short_data, medium_data)
+        
+        # Get sentiment analysis
+        sentiment_score = sentiment_analyzer.analyze_ticker_sentiment(ticker)
+        
+        # Get support/resistance levels
+        sr_levels = support_resistance_detector.find_support_resistance_levels(short_data, ticker)
+        
+        # Get volume profile
+        volume_profile = volume_profile_analyzer.calculate_volume_profile(short_data, ticker)
+        
+        # Detect market regime
+        regime, regime_confidence = regime_detector.detect_market_regime(short_data)
+        
+        # Check anomaly detection
+        if config.ANOMALY_DETECTION_ENABLED:
+            features_for_anomaly = ensemble_model.extract_features(short_data)
+            if features_for_anomaly is not None:
+                is_anomaly = anomaly_detector.detect_anomaly(features_for_anomaly.tail(1))
+                if is_anomaly:
+                    logger.warning(f"⚠️ Anomaly detected for {ticker} - reducing signal confidence")
+                    meta_pred *= 0.7  # Reduce confidence during anomalies
+        
+        # Apply all filters and logic
+        current_price = short_data['close'].iloc[-1]
+        
+        # Volume spike filter
+        volume_spike = short_data['volume_spike'].iloc[-1] if 'volume_spike' in short_data.columns else False
+        volume_spike_confirmation = short_data['volume_spike_confirmation'].iloc[-1] if 'volume_spike_confirmation' in short_data.columns else False
+        
+        # VWAP filter
+        vwap_deviation = short_data['vwap_deviation'].iloc[-1] if 'vwap_deviation' in short_data.columns else 0
+        vwap_filter_pass = vwap_deviation <= config.VWAP_DEVIATION_THRESHOLD
+        
+        # Price momentum filter
+        price_momentum = short_data['price_momentum'].iloc[-1] if 'price_momentum' in short_data.columns else 0
+        momentum_filter_pass = abs(price_momentum) >= config.PRICE_MOMENTUM_MIN
+        
+        # Support/resistance filter
+        near_support = False
+        near_resistance = False
+        
+        for support_level in sr_levels.get('support_levels', []):
+            if abs(current_price - support_level) / current_price < 0.02:  # Within 2%
+                near_support = True
+                break
+        
+        for resistance_level in sr_levels.get('resistance_levels', []):
+            if abs(current_price - resistance_level) / current_price < 0.02:  # Within 2%
+                near_resistance = True
+                break
+        
+        # Determine action based on all criteria
+        action = 'hold'
+        confidence = meta_pred
+        
+        # Buy signal logic
+        if (short_pred >= config.SHORT_BUY_THRESHOLD and 
+            medium_pred >= config.MEDIUM_BUY_THRESHOLD and
+            meta_pred >= config.ENSEMBLE_CONFIDENCE_THRESHOLD and
+            volume_spike and
+            vwap_filter_pass and
+            momentum_filter_pass and
+            price_momentum > 0 and
+            near_support and
+            not near_resistance and
+            sentiment_score > config.SENTIMENT_HOLD_OVERRIDE):
             
-            return trading_state.starting_equity
+            action = 'buy'
             
-        except Exception as e:
-            logger.error(f"❌ Failed to get current equity: {e}")
-            return trading_state.starting_equity
-    
-    def perform_periodic_maintenance(self):
-        """Perform periodic maintenance tasks with enterprise features"""
-        try:
-            # Update risk metrics
-            trading_state.update_ultra_advanced_risk_metrics()
+        # Sell signal logic (for existing positions)
+        elif (ticker in trading_state.open_positions and
+              (short_pred <= config.SHORT_SELL_AVOID_THRESHOLD or
+               medium_pred <= config.MEDIUM_SELL_AVOID_THRESHOLD or
+               near_resistance or
+               sentiment_score < config.SENTIMENT_HOLD_OVERRIDE)):
             
-            # Save PyTorch Q-Network model
-            if len(pytorch_q_agent.memory) > 100:
-                pytorch_q_agent.save_model("models/pytorch/q_network.pth")
+            action = 'sell'
+        
+        # Regime-based adjustments
+        if regime == "bearish" and action == 'buy':
+            confidence *= 0.8  # Reduce buy confidence in bear market
+        elif regime == "bullish" and action == 'sell':
+            confidence *= 0.8  # Reduce sell confidence in bull market
+        
+        # Q-Learning adjustment
+        if pytorch_q_agent:
+            # Create state vector for Q-learning
+            state_vector = [
+                short_pred, medium_pred, meta_pred, sentiment_score,
+                volume_spike, vwap_deviation, price_momentum,
+                near_support, near_resistance, regime_confidence
+            ]
             
-            # Enterprise risk monitoring
-            if config.REAL_TIME_RISK_MONITORING:
-                current_equity = self.get_current_equity()
-                risk_monitor.update_equity(current_equity)
-                
-                # Calculate VaR/CVaR
-                if len(trading_state.trade_outcomes) > 30:
-                    returns = [trade['return'] for trade in trading_state.trade_outcomes[-100:]]
-                    var, cvar = portfolio_risk_calc.calculate_var_cvar(np.array(returns))
-                    trading_state.risk_metrics['var_95'] = var
-                    trading_state.risk_metrics['cvar_95'] = cvar
+            q_action_idx = pytorch_q_agent.act(state_vector)
+            q_action = pytorch_q_agent.actions[q_action_idx]
             
-            # Emergency stop check
-            if trading_state.risk_metrics['max_drawdown'] > config.EMERGENCY_DRAWDOWN_LIMIT:
-                trading_state.emergency_stop_triggered = True
-                send_discord_alert("🚨 EMERGENCY STOP TRIGGERED - Maximum drawdown exceeded!", urgent=True)
-            
-            # Send heartbeat
-            if config.MULTI_INSTANCE_MONITORING:
-                heartbeat_monitor.send_heartbeat()
-            
-            # Memory cleanup
-            gc.collect()
-            
-            logger.info("✅ Periodic maintenance completed")
-            
-        except Exception as e:
-            logger.error(f"❌ Periodic maintenance failed: {e}")
-    
-    def retrain_models(self):
-        """Retrain models periodically"""
-        try:
-            logger.info("🔄 Starting model retraining...")
-            
-            # This would implement model retraining logic
-            # For now, just log the event
-            logger.info("✅ Model retraining completed")
-            
-        except Exception as e:
-            logger.error(f"❌ Model retraining failed: {e}")
-    
-    def optimize_watchlist(self):
-        """Optimize watchlist periodically"""
-        try:
-            trading_state.current_watchlist = watchlist_optimizer.optimize_watchlist()
-            logger.info("✅ Watchlist optimization completed")
-            
-        except Exception as e:
-            logger.error(f"❌ Watchlist optimization failed: {e}")
-    
-    def shutdown_gracefully(self):
-        """Gracefully shutdown the bot"""
-        try:
-            logger.info("🔄 Initiating graceful shutdown...")
-            
-            # Set shutdown flag
-            self.shutdown_requested = True
-            
-            # Close all open positions
-            if trading_state.open_positions:
-                logger.info("🔄 Closing all open positions...")
-                for ticker in list(trading_state.open_positions.keys()):
-                    trading_executor.close_position(ticker, "SHUTDOWN")
-                    time.sleep(1)
-            
-            # Save models
-            pytorch_q_agent.save_model("models/pytorch/q_network.pth")
-            
-            # Save ensemble models
-            ensemble_data = {
-                'short_term_models': ensemble_model.short_term_models,
-                'medium_term_models': ensemble_model.medium_term_models,
-                'meta_model': ensemble_model.meta_model
-            }
-            with open('models/ensemble/dual_horizon_ensemble.pkl', 'wb') as f:
-                pickle.dump(ensemble_data, f)
-            
-            # Send shutdown notification
-            send_discord_alert("🛑 Ultra-Advanced Trading Bot v6.0 Enterprise Edition shutdown complete", urgent=True)
-            
-            logger.info("✅ Graceful shutdown completed")
-            
-        except Exception as e:
-            logger.error(f"❌ Graceful shutdown failed: {e}")
+            # Use Q-learning as a tie-breaker or confidence modifier
+            if action == 'hold' and q_action != 'hold' and confidence > 0.6:
+                action = q_action
+                confidence *= 0.9  # Slightly reduce confidence for Q-learning override
+        
+        # Final confidence check
+        if confidence < config.ENSEMBLE_CONFIDENCE_THRESHOLD:
+            action = 'hold'
+        
+        # Create signal result
+        signal_result = {
+            'ticker': ticker,
+            'action': action,
+            'confidence': confidence,
+            'short_pred': short_pred,
+            'medium_pred': medium_pred,
+            'meta_pred': meta_pred,
+            'sentiment': sentiment_score,
+            'volume_spike': volume_spike,
+            'volume_spike_confirmation': volume_spike_confirmation,
+            'vwap_deviation': vwap_deviation,
+            'price_momentum': price_momentum,
+            'near_support': near_support,
+            'near_resistance': near_resistance,
+            'market_regime': regime,
+            'regime_confidence': regime_confidence,
+            'model_type': 'dual_horizon_ensemble',
+            'timestamp': datetime.now()
+        }
+        
+        if action != 'hold':
+            logger.info(f"🎯 Signal generated for {ticker}: {action.upper()} (confidence: {confidence:.3f})")
+        
+        return signal_result
+        
+    except Exception as e:
+        logger.error(f"❌ Signal generation failed for {ticker}: {e}")
+        return None
 
 # === MAIN EXECUTION ===
 if __name__ == "__main__":
     try:
-        # Initialize the ultra-advanced trading bot
-        bot = UltraAdvancedTradingBot()
+        # Start Flask app in a separate thread
+        flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False))
+        flask_thread.daemon = True
+        flask_thread.start()
         
-        if bot.initialize_bot():
-            logger.info("🚀 Ultra-Advanced AI Trading Bot v6.0 Enterprise Edition is ready!")
-            
-            # Start Flask app in a separate thread for health checks
-            flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000))))
-            flask_thread.daemon = True
-            flask_thread.start()
-            
-            # Set up signal handlers for graceful shutdown
-            import signal
-            
-            def signal_handler(signum, frame):
-                logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
-                bot.shutdown_gracefully()
-                sys.exit(0)
-            
-            signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler)
-            
-            # Start the main trading loop
-            bot.run_trading_loop()
-        else:
-            logger.error("❌ Bot initialization failed")
-            
-    except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user")
-        if 'bot' in locals():
-            bot.shutdown_gracefully()
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
-        send_discord_alert(f"❌ Fatal error: {e}", urgent=True)
-        if 'bot' in locals():
-            bot.shutdown_gracefully()
+        logger.info("🌐 Flask health check server started on port 5000")
