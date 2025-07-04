@@ -1254,7 +1254,7 @@ class HarmonicPatternAnalyzer:
             trading_state.harmonic_patterns[ticker] = result
             
             # Save to file
-            filename = f"harmonic_patterns/{_harmonic_patterns.json"
+            filename = f"harmonic_patterns/{ticker}_harmonic_patterns.json"
             with open(filename, 'w') as f:
                 json.dump(result, f, default=str)
             
