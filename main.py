@@ -3678,3 +3678,5 @@ def ultra_advanced_enterprise_trading_logic(ticker: str) -> bool:
                 return False
         
         else:
+            logger.info(f"❌ No BUY signal for {ticker}")
+            return False
