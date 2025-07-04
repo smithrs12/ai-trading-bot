@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 # Update pip and install build tools
 RUN pip install --upgrade pip setuptools wheel
 
-# Copy and install requirements (using talib-binary)
+# Copy and install requirements (NO TA-Lib)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
