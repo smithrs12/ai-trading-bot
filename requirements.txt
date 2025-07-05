@@ -48,6 +48,5 @@ schedule
 spacy
 stable-baselines3
 streamlit
-TA-Lib
 uvicorn
 yfinance
