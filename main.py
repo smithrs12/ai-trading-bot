@@ -4182,4 +4182,15 @@ def run_backtest(tickers, days=30):
         print(f"❌ Failed to save backtest results: {e}")
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    mode = "main"
+    if "--mode" in sys.argv:
+        mode_index = sys.argv.index("--mode") + 1
+        if mode_index < len(sys.argv):
+            mode = sys.argv[mode_index]
+
+    if mode == "backtest":
+        run_backtest(["AAPL", "MSFT", "NVDA", "TSLA"], days=60)
+    else:
+        main()
