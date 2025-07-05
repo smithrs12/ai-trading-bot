@@ -4013,7 +4013,6 @@ def create_dashboard():
         st.error(f"Dashboard error: {e}")
 
 # === Initialize Brokers ===
-global broker_manager
 broker_manager = BrokerManager()
 broker_manager.initialize()
 
