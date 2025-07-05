@@ -1,6 +1,7 @@
 #!/bin/bash
 
 MODE=${MODE:-main}
+echo "🚀 Starting in mode: $MODE"
 
 if [[ "$MODE" == "main" ]]; then
     exec python main.py
@@ -11,6 +12,6 @@ elif [[ "$MODE" == "dashboard" ]]; then
 elif [[ "$MODE" == "backtest" ]]; then
     exec python main.py --mode backtest
 else
-    echo "Unknown mode: $MODE"
+    echo "❌ Unknown mode: $MODE"
     exit 1
 fi
