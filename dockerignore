@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.git
+.gitignore
+*.ipynb
+models/
+logs/
+backtests/
+trade_history.csv
+.DS_Store
