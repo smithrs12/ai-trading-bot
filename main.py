@@ -23,6 +23,7 @@ import logging
 import re
 import requests
 from transformers import pipeline
+from brokers import AlpacaBroker, InteractiveBrokersBroker, SimulatedBroker
 
 # Core scientific computing
 import numpy as np
@@ -396,6 +397,28 @@ class UltraAdvancedTradingConfig:
     MIN_TICKERS_FOR_TRAINING: int = 10
 
 ner_model = pipeline("ner", grouped_entities=True)
+
+# === Broker Manager ===
+class BrokerManager:
+    def __init__(self):
+        self.brokers = {
+            "alpaca": AlpacaBroker(),
+            "ib": InteractiveBrokersBroker(),
+            "sim": SimulatedBroker()
+        }
+        self.active_broker = None
+
+    def initialize(self):
+        # Try Alpaca first
+        if self.brokers["alpaca"].is_available():
+            self.active_broker = self.brokers["alpaca"]
+        elif self.brokers["ib"].is_available():
+            self.active_broker = self.brokers["ib"]
+        else:
+            self.active_broker = self.brokers["sim"]
+
+    def get_active_broker(self):
+        return self.active_broker
 
 def detect_news_catalyst(ticker, max_articles=5):
     try:
@@ -3399,38 +3422,46 @@ class UltraAdvancedMainLoop:
             # Check if we can take new positions
             if len(trading_state.open_positions) >= config.MAX_POSITIONS:
                 return
-            
+
             # Get qualified watchlist (tickers not in positions)
             available_tickers = [
                 ticker for ticker in trading_state.qualified_watchlist 
                 if ticker not in trading_state.open_positions
             ]
-            
+
             if not available_tickers:
                 return
-            
+
             # Generate signals for available tickers
             signals = []
-            
+
             for ticker in available_tickers[:20]:  # Limit to 20 tickers per cycle
                 try:
+                    # === Catalyst Check ===
+                    has_catalyst, catalyst_headline = detect_news_catalyst(ticker)
+                    if has_catalyst:
+                        logger.info(f"🧨 Catalyst found for {ticker}: {catalyst_headline}")
+                    else:
+                        logger.info(f"⏭️ No catalyst for {ticker}, skipping.")
+                        continue
+
                     signal = trading_logic.generate_trading_signals(ticker)
-                    
+
                     if signal['action'] in ['buy', 'sell'] and signal['confidence'] > 0.6:
                         signals.append(signal)
-                        
+
                 except Exception as e:
                     logger.warning(f"⚠️ Signal generation failed for {ticker}: {e}")
                     continue
-            
+
             # Sort by confidence and strength
             signals.sort(key=lambda x: x['confidence'] * x['strength'], reverse=True)
-            
+
             # Store top signals for execution
-            self.pending_signals = signals[:5]  # Top 5 signals
-            
+            trading_state.pending_signals = signals[:config.MAX_PENDING_SIGNALS]
+
         except Exception as e:
-            logger.error(f"❌ Signal generation failed: {e}")
+            logger.error(f"❌ Failed to generate new signals: {e}")
     
     def _execute_trades(self):
         """Execute pending trades"""
@@ -3980,6 +4011,11 @@ def create_dashboard():
         
     except Exception as e:
         st.error(f"Dashboard error: {e}")
+
+# === Initialize Brokers ===
+global broker_manager
+broker_manager = BrokerManager()
+broker_manager.initialize()
 
 # === MAIN EXECUTION ===
 def main():
