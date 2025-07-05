@@ -32,6 +32,8 @@ RUN mkdir -p logs models/short models/medium models/meta models/q_learning \
 # Expose port
 EXPOSE 5000
 
+RUN pip install streamlit
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
