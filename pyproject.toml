@@ -1,21 +1,25 @@
 [project]
-name = "python-template"
+name = "ai-trading-bot"
 version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
-requires-python = ">=3.11"
+description = "Enterprise-level AI stock trading bot with backtesting, RL, and ML"
+authors = ["Ryan Smith <ryan@example.com>"]
+requires-python = ">=3.9"
+
 dependencies = [
     "alpaca-trade-api>=3.2.0",
     "joblib>=1.5.1",
     "newsapi>=0.1.1",
-    "numpy>=2.3.0",
+    "numpy>=1.26.0",
     "pandas>=2.3.0",
     "praw>=7.8.1",
     "python-dotenv>=1.1.0",
-    "pytz>=2025.2",
+    "pytz>=2023.3",
     "requests>=2.32.4",
     "scikit-learn>=1.7.0",
     "ta>=0.11.0",
     "xgboost>=3.0.2",
     "yfinance>=0.2.58",
+    "transformers>=4.33.2",
+    "torch>=2.0.1",
+    "vaderSentiment>=3.3.2",
 ]
