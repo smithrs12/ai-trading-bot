@@ -24,6 +24,7 @@ import re
 import requests
 from transformers import pipeline
 from brokers import AlpacaBroker, InteractiveBrokersBroker, SimulatedBroker
+from backtester import run_backtest
 
 # Core scientific computing
 import numpy as np
@@ -4027,6 +4028,11 @@ def main():
     
     args = parser.parse_args()
     
+    # Optional: only run when in backtest mode
+    if args.mode == "backtest":
+        run_backtest(["AAPL", "MSFT", "NVDA", "TSLA"], days=60)
+        return  # 🔁 Exit after backtest
+    
     # Override paper trading if specified
     if args.paper:
         config.PAPER_TRADING_MODE = True
@@ -4075,6 +4081,9 @@ def main():
 
 def run_backtest(tickers, days=30):
     from collections import defaultdict
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
 
     print("🚀 Running Backtest...")
     results = []
@@ -4087,9 +4096,9 @@ def run_backtest(tickers, days=30):
             print(f"⚠️ Skipping {ticker} — insufficient data")
             continue
 
-        signals = []
         position = None
         entry_price = 0
+        entry_index = None
 
         for i in range(50, len(df)):
             sample = df.iloc[:i]
@@ -4105,45 +4114,71 @@ def run_backtest(tickers, days=30):
             elif pred_short < 0.45 and pred_medium < 0.45:
                 signal = "SELL"
 
-            # simulate position logic
             if position is None and signal == "BUY":
                 position = latest["Close"]
                 entry_price = latest["Close"]
-            elif position and signal == "SELL":
+                entry_index = i
+
+            elif position is not None and signal == "SELL":
                 pnl = latest["Close"] - entry_price
                 results.append({
                     "ticker": ticker,
                     "entry": entry_price,
                     "exit": latest["Close"],
-                    "pnl": pnl
+                    "pnl": pnl,
+                    "entry_index": entry_index,
+                    "exit_index": i,
+                    "duration": i - entry_index,
+                    "confidence_short": pred_short,
+                    "confidence_medium": pred_medium
                 })
                 equity += pnl
                 position = None
+                entry_index = None
 
             equity_curve.append(equity)
 
-    # Summary
+    # === Summary Statistics ===
     total_trades = len(results)
     profitable = sum(1 for r in results if r["pnl"] > 0)
     win_rate = profitable / total_trades if total_trades > 0 else 0
+    returns = pd.Series([r["pnl"] / r["entry"] for r in results if r["entry"] > 0])
+    sharpe_ratio = returns.mean() / returns.std() * (252**0.5) if returns.std() > 0 else 0
+
+    running_max = np.maximum.accumulate(equity_curve)
+    drawdowns = (running_max - equity_curve) / running_max
+    max_drawdown = np.max(drawdowns) if len(drawdowns) > 0 else 0
+
+    durations = [r["duration"] for r in results if "duration" in r]
+    avg_duration = np.mean(durations) if durations else 0
 
     print(f"\n📊 Backtest Summary:")
     print(f"Trades: {total_trades}")
     print(f"Win Rate: {win_rate:.2%}")
+    print(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+    print(f"Max Drawdown: {max_drawdown:.2%}")
+    print(f"Average Trade Duration: {avg_duration:.1f} bars")
     print(f"Final Equity: ${equity:,.2f}")
     print(f"Return: {(equity - config.INITIAL_CAPITAL)/config.INITIAL_CAPITAL:.2%}")
 
-    # Optional: plot equity curve
+    # === Plot Equity Curve ===
     try:
-        import matplotlib.pyplot as plt
         plt.plot(equity_curve)
         plt.title("Backtest Equity Curve")
         plt.xlabel("Trade")
         plt.ylabel("Equity")
         plt.grid(True)
         plt.show()
-    except:
-        pass
+    except Exception as e:
+        print(f"⚠️ Plot failed: {e}")
+
+    # === Save to CSV ===
+    try:
+        df_results = pd.DataFrame(results)
+        df_results.to_csv("backtest_results.csv", index=False)
+        print(f"📁 Saved trade log to backtest_results.csv")
+    except Exception as e:
+        print(f"❌ Failed to save backtest results: {e}")
 
 if __name__ == "__main__":
     main()
