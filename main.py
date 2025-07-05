@@ -25,6 +25,7 @@ import requests
 from transformers import pipeline
 from brokers import AlpacaBroker, InteractiveBrokersBroker, SimulatedBroker
 from backtester import run_backtest
+import config
 
 # Core scientific computing
 import numpy as np
