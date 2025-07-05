@@ -3430,112 +3430,129 @@ class UltraAdvancedMainLoop:
         except Exception as e:
             logger.error(f"❌ Exit order execution failed: {e}")
     
-    def _generate_new_signals(self):
-        """Generate signals for watchlist tickers"""
-        try:
-            # Check if we can take new positions
-            if len(trading_state.open_positions) >= config.MAX_POSITIONS:
-                return
+def _generate_new_signals(self):
+    """Generate signals for watchlist tickers"""
+    try:
+        # Check if we can take new positions
+        if len(trading_state.open_positions) >= config.MAX_POSITIONS:
+            return
 
-            # Get qualified watchlist (tickers not in positions)
-            available_tickers = [
-                ticker for ticker in trading_state.qualified_watchlist 
-                if ticker not in trading_state.open_positions
-            ]
+        # Get qualified watchlist (tickers not in positions)
+        available_tickers = [
+            ticker for ticker in trading_state.qualified_watchlist 
+            if ticker not in trading_state.open_positions
+        ]
 
-            if not available_tickers:
-                return
+        if not available_tickers:
+            return
 
-            # Generate signals for available tickers
-            signals = []
+        # Generate signals for available tickers
+        signals = []
 
-            for ticker in available_tickers[:20]:  # Limit to 20 tickers per cycle
-                try:
-                    # === Catalyst Check ===
-                    has_catalyst, catalyst_headline = detect_news_catalyst(ticker)
-                    if has_catalyst:
-                        logger.info(f"🧨 Catalyst found for {ticker}: {catalyst_headline}")
-                    else:
-                        logger.info(f"⏭️ No catalyst for {ticker}, skipping.")
-                        continue
-
-                    signal = trading_logic.generate_trading_signals(ticker)
-
-                    if signal['action'] in ['buy', 'sell'] and signal['confidence'] > 0.6:
-                        signals.append(signal)
-
-                except Exception as e:
-                    logger.warning(f"⚠️ Signal generation failed for {ticker}: {e}")
+        for ticker in available_tickers[:20]:  # Limit to 20 tickers per cycle
+            try:
+                if is_on_cooldown(ticker):
+                    logger.info(f"⏳ {ticker} is on cooldown. Skipping signal generation.")
                     continue
 
-            # Sort by confidence and strength
-            signals.sort(key=lambda x: x['confidence'] * x['strength'], reverse=True)
+                # === Catalyst Check ===
+                has_catalyst, catalyst_headline = detect_news_catalyst(ticker)
+                if has_catalyst:
+                    logger.info(f"🧨 Catalyst found for {ticker}: {catalyst_headline}")
+                else:
+                    logger.info(f"⏭️ No catalyst for {ticker}, skipping.")
+                    continue
 
-            # Store top signals for execution
-            trading_state.pending_signals = signals[:config.MAX_PENDING_SIGNALS]
+                signal = trading_logic.generate_trading_signals(ticker)
 
-        except Exception as e:
-            logger.error(f"❌ Failed to generate new signals: {e}")
+                if signal['action'] in ['buy', 'sell'] and signal['confidence'] > 0.6:
+                    signals.append(signal)
+
+            except Exception as e:
+                logger.warning(f"⚠️ Signal generation failed for {ticker}: {e}")
+                continue
+
+        # Sort by confidence and strength
+        signals.sort(key=lambda x: x['confidence'] * x['strength'], reverse=True)
+
+        # Store top signals for execution
+        trading_state.pending_signals = signals[:config.MAX_PENDING_SIGNALS]
+
+    except Exception as e:
+        logger.error(f"❌ Failed to generate new signals: {e}")
     
-    def _execute_trades(self):
-        """Execute pending trades"""
-        try:
-            if not hasattr(self, 'pending_signals') or not self.pending_signals:
-                return
-            
-            for signal in self.pending_signals:
-                try:
-                    if len(trading_state.open_positions) >= config.MAX_POSITIONS:
-                        break
-                    
-                    ticker = signal['ticker']
-                    action = signal['action']
-                    confidence = signal['confidence']
-                    
-                    # Get current price
-                    quote = data_manager.get_real_time_quote(ticker)
-                    if not quote or quote.get('price', 0) <= 0:
-                        continue
-                    
-                    current_price = quote['price']
-                    
-                    # Calculate position size
-                    position_size = self._calculate_position_size(ticker, confidence, current_price)
-                    
-                    if position_size == 0:
-                        continue
-                    
-                    # Determine quantity (positive for buy, negative for sell)
-                    quantity = position_size if action == 'buy' else -position_size
-                    
-                    # Risk check
-                    risk_check = risk_monitor.check_pre_trade_risk(ticker, quantity, current_price)
-                    
-                    if not risk_check['approved']:
-                        logger.warning(f"⚠️ Trade rejected for {ticker}: {risk_check['rejections']}")
-                        continue
-                    
-                    # Execute order
-                    if config.PAPER_TRADING_MODE:
-                        success = self._simulate_order(ticker, quantity, current_price, "entry")
-                    else:
-                        success = self._execute_real_order(ticker, quantity, current_price, "entry")
-                    
-                    if success:
-                        # Add position to state
-                        stop_loss = self._calculate_stop_loss(current_price, action)
-                        take_profit = self._calculate_take_profit(current_price, action)
-                        
-                        trading_state.add_position(
-                            ticker, quantity, current_price, confidence,
-                            stop_loss, take_profit
-                        )
-                        
-                        logger.info(f"✅ Opened position: {ticker} {quantity} @ ${current_price:.2f}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Trade execution failed for {signal.get('ticker', 'unknown')}: {e}")
+def _execute_trades(self):
+    """Execute pending trades"""
+    try:
+        if not hasattr(self, 'pending_signals') or not self.pending_signals:
+            return
+        
+        for signal in self.pending_signals:
+            try:
+                if len(trading_state.open_positions) >= config.MAX_POSITIONS:
+                    break
+                
+                ticker = signal['ticker']
+                action = signal['action']
+                confidence = signal['confidence']
+
+                # ✅ FIXED: Proper indentation
+                if is_on_cooldown(ticker):
+                    logger.info(f"⏸️ {ticker} is on cooldown. Skipping trade.")
                     continue
+
+                logger.info(f"🚀 Executing trade for {ticker} — action: {action}, confidence: {confidence:.2f}")
+
+                # Get current price
+                quote = data_manager.get_real_time_quote(ticker)
+                if not quote or quote.get('price', 0) <= 0:
+                    continue
+                
+                current_price = quote['price']
+                
+                # Calculate position size
+                position_size = self._calculate_position_size(ticker, confidence, current_price)
+                if position_size == 0:
+                    continue
+                
+                # Determine quantity (positive for buy, negative for sell)
+                quantity = position_size if action == 'buy' else -position_size
+                
+                # Risk check
+                risk_check = risk_monitor.check_pre_trade_risk(ticker, quantity, current_price)
+                if not risk_check['approved']:
+                    logger.warning(f"⚠️ Trade rejected for {ticker}: {risk_check['rejections']}")
+                    continue
+                
+                # Execute order
+                if config.PAPER_TRADING_MODE:
+                    success = self._simulate_order(ticker, quantity, current_price, "entry")
+                else:
+                    success = self._execute_real_order(ticker, quantity, current_price, "entry")
+                
+                if success:
+                    # Set cooldown timestamp
+                    cooldown_cache[ticker] = datetime.utcnow()
+
+                    # Add position to state
+                    stop_loss = self._calculate_stop_loss(current_price, action)
+                    take_profit = self._calculate_take_profit(current_price, action)
+                    trading_state.add_position(
+                        ticker, quantity, current_price, confidence,
+                        stop_loss, take_profit
+                    )
+                    
+                    logger.info(f"✅ Opened position: {ticker} {quantity} @ ${current_price:.2f}")
+                
+            except Exception as e:
+                logger.error(f"❌ Trade execution failed for {signal.get('ticker', 'unknown')}: {e}")
+                continue
+
+        # Clear pending signals
+        self.pending_signals = []
+
+    except Exception as e:
+        logger.error(f"❌ Trade execution failed: {e}")
             
             # Clear pending signals
             self.pending_signals = []
