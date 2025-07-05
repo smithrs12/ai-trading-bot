@@ -209,3 +209,6 @@ for directory in [MODELS_DIR, LOGS_DIR, PERFORMANCE_DIR]:
     os.makedirs(directory, exist_ok=True)
     for subdir in ['short', 'medium', 'meta', 'q_learning']:
         os.makedirs(os.path.join(MODELS_DIR, subdir), exist_ok=True)
+
+# config.py
+INITIAL_CAPITAL = 100000  # or whatever starting balance you prefer
