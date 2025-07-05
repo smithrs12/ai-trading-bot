@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Update pip and install build tools
@@ -18,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Make start.sh executable
+RUN chmod +x start.sh
 
 # Create necessary directories
 RUN mkdir -p logs models/short models/medium models/meta models/q_learning \
