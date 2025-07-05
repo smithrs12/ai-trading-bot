@@ -1,41 +1,47 @@
-
 import os
-from alpaca_trade_api.rest import REST, TimeInForce, OrderSide, OrderType
-from dotenv import load_dotenv
-
-load_dotenv()
+from alpaca_trade_api import REST
 
 class AlpacaBroker:
     def __init__(self):
-        self.api_key = os.getenv("ALPACA_API_KEY")
-        self.api_secret = os.getenv("ALPACA_SECRET_KEY")
-        self.base_url = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-        self.api = REST(self.api_key, self.api_secret, self.base_url)
+        self.api = REST(
+            key_id=os.getenv("ALPACA_API_KEY"),
+            secret_key=os.getenv("ALPACA_SECRET_KEY"),
+            base_url=os.getenv("ALPACA_API_BASE")
+        )
 
-    def is_available(self):
+    def place_order(self, ticker, quantity):
         try:
-            account = self.api.get_account()
-            return account.status == "ACTIVE"
-        except Exception as e:
-            print(f"❌ Alpaca not available: {e}")
-            return False
-
-    def place_order(self, ticker, qty, side, price=None):
-        try:
-            side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-            order_type = OrderType.LIMIT if price else OrderType.MARKET
-
             order = self.api.submit_order(
                 symbol=ticker,
-                qty=qty,
-                side=side,
-                type=order_type,
-                time_in_force=TimeInForce.DAY,
-                limit_price=price if price else None
+                qty=abs(quantity),
+                side="buy" if quantity > 0 else "sell",
+                type="market",
+                time_in_force="gtc"
             )
-
-            print(f"✅ Alpaca order placed: {side} {qty} {ticker} @ {price or 'MARKET'}")
+            print(f"✅ Order submitted for {ticker}: {order.id}")
             return True
+        except Exception as e:
+            print(f"❌ Failed to place order for {ticker}: {e}")
+            return False
+
+
+class SimulatedBroker:
+    def __init__(self):
+        self.positions = {}
+
+    def place_order(self, ticker, quantity):
+        print(f"💡 Simulated order: {'BUY' if quantity > 0 else 'SELL'} {abs(quantity)} of {ticker}")
+        self.positions[ticker] = self.positions.get(ticker, 0) + quantity
+        return True
+
+
+class InteractiveBrokersBroker:
+    def __init__(self):
+        print("🔌 IB Broker initialized (not yet implemented)")
+
+    def place_order(self, ticker, quantity):
+        print(f"⚠️ IB order logic not implemented for {ticker}")
+        return False
 
         except Exception as e:
             print(f"❌ Alpaca order failed for {ticker}: {e}")
