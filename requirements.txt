@@ -45,7 +45,7 @@ polygon-api-client
 psutil
 redis
 schedule
-spacy
+spacy[ja,transformers]==3.7.2
 stable-baselines3
 streamlit
 uvicorn
