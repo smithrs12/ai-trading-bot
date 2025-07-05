@@ -1,6 +1,7 @@
 #!/bin/bash
 
 MODE=${MODE:-main}
+
 echo "🚀 Starting in mode: $MODE"
 
 if [[ "$MODE" == "main" ]]; then
@@ -8,7 +9,8 @@ if [[ "$MODE" == "main" ]]; then
 elif [[ "$MODE" == "worker" ]]; then
     exec python worker.py
 elif [[ "$MODE" == "dashboard" ]]; then
-    exec streamlit run dashboard.py --server.port=5000 --server.enableCORS=false
+    # Streamlit with environment config
+    exec streamlit run dashboard.py --server.port=5000 --server.enableCORS=false --server.enableXsrfProtection=false
 elif [[ "$MODE" == "backtest" ]]; then
     exec python main.py --mode backtest
 else
