@@ -73,6 +73,8 @@ import spacy
 # Run backtest on top tickers
 run_backtest(["AAPL", "MSFT", "NVDA", "TSLA"], days=60)
 
+cooldown_cache = {}
+
 # Reinforcement Learning
 try:
     import gym
@@ -399,6 +401,16 @@ class UltraAdvancedTradingConfig:
     MIN_TICKERS_FOR_TRAINING: int = 10
 
 ner_model = pipeline("ner", grouped_entities=True)
+
+from datetime import datetime, timedelta
+
+def is_on_cooldown(ticker, cooldown_minutes=10):
+    """Check if a ticker is on cooldown"""
+    now = datetime.utcnow()
+    last_trade_time = cooldown_cache.get(ticker)
+    if last_trade_time:
+        return (now - last_trade_time).total_seconds() < cooldown_minutes * 60
+    return False
 
 # === Broker Manager ===
 class BrokerManager:
