@@ -2765,21 +2765,43 @@ class UltraAdvancedTradingLogic:
             '1day': config.MTF_WEIGHT_DAILY
         }
 
-    def generate_trading_signals(self, ticker: str) -> Dict[str, Any]:
-        """Generate comprehensive trading signals using voting ensemble"""
-        try:
-            # Get multi-timeframe data
-            signals = {}
+def generate_trading_signals(self, ticker: str) -> Dict[str, Any]:
+    """Generate comprehensive trading signals using voting ensemble"""
+    try:
+        # Get multi-timeframe data
+        signals = {}
 
-            for timeframe in self.timeframes:
-                tf_signal = self._generate_timeframe_signal(ticker, timeframe)
-                signals[timeframe] = tf_signal
+        for timeframe in self.timeframes:
+            tf_signal = self._generate_timeframe_signal(ticker, timeframe)
+            signals[timeframe] = tf_signal
 
-            # Aggregate multi-timeframe signals
-            if config.MULTI_TIMEFRAME_ENABLED and len(signals) > 1:
-                final_signal = self._aggregate_mtf_signals(signals)
+        # === Dual-Horizon Fusion Logic ===
+        short_signal = signals.get('1min')
+        medium_signal = signals.get('1day')
+
+        if short_signal and medium_signal:
+            short_pred = short_signal.get('action')
+            short_conf = short_signal.get('confidence', 0.0)
+            medium_pred = medium_signal.get('action')
+            medium_conf = medium_signal.get('confidence', 0.0)
+
+            if short_pred == medium_pred and short_conf > 0.6 and medium_conf > 0.6:
+                logger.info(f"🤝 Dual-horizon agreement for {ticker}: {short_pred} (Short {short_conf:.2f}, Medium {medium_conf:.2f})")
+                final_action = short_pred
             else:
-                final_signal = signals.get('1day', signals.get(list(signals.keys())[0]))
+                final_action = None
+        else:
+            final_action = None
+
+        # Aggregate multi-timeframe signals
+        if config.MULTI_TIMEFRAME_ENABLED and len(signals) > 1:
+            final_signal = self._aggregate_mtf_signals(signals)
+        else:
+            final_signal = signals.get('1day', signals.get(list(signals.keys())[0]))
+
+        # Override with dual-horizon fusion decision
+        if final_action:
+            final_signal['action'] = final_action
 
             # === Replace prediction with Voting Ensemble if available ===
             if 'voting_ensemble' in self.models:
