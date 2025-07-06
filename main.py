@@ -425,14 +425,24 @@ def train_voting_classifier(X, y):
     ensemble.fit(X, y)
     return ensemble
 
-def calculate_kelly_fraction(confidence, reward_risk_ratio=2.0, cap=0.2):
+def calculate_kelly_fraction(confidence, reward_risk_ratio=2.0, cap=0.2, volatility=None):
     """
-    Calculates Kelly Criterion fraction based on model confidence and reward-risk ratio.
-    Clamps to avoid over-leveraging.
+    Calculates the Kelly Criterion position fraction based on model confidence,
+    reward-to-risk ratio, and optional volatility-based cap adjustment.
     """
-    win_rate = confidence
+    win_rate = confidence  # Model-derived win probability
+    loss_rate = 1 - win_rate
+
+    # Kelly formula
     kelly = (win_rate * (reward_risk_ratio + 1) - 1) / reward_risk_ratio
-    return max(0.0, min(kelly, cap))
+
+    # Optional volatility cap adjustment (lowers Kelly in high-vol assets)
+    if volatility is not None:
+        dynamic_cap = min(cap, max(0.05, 1 - volatility))  # e.g., if vol=0.25 -> cap=0.75
+    else:
+        dynamic_cap = cap
+
+    return max(0.0, min(kelly, dynamic_cap))
 
 # === Broker Manager ===
 class BrokerManager:
@@ -3574,11 +3584,29 @@ def _execute_trades(self):
 
                 current_price = quote['price']
 
-                # === Kelly Criterion Position Sizing ===
+                # === Kelly Criterion Position Sizing (with volatility normalization) ===
                 if config.POSITION_SIZE_KELLY_ENABLED:
-                    kelly_fraction = calculate_kelly_fraction(confidence, cap=config.KELLY_FRACTION_CAP)
-                    position_size = trading_state.current_equity * kelly_fraction
-                    logger.info(f"📈 Kelly sizing for {ticker}: fraction={kelly_fraction:.4f}, size=${position_size:.2f}")
+                    volatility = calculate_atr(ticker) / current_price  # ATR % of price
+                    if volatility == 0.0:
+                        logger.warning(f"⚠️ Could not calculate volatility for {ticker}, skipping.")
+                        continue
+
+                    kelly_fraction = calculate_kelly_fraction(
+                        confidence=confidence,
+                        reward_risk_ratio=2.0,
+                        cap=config.KELLY_FRACTION_CAP
+                    )
+
+                    # Adjust Kelly fraction inversely by volatility (higher vol = smaller position)
+                    adjusted_fraction = kelly_fraction / max(volatility, 0.01)  # prevent divide-by-zero
+                    adjusted_fraction = min(adjusted_fraction, config.KELLY_FRACTION_CAP)
+
+                    position_size = trading_state.current_equity * adjusted_fraction
+                    logger.info(
+                        f"📈 Kelly for {ticker}: base={kelly_fraction:.4f}, "
+                        f"volatility={volatility:.4f}, adjusted={adjusted_fraction:.4f}, "
+                        f"size=${position_size:.2f}"
+                    )
                 else:
                     position_size = self._calculate_position_size(ticker, confidence, current_price)
 
