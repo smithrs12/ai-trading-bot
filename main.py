@@ -3313,6 +3313,9 @@ class UltraAdvancedMainLoop:
             
             # Save state
             trading_state.save_state()
+
+            # Liquidate Positions
+            self.auto_liquidate_positions()
             
             cycle_time = time.time() - cycle_start
             logger.info(f"✅ Trading cycle #{self.loop_count} completed in {cycle_time:.2f}s")
@@ -3610,7 +3613,6 @@ def _execute_trades(self):
                 action = signal['action']
                 confidence = signal['confidence']
 
-                # ✅ FIXED: Proper indentation
                 if is_on_cooldown(ticker):
                     logger.info(f"⏸️ {ticker} is on cooldown. Skipping trade.")
                     continue
@@ -3626,7 +3628,7 @@ def _execute_trades(self):
 
                 # === Kelly Criterion Position Sizing (with volatility normalization) ===
                 if config.POSITION_SIZE_KELLY_ENABLED:
-                    volatility = calculate_atr(ticker) / current_price  # ATR % of price
+                    volatility = calculate_atr(ticker) / current_price
                     if volatility == 0.0:
                         logger.warning(f"⚠️ Could not calculate volatility for {ticker}, skipping.")
                         continue
@@ -3637,8 +3639,7 @@ def _execute_trades(self):
                         cap=config.KELLY_FRACTION_CAP
                     )
 
-                    # Adjust Kelly fraction inversely by volatility (higher vol = smaller position)
-                    adjusted_fraction = kelly_fraction / max(volatility, 0.01)  # prevent divide-by-zero
+                    adjusted_fraction = kelly_fraction / max(volatility, 0.01)
                     adjusted_fraction = min(adjusted_fraction, config.KELLY_FRACTION_CAP)
 
                     position_size = trading_state.current_equity * adjusted_fraction
@@ -3653,26 +3654,21 @@ def _execute_trades(self):
                 if position_size == 0:
                     continue
 
-                # Determine quantity (positive for buy, negative for sell)
                 quantity = position_size if action == 'buy' else -position_size
                 
-                # Risk check
                 risk_check = risk_monitor.check_pre_trade_risk(ticker, quantity, current_price)
                 if not risk_check['approved']:
                     logger.warning(f"⚠️ Trade rejected for {ticker}: {risk_check['rejections']}")
                     continue
-                
-                # Execute order
+
                 if config.PAPER_TRADING_MODE:
                     success = self._simulate_order(ticker, quantity, current_price, "entry")
                 else:
                     success = self._execute_real_order(ticker, quantity, current_price, "entry")
                 
                 if success:
-                    # Set cooldown timestamp
                     cooldown_cache[ticker] = datetime.utcnow()
 
-                    # Add position to state
                     stop_loss = self._calculate_stop_loss(current_price, action)
                     take_profit = self._calculate_take_profit(current_price, action)
                     trading_state.add_position(
@@ -3681,22 +3677,48 @@ def _execute_trades(self):
                     )
                     
                     logger.info(f"✅ Opened position: {ticker} {quantity} @ ${current_price:.2f}")
-                
+
             except Exception as e:
                 logger.error(f"❌ Trade execution failed for {signal.get('ticker', 'unknown')}: {e}")
                 continue
 
-        # Clear pending signals
         self.pending_signals = []
 
     except Exception as e:
         logger.error(f"❌ Trade execution failed: {e}")
-            
-            # Clear pending signals
-            self.pending_signals = []
-            
-        except Exception as e:
-            logger.error(f"❌ Trade execution failed: {e}")
+
+def auto_liquidate_positions(self):
+    """Auto-liquidate all open positions near end-of-day"""
+    try:
+        if not config.AUTO_LIQUIDATE_ENABLED:
+            return
+
+        eastern = timezone(config.TIMEZONE)
+        now = datetime.now(eastern)
+        cutoff = now.replace(hour=config.LIQUIDATION_HOUR, minute=config.LIQUIDATION_MINUTE, second=0, microsecond=0)
+
+        if now < cutoff:
+            return
+
+        for ticker, position in list(trading_state.open_positions.items()):
+            quote = data_manager.get_real_time_quote(ticker)
+            if not quote or quote.get("price", 0) <= 0:
+                continue
+
+            current_price = quote["price"]
+            quantity = position["quantity"]
+
+            if config.PAPER_TRADING_MODE:
+                success = self._simulate_order(ticker, -quantity, current_price, "exit")
+            else:
+                success = self._execute_real_order(ticker, -quantity, current_price, "exit")
+
+            if success:
+                trading_state.remove_position(ticker)
+                logger.info(f"💀 EOD liquidation: Closed {ticker} at ${current_price:.2f}")
+
+    except Exception as e:
+        logger.error(f"❌ EOD liquidation error: {e}")
     
     def _calculate_position_size(self, ticker: str, confidence: float, price: float) -> int:
         """Calculate position size based on confidence and risk"""
