@@ -411,6 +411,24 @@ def is_on_cooldown(ticker, cooldown_minutes=10):
     if last_trade_time:
         return (now - last_trade_time).total_seconds() < cooldown_minutes * 60
     return False
+    
+def calculate_atr(ticker, period=14):
+    """Calculate ATR-based volatility estimate for a ticker."""
+    data = data_manager.get_stock_data(ticker, period='1mo', interval='1d')
+    if data is None or len(data) < period + 1:
+        return 0.0
+
+    high = data['High']
+    low = data['Low']
+    close = data['Close']
+
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return atr if not np.isnan(atr) else 0.0
 
 # Voting ensemble training
 def train_voting_classifier(X, y):
