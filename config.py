@@ -18,6 +18,11 @@ class TradingConfig:
     MAX_DAILY_TRADES: int = 10
     MAX_POSITIONS: int = 5
     MIN_ACCOUNT_VALUE: float = 1000.0
+
+    AUTO_LIQUIDATE_ENABLED: bool = True
+    LIQUIDATION_HOUR: int = 15  # 3 PM
+    LIQUIDATION_MINUTE: int = 55
+    TIMEZONE: str = 'US/Eastern'
     
     # Position Sizing
     KELLY_MULTIPLIER: float = 0.25  # Conservative Kelly fraction
