@@ -412,6 +412,19 @@ def is_on_cooldown(ticker, cooldown_minutes=10):
         return (now - last_trade_time).total_seconds() < cooldown_minutes * 60
     return False
 
+# Voting ensemble training
+def train_voting_classifier(X, y):
+    model1 = LogisticRegression(max_iter=1000)
+    model2 = RandomForestClassifier(n_estimators=100)
+    model3 = XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+
+    ensemble = VotingClassifier(
+        estimators=[('lr', model1), ('rf', model2), ('xgb', model3)],
+        voting='soft'
+    )
+    ensemble.fit(X, y)
+    return ensemble
+
 # === Broker Manager ===
 class BrokerManager:
     def __init__(self):
@@ -2124,6 +2137,27 @@ class UltraAdvancedEnsembleModel:
             
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
+
+            # === Add Voting Ensemble ===
+            try:
+                voting_clf = VotingClassifier(
+                    estimators=[
+                        ('lr', LogisticRegression(max_iter=1000)),
+                        ('rf', RandomForestClassifier(n_estimators=100)),
+                        ('xgb', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
+                    ],
+                    voting='soft',
+                    weights=[1, 1, 2]  # Optional: give XGB more influence
+                )
+                voting_clf.fit(X_scaled, y)
+                self.models['voting_ensemble'] = voting_clf
+                score = voting_clf.score(X_scaled, y)
+                model_scores = {}  # initialize here since we're scoring
+                model_scores['voting_ensemble'] = score
+                self.performance_history['voting_ensemble'].append(score)
+                logger.info(f"✅ voting_ensemble: {score:.4f}")
+            except Exception as e:
+                logger.error(f"❌ Training failed for voting_ensemble: {e}")
             
             # Train individual models
             model_scores = {}
