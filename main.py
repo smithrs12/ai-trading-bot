@@ -425,6 +425,15 @@ def train_voting_classifier(X, y):
     ensemble.fit(X, y)
     return ensemble
 
+def calculate_kelly_fraction(confidence, reward_risk_ratio=2.0, cap=0.2):
+    """
+    Calculates Kelly Criterion fraction based on model confidence and reward-risk ratio.
+    Clamps to avoid over-leveraging.
+    """
+    win_rate = confidence
+    kelly = (win_rate * (reward_risk_ratio + 1) - 1) / reward_risk_ratio
+    return max(0.0, min(kelly, cap))
+
 # === Broker Manager ===
 class BrokerManager:
     def __init__(self):
@@ -2727,90 +2736,94 @@ class UltraAdvancedTradingLogic:
             '15min': config.MTF_WEIGHT_15MIN,
             '1day': config.MTF_WEIGHT_DAILY
         }
-    
+
     def generate_trading_signals(self, ticker: str) -> Dict[str, Any]:
-        """Generate comprehensive trading signals"""
+        """Generate comprehensive trading signals using voting ensemble"""
         try:
             # Get multi-timeframe data
             signals = {}
-            
+
             for timeframe in self.timeframes:
                 tf_signal = self._generate_timeframe_signal(ticker, timeframe)
                 signals[timeframe] = tf_signal
-            
+
             # Aggregate multi-timeframe signals
             if config.MULTI_TIMEFRAME_ENABLED and len(signals) > 1:
                 final_signal = self._aggregate_mtf_signals(signals)
             else:
                 final_signal = signals.get('1day', signals.get(list(signals.keys())[0]))
-            
+
+            # === Replace prediction with Voting Ensemble if available ===
+            if 'voting_ensemble' in self.models:
+                recent_data = data_manager.get_stock_data(ticker, period='5d', interval='1d')
+                if recent_data is not None and not recent_data.empty:
+                    features = self.prepare_features(recent_data)
+                    if not features.empty:
+                        latest_features = features.tail(1)
+                        if config.FEATURE_SELECTION_ENABLED and self.feature_selector:
+                            latest_features = self.feature_selector.transform(latest_features)
+                        scaled = self.scaler.transform(latest_features)
+
+                        model = self.models['voting_ensemble']
+                        proba = model.predict_proba(scaled)[0]
+                        prediction = model.predict(scaled)[0]
+                        confidence = max(proba)
+
+                        final_signal['predictions'] = proba.tolist()
+                        final_signal['confidence'] = confidence
+                        final_signal['action'] = 'buy' if prediction == 1 else 'sell'
+
             # Add meta-information
             final_signal['ticker'] = ticker
             final_signal['timestamp'] = datetime.now()
             final_signal['timeframes_analyzed'] = list(signals.keys())
-            
+
             # Store signal history
             self.signal_history[ticker].append(final_signal)
             if len(self.signal_history[ticker]) > 100:
                 self.signal_history[ticker] = self.signal_history[ticker][-100:]
-            
+
             return final_signal
-            
+
         except Exception as e:
             logger.error(f"❌ Signal generation failed for {ticker}: {e}")
             return self._get_neutral_signal(ticker)
-    
+
     def _generate_timeframe_signal(self, ticker: str, timeframe: str) -> Dict[str, Any]:
         """Generate signal for specific timeframe"""
         try:
-            # Map timeframe to yfinance period
             period_map = {
                 '1min': '5d',
                 '5min': '1mo',
                 '15min': '3mo',
                 '1day': '1y'
             }
-            
+
             period = period_map.get(timeframe, '1y')
             interval = timeframe if timeframe != '1day' else '1d'
-            
-            # Get data
+
             data = data_manager.get_stock_data(ticker, period=period, interval=interval)
-            
             if data is None or data.empty:
                 return self._get_neutral_signal(ticker)
-            
-            # Prepare features
+
             features = ensemble_model.prepare_features(data)
-            
             if features.empty:
                 return self._get_neutral_signal(ticker)
-            
-            # Get model predictions
+
             predictions = ensemble_model.predict(features.tail(1))
-            
-            # Get sentiment
             sentiment_data = sentiment_analyzer.get_news_sentiment(ticker)
-            
-            # Get options flow
             options_data = options_analyzer.get_options_flow(ticker)
-            
-            # Get catalyst analysis
             news_articles = sentiment_analyzer._fetch_news_articles(ticker, 2)
             catalyst_data = catalyst_filter.analyze_news_catalysts(ticker, news_articles)
-            
-            # Calculate technical indicators
             technical_signals = self._calculate_technical_signals(data)
-            
-            # Combine all signals
+
             signal_strength = self._calculate_signal_strength(
-                predictions, sentiment_data, options_data, 
+                predictions, sentiment_data, options_data,
                 catalyst_data, technical_signals
             )
-            
-            # Determine action
+
             action = self._determine_action(signal_strength, predictions)
-            
+
             return {
                 'action': action,
                 'confidence': signal_strength['confidence'],
@@ -2822,7 +2835,7 @@ class UltraAdvancedTradingLogic:
                 'technical': technical_signals,
                 'timeframe': timeframe
             }
-            
+
         except Exception as e:
             logger.error(f"❌ Timeframe signal generation failed for {ticker} ({timeframe}): {e}")
             return self._get_neutral_signal(ticker)
@@ -3031,61 +3044,78 @@ class UltraAdvancedTradingLogic:
             'timestamp': datetime.now()
         }
     
-    def should_exit_position(self, ticker: str, current_price: float) -> Dict[str, Any]:
-        """Determine if position should be exited"""
-        try:
-            if ticker not in trading_state.open_positions:
-                return {'should_exit': False, 'reason': 'no_position'}
-            
-            position = trading_state.open_positions[ticker]
-            entry_price = position['entry_price']
-            quantity = position['quantity']
-            entry_time = position['entry_time']
-            
-            # Calculate current P&L
-            current_pnl = (current_price - entry_price) * quantity
-            pnl_pct = current_pnl / (abs(quantity) * entry_price)
-            
-            # Stop loss check
-            stop_loss = position.get('stop_loss')
-            if stop_loss:
-                if (quantity > 0 and current_price <= stop_loss) or \
-                   (quantity < 0 and current_price >= stop_loss):
-                    return {'should_exit': True, 'reason': 'stop_loss', 'exit_price': current_price}
-            
-            # Take profit check
-            take_profit = position.get('take_profit')
-            if take_profit:
-                if (quantity > 0 and current_price >= take_profit) or \
-                   (quantity < 0 and current_price <= take_profit):
-                    return {'should_exit': True, 'reason': 'take_profit', 'exit_price': current_price}
-            
-            # Time-based exit (hold for max 5 days)
-            hold_duration = datetime.now() - entry_time
-            if hold_duration.days >= 5:
-                return {'should_exit': True, 'reason': 'time_limit', 'exit_price': current_price}
-            
-            # Signal-based exit
-            current_signal = self.generate_trading_signals(ticker)
-            
-            # Exit long position on strong sell signal
-            if quantity > 0 and current_signal['action'] == 'sell' and current_signal['confidence'] > 0.7:
-                return {'should_exit': True, 'reason': 'sell_signal', 'exit_price': current_price}
-            
-            # Exit short position on strong buy signal
-            if quantity < 0 and current_signal['action'] == 'buy' and current_signal['confidence'] > 0.7:
-                return {'should_exit': True, 'reason': 'buy_signal', 'exit_price': current_price}
-            
-            # Risk-based exit (large loss)
-            if pnl_pct < -0.08:  # 8% loss
-                return {'should_exit': True, 'reason': 'risk_management', 'exit_price': current_price}
-            
-            return {'should_exit': False, 'reason': 'hold'}
-            
-        except Exception as e:
-            logger.error(f"❌ Exit decision failed for {ticker}: {e}")
-            return {'should_exit': False, 'reason': 'error'}
+def should_exit_position(self, ticker: str, current_price: float) -> Dict[str, Any]:
+    """Determine if position should be exited"""
+    try:
+        if ticker not in trading_state.open_positions:
+            return {'should_exit': False, 'reason': 'no_position'}
+        
+        position = trading_state.open_positions[ticker]
+        entry_price = position['entry_price']
+        quantity = position['quantity']
+        entry_time = position['entry_time']
 
+        # Calculate current P&L
+        current_pnl = (current_price - entry_price) * quantity
+        pnl_pct = current_pnl / (abs(quantity) * entry_price)
+
+        # Stop loss check
+        stop_loss = position.get('stop_loss')
+        if stop_loss:
+            if (quantity > 0 and current_price <= stop_loss) or \
+               (quantity < 0 and current_price >= stop_loss):
+                return {'should_exit': True, 'reason': 'stop_loss', 'exit_price': current_price}
+
+        # Take profit check
+        take_profit = position.get('take_profit')
+        if take_profit:
+            if (quantity > 0 and current_price >= take_profit) or \
+               (quantity < 0 and current_price <= take_profit):
+                return {'should_exit': True, 'reason': 'take_profit', 'exit_price': current_price}
+
+        # Time-based exit (hold for max 5 days)
+        hold_duration = datetime.now() - entry_time
+        if hold_duration.days >= 5:
+            return {'should_exit': True, 'reason': 'time_limit', 'exit_price': current_price}
+
+        # === Voting Ensemble Prediction (if available) ===
+        predictions = None
+        if 'voting_ensemble' in self.models:
+            latest_data = data_manager.get_stock_data(ticker, period='5d', interval='1d')
+            if latest_data is not None and not latest_data.empty:
+                features = self.prepare_features(latest_data)
+                if not features.empty:
+                    latest_features = features.tail(1)
+                    if config.FEATURE_SELECTION_ENABLED and self.feature_selector:
+                        latest_features = self.feature_selector.transform(latest_features)
+                    scaled = self.scaler.transform(latest_features)
+                    model = self.models['voting_ensemble']
+                    proba = model.predict_proba(scaled)[0]
+                    prediction = model.predict(scaled)[0]
+                    confidence = max(proba)
+
+                    # Exit based on voting ensemble signal
+                    if quantity > 0 and prediction == 0 and confidence > 0.7:  # Exit long on strong sell
+                        return {'should_exit': True, 'reason': 'voting_sell', 'exit_price': current_price}
+                    elif quantity < 0 and prediction == 1 and confidence > 0.7:  # Exit short on strong buy
+                        return {'should_exit': True, 'reason': 'voting_buy', 'exit_price': current_price}
+
+        # === Legacy fallback ===
+        current_signal = self.generate_trading_signals(ticker)
+        if quantity > 0 and current_signal['action'] == 'sell' and current_signal['confidence'] > 0.7:
+            return {'should_exit': True, 'reason': 'sell_signal', 'exit_price': current_price}
+        if quantity < 0 and current_signal['action'] == 'buy' and current_signal['confidence'] > 0.7:
+            return {'should_exit': True, 'reason': 'buy_signal', 'exit_price': current_price}
+
+        # Risk-based exit (large loss)
+        if pnl_pct < -0.08:
+            return {'should_exit': True, 'reason': 'risk_management', 'exit_price': current_price}
+
+        return {'should_exit': False, 'reason': 'hold'}
+
+    except Exception as e:
+        logger.error(f"❌ Exit decision failed for {ticker}: {e}")
+        return {'should_exit': False, 'reason': 'error'}
 trading_logic = UltraAdvancedTradingLogic()
 
 # === MAIN TRADING LOOP ===
@@ -3541,14 +3571,20 @@ def _execute_trades(self):
                 quote = data_manager.get_real_time_quote(ticker)
                 if not quote or quote.get('price', 0) <= 0:
                     continue
-                
+
                 current_price = quote['price']
-                
-                # Calculate position size
-                position_size = self._calculate_position_size(ticker, confidence, current_price)
+
+                # === Kelly Criterion Position Sizing ===
+                if config.POSITION_SIZE_KELLY_ENABLED:
+                    kelly_fraction = calculate_kelly_fraction(confidence, cap=config.KELLY_FRACTION_CAP)
+                    position_size = trading_state.current_equity * kelly_fraction
+                    logger.info(f"📈 Kelly sizing for {ticker}: fraction={kelly_fraction:.4f}, size=${position_size:.2f}")
+                else:
+                    position_size = self._calculate_position_size(ticker, confidence, current_price)
+
                 if position_size == 0:
                     continue
-                
+
                 # Determine quantity (positive for buy, negative for sell)
                 quantity = position_size if action == 'buy' else -position_size
                 
