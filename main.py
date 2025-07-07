@@ -3507,7 +3507,7 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
         return False
 
 # === MAIN LOOP WITH 24/7 OPERATION ===
-def main_24_7_trading_loop():
+def main_loop():
     """Main 24/7 trading loop with market awareness"""
     logger.info("🚀 Starting Ultra-Advanced AI Trading Bot v7.0 - 24/7 Day Trading Edition")
     
