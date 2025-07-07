@@ -3674,8 +3674,6 @@ def main_24_7_trading_loop():
                             logger.warning(f"⚠️ Skipping retraining - only {len(qualified)} tickers available")
                     except Exception as e:
                         logger.error(f"❌ Model retraining failed: {e}")
-
-    logger.error(f"❌ Model retraining failed: {e}")
                     
                 # Wait longer during market closure
                 time_until_open = market_status.get_time_until_market_open()
