@@ -52,26 +52,66 @@ import sqlite3
 import glob
 import gc
 
-# === REDIS INITIALIZATION ===
-from urllib.parse import urlparse
+# === REDIS INITIALIZATION FOR UPSTASH ===
 import redis
+from urllib.parse import urlparse
 
 REDIS_AVAILABLE = False
 redis_client = None
 
 try:
-    load_dotenv()
     redis_url = os.getenv("REDIS_URL")
     if redis_url:
-        redis_client = redis.from_url(redis_url, decode_responses=True)
+        parsed_url = urlparse(redis_url)
+        redis_client = redis.Redis(
+            host=parsed_url.hostname,
+            port=parsed_url.port,
+            password=parsed_url.password,
+            ssl=parsed_url.scheme == 'rediss',  # required for Upstash
+            decode_responses=True
+        )
         redis_client.ping()
         REDIS_AVAILABLE = True
         print("✅ Redis connected successfully.")
     else:
-        print("⚠️ REDIS_URL not set. Redis caching is disabled.")
+        print("⚠️ REDIS_URL not set. Redis caching disabled.")
 except Exception as e:
-    print(f"❌ Redis initialization failed: {e}")
+    print(f"❌ Redis connection failed: {e}")
     REDIS_AVAILABLE = False
+
+class RedisFeatureCache:
+    """Redis-based feature caching for performance"""
+
+    def __init__(self):
+        self.enabled = REDIS_AVAILABLE
+        self.redis_client = redis_client if REDIS_AVAILABLE else None
+        if self.enabled:
+            try:
+                self.redis_client.ping()
+                print("✅ RedisFeatureCache is ready.")
+            except Exception as e:
+                print(f"⚠️ RedisFeatureCache init failed: {e}")
+                self.enabled = False
+
+    def cache_features(self, ticker: str, features: dict, ttl: int = 300):
+        if not self.enabled:
+            return
+        try:
+            key = f"features:{ticker}"
+            self.redis_client.setex(key, ttl, json.dumps(features, default=str))
+        except Exception as e:
+            print(f"❌ Feature caching failed: {e}")
+
+    def get_cached_features(self, ticker: str):
+        if not self.enabled:
+            return None
+        try:
+            key = f"features:{ticker}"
+            cached = self.redis_client.get(key)
+            return json.loads(cached) if cached else None
+        except Exception as e:
+            print(f"❌ Feature retrieval failed: {e}")
+            return None
 
 # === ENHANCED CONFIGURATION MANAGEMENT ===
 @dataclass
