@@ -52,35 +52,18 @@ import sqlite3
 import glob
 import gc
 
-# Try to import Redis (optional)
-try:
-    import redis
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
-    print("⚠️ Redis not installed. Feature caching will be disabled.")
-
-warnings.filterwarnings('ignore')
-load_dotenv()
-
 # === REDIS INITIALIZATION ===
-import redis
 from urllib.parse import urlparse
+import redis
 
 REDIS_AVAILABLE = False
 redis_client = None
 
 try:
+    load_dotenv()
     redis_url = os.getenv("REDIS_URL")
     if redis_url:
-        parsed_url = urlparse(redis_url)
-        redis_client = redis.Redis(
-            host=parsed_url.hostname,
-            port=parsed_url.port,
-            password=parsed_url.password,
-            decode_responses=True,
-            ssl=parsed_url.scheme == 'rediss'
-        )
+        redis_client = redis.from_url(redis_url, decode_responses=True)
         redis_client.ping()
         REDIS_AVAILABLE = True
         print("✅ Redis connected successfully.")
