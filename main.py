@@ -63,6 +63,20 @@ except ImportError:
 warnings.filterwarnings('ignore')
 load_dotenv()
 
+import redis
+from urllib.parse import urlparse
+
+redis_url = os.getenv("REDIS_URL")
+parsed_url = urlparse(redis_url)
+
+redis_client = redis.Redis(
+    host=parsed_url.hostname,
+    port=parsed_url.port,
+    password=parsed_url.password,
+    decode_responses=True,
+    ssl=parsed_url.scheme == 'rediss'
+)
+
 # === ENHANCED CONFIGURATION MANAGEMENT ===
 @dataclass
 class TradingConfig:
