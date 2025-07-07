@@ -3652,14 +3652,14 @@ def main_24_7_trading_loop():
                             'model_accuracy': trading_state.model_accuracy,
                             'watchlist_performance': trading_state.watchlist_performance
                         }
-                        
+
                         os.makedirs('backups', exist_ok=True)
                         backup_filename = f"backups/backup_{current_time.strftime('%Y%m%d_%H%M%S')}.json"
                         with open(backup_filename, 'w') as f:
                             json.dump(backup_data, f, indent=2, default=str)
-                        
+
                         logger.info(f"💾 Data backup created: {backup_filename}")
-                        
+
                     except Exception as e:
                         logger.error(f"❌ Backup failed: {e}")
 
@@ -3674,50 +3674,27 @@ def main_24_7_trading_loop():
                             logger.warning(f"⚠️ Skipping retraining - only {len(qualified)} tickers available")
                     except Exception as e:
                         logger.error(f"❌ Model retraining failed: {e}")
-                    
+
                 # Wait longer during market closure
                 time_until_open = market_status.get_time_until_market_open()
                 if time_until_open.total_seconds() > 3600:  # More than 1 hour
                     logger.info(f"⏰ Market opens in {time_until_open}. Sleeping for 5 minutes...")
                     time.sleep(300)  # 5 minutes
                     continue
-            
+
             # Standard loop delay
             time.sleep(30)  # 30 seconds between loops
-            
+
         except KeyboardInterrupt:
             logger.info("🛑 Received shutdown signal")
             break
-        
+
         except Exception as e:
             logger.error(f"❌ Main loop error: {e}")
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
-            
+
             # Send error alert
             send_discord_alert(f"❌ Main loop error: {str(e)[:200]}", urgent=True)
-            
-            # Continue after error
-                    
-                # Wait longer during market closure
-                time_until_open = market_status.get_time_until_market_open()
-                if time_until_open.total_seconds() > 3600:  # More than 1 hour
-                    logger.info(f"⏰ Market opens in {time_until_open}. Sleeping for 5 minutes...")
-                    time.sleep(300)  # 5 minutes
-                    continue
-            
-            # Standard loop delay
-            time.sleep(30)  # 30 seconds between loops
-            
-        except KeyboardInterrupt:
-            logger.info("🛑 Received shutdown signal")
-            break
-        
-        except Exception as e:
-            logger.error(f"❌ Main loop error: {e}")
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
-            
-            # Send error alert
-            send_discord_alert(f"❌ Main loop error: {str(e)[:200]}", urgent=True)
-            
-            # Continue after error
+
+            # Wait before retrying loop
             time.sleep(60)
