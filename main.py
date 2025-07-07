@@ -2078,7 +2078,6 @@ def add_ultra_advanced_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 # === DUAL-HORIZON ENSEMBLE MODEL ===
 class DualHorizonEnsembleModel:
-    """Dual-horizon prediction with voting ensemble"""
     def __init__(self):
         self.short_term_models = {}
         self.medium_term_models = {}
@@ -2087,7 +2086,7 @@ class DualHorizonEnsembleModel:
         self.scaler_short = StandardScaler()
         self.scaler_medium = StandardScaler()
         self.explainer = None
-        
+
     def create_base_models(self) -> Dict[str, Any]:
         """Create diverse base models for ensemble"""
         return {
@@ -2117,33 +2116,33 @@ class DualHorizonEnsembleModel:
         }
 
     def retrain_meta_model(self):
-    """Retrain meta model using logged trade data"""
-    try:
-        sheet = sheet_client.worksheet("MetaModelLog")
-        data = pd.DataFrame(sheet.get_all_records())
+        """Retrain meta model using logged trade data"""
+        try:
+            sheet = sheet_client.worksheet("MetaModelLog")
+            data = pd.DataFrame(sheet.get_all_records())
 
-        if len(data) < 50:
-            logger.warning("⚠️ Not enough trade logs to train meta model.")
-            return
+            if len(data) < 50:
+                logger.warning("⚠️ Not enough trade logs to train meta model.")
+                return
 
-        features = [
-            "confidence", "volatility", "vwap_distance", "volume_spike",
-            "kelly_fraction", "entry_hour", "cooldown_status"
-        ]
-        X = data[features]
-        y = data["outcome"]
+            features = [
+                "confidence", "volatility", "vwap_distance", "volume_spike",
+                "kelly_fraction", "entry_hour", "cooldown_status"
+            ]
+            X = data[features]
+            y = data["outcome"]
 
-        X.fillna(0, inplace=True)
+            X.fillna(0, inplace=True)
 
-        meta_model = XGBClassifier(n_estimators=50, max_depth=3, random_state=42)
-        meta_model.fit(X, y)
+            meta_model = XGBClassifier(n_estimators=50, max_depth=3, random_state=42)
+            meta_model.fit(X, y)
 
-        joblib.dump(meta_model, "meta_model.pkl")
-        self.meta_model = meta_model
+            joblib.dump(meta_model, "meta_model.pkl")
+            self.meta_model = meta_model
 
-        logger.info(f"✅ Meta model retrained on {len(data)} samples.")
-    except Exception as e:
-        logger.error(f"❌ Meta model retraining failed: {e}")
+            logger.info(f"✅ Meta model retrained on {len(data)} samples.")
+        except Exception as e:
+            logger.error(f"❌ Meta model retraining failed: {e}")
 
     def train_dual_horizon_ensemble(self, qualified_tickers: List[str]) -> bool:
         """Train dual-horizon ensemble models with qualified tickers"""
@@ -3664,13 +3663,19 @@ def main_24_7_trading_loop():
                     except Exception as e:
                         logger.error(f"❌ Backup failed: {e}")
 
-                # === Daily Model Retraining ===
-                try:
-                    model_trainer = DualHorizonEnsembleModel()
-                    model_trainer.retrain_meta_model()
-                    model_trainer.train_dual_horizon_ensemble(self.qualified_watchlist)
-                except Exception as e:
-                    logger.error(f"❌ Model retraining failed: {e}")
+                    # === Daily Model Retraining ===
+                    try:
+                        qualified = trading_state.qualified_watchlist or trading_state.current_watchlist
+                        if len(qualified) >= config.MIN_TICKERS_FOR_TRAINING:
+                            ensemble_model.retrain_meta_model()
+                            ensemble_model.train_dual_horizon_ensemble(qualified[:config.MIN_TICKERS_FOR_TRAINING])
+                            logger.info("✅ Daily model retraining completed.")
+                        else:
+                            logger.warning(f"⚠️ Skipping retraining - only {len(qualified)} tickers available")
+                    except Exception as e:
+                        logger.error(f"❌ Model retraining failed: {e}")
+
+    logger.error(f"❌ Model retraining failed: {e}")
                     
                 # Wait longer during market closure
                 time_until_open = market_status.get_time_until_market_open()
