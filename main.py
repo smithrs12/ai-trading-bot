@@ -3699,3 +3699,17 @@ def main_24_7_trading_loop():
 
             # Wait before retrying loop
             time.sleep(60)
+
+if __name__ == "__main__":
+    try:
+        logger.info("🚀 Starting AI Trading Bot...")
+        main_loop()
+        logger.warning("⚠️ main_loop exited unexpectedly. Holding to prevent crash loop...")
+        while True:
+            time.sleep(300)
+    except Exception as e:
+        logger.error(f"🔥 Fatal error at top level: {e}")
+        logger.error(traceback.format_exc())
+        send_discord_alert(f"🔥 Fatal error: {e}")
+        time.sleep(60)  # Prevent Render crash loop
+        logger.info("🚨 Reached end of main script — this should not happen!")
