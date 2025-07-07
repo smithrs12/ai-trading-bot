@@ -3697,4 +3697,38 @@ def main_24_7_trading_loop():
             send_discord_alert(f"❌ Main loop error: {str(e)[:200]}", urgent=True)
             
             # Continue after error
-            time.sleep(
+                                # === Daily Model Retraining ===
+                    try:
+                        qualified = trading_state.qualified_watchlist or trading_state.current_watchlist
+                        if len(qualified) >= config.MIN_TICKERS_FOR_TRAINING:
+                            ensemble_model.retrain_meta_model()
+                            ensemble_model.train_dual_horizon_ensemble(qualified[:config.MIN_TICKERS_FOR_TRAINING])
+                            logger.info("✅ Daily model retraining completed.")
+                        else:
+                            logger.warning(f"⚠️ Skipping retraining - only {len(qualified)} tickers available")
+                    except Exception as e:
+                        logger.error(f"❌ Model retraining failed: {e}")
+                    
+                # Wait longer during market closure
+                time_until_open = market_status.get_time_until_market_open()
+                if time_until_open.total_seconds() > 3600:  # More than 1 hour
+                    logger.info(f"⏰ Market opens in {time_until_open}. Sleeping for 5 minutes...")
+                    time.sleep(300)  # 5 minutes
+                    continue
+            
+            # Standard loop delay
+            time.sleep(30)  # 30 seconds between loops
+            
+        except KeyboardInterrupt:
+            logger.info("🛑 Received shutdown signal")
+            break
+        
+        except Exception as e:
+            logger.error(f"❌ Main loop error: {e}")
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            
+            # Send error alert
+            send_discord_alert(f"❌ Main loop error: {str(e)[:200]}", urgent=True)
+            
+            # Continue after error
+            time.sleep(60)
