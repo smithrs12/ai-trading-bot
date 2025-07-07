@@ -959,55 +959,6 @@ class PaperTradingEngine:
         
         return portfolio_value
 
-# === REDIS CACHE FOR REAL-TIME FEATURES ===
-class RedisFeatureCache:
-    """Redis-based feature caching for performance"""
-    
-    def __init__(self):
-        self.enabled = False
-        if REDIS_AVAILABLE and config.FEATURE_CACHING_ENABLED:
-            try:
-                self.redis_client = redis.Redis(
-                    host=os.getenv('REDIS_HOST', 'localhost'),
-                    port=int(os.getenv('REDIS_PORT', 6379)),
-                    db=0,
-                    decode_responses=True
-                )
-                self.redis_client.ping()
-                self.enabled = True
-                logger.info("✅ Redis cache connected")
-            except Exception as e:
-                logger.warning(f"⚠️ Redis not available: {e}")
-                self.enabled = False
-        else:
-            logger.info("ℹ️ Redis caching disabled")
-    
-    def cache_features(self, ticker: str, features: Dict[str, Any], ttl: int = 300):
-        """Cache computed features"""
-        if not self.enabled:
-            return
-        
-        try:
-            key = f"features:{ticker}"
-            self.redis_client.setex(key, ttl, json.dumps(features, default=str))
-        except Exception as e:
-            logger.error(f"❌ Feature caching failed: {e}")
-    
-    def get_cached_features(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """Get cached features"""
-        if not self.enabled:
-            return None
-        
-        try:
-            key = f"features:{ticker}"
-            cached_data = self.redis_client.get(key)
-            if cached_data:
-                return json.loads(cached_data)
-        except Exception as e:
-            logger.error(f"❌ Feature cache retrieval failed: {e}")
-        
-        return None
-
 # === MULTI-INSTANCE HEARTBEAT MONITOR ===
 class HeartbeatMonitor:
     """Monitor multiple bot instances"""
