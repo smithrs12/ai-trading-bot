@@ -63,19 +63,32 @@ except ImportError:
 warnings.filterwarnings('ignore')
 load_dotenv()
 
+# === REDIS INITIALIZATION ===
 import redis
 from urllib.parse import urlparse
 
-redis_url = os.getenv("REDIS_URL")
-parsed_url = urlparse(redis_url)
+REDIS_AVAILABLE = False
+redis_client = None
 
-redis_client = redis.Redis(
-    host=parsed_url.hostname,
-    port=parsed_url.port,
-    password=parsed_url.password,
-    decode_responses=True,
-    ssl=parsed_url.scheme == 'rediss'
-)
+try:
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        parsed_url = urlparse(redis_url)
+        redis_client = redis.Redis(
+            host=parsed_url.hostname,
+            port=parsed_url.port,
+            password=parsed_url.password,
+            decode_responses=True,
+            ssl=parsed_url.scheme == 'rediss'
+        )
+        redis_client.ping()
+        REDIS_AVAILABLE = True
+        print("✅ Redis connected successfully.")
+    else:
+        print("⚠️ REDIS_URL not set. Redis caching is disabled.")
+except Exception as e:
+    print(f"❌ Redis initialization failed: {e}")
+    REDIS_AVAILABLE = False
 
 # === ENHANCED CONFIGURATION MANAGEMENT ===
 @dataclass
