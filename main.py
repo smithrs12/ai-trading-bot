@@ -3459,12 +3459,27 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
         # Sentiment analysis
         sentiment_score = sentiment_analyzer.analyze_ticker_sentiment(ticker)
         
-        # Get current market data
-        current_price = short_data['close'].iloc[-1]
-        volume_ratio = short_data['volume_ratio'].iloc[-1] if 'volume_ratio' in short_data.columns else 1.0
-        price_momentum = short_data['price_momentum'].iloc[-1] if 'price_momentum' in short_data.columns else 0.0
-        vwap_deviation = short_data['vwap_deviation'].iloc[-1] if 'vwap_deviation' in short_data.columns else 0.0
-        
+        # Get current market data with full safety checks
+        try:
+            current_price = float(short_data['close'].iloc[-1]) if not pd.isna(short_data['close'].iloc[-1]) else 0.0
+        except:
+            current_price = 0.0
+
+        try:
+            volume_ratio = float(short_data['volume_ratio'].iloc[-1]) if 'volume_ratio' in short_data.columns and not pd.isna(short_data['volume_ratio'].iloc[-1]) else 1.0
+        except:
+            volume_ratio = 1.0
+
+        try:
+            price_momentum = float(short_data['price_momentum'].iloc[-1]) if 'price_momentum' in short_data.columns and not pd.isna(short_data['price_momentum'].iloc[-1]) else 0.0
+        except:
+            price_momentum = 0.0
+
+        try:
+            vwap_deviation = float(short_data['vwap_deviation'].iloc[-1]) if 'vwap_deviation' in short_data.columns and not pd.isna(short_data['vwap_deviation'].iloc[-1]) else 0.0
+        except:
+            vwap_deviation = 0.0
+
         # Volume spike detection
         volume_spike = volume_ratio > config.VOLUME_SPIKE_MIN
         volume_spike_confirmation = volume_ratio > config.VOLUME_SPIKE_CONFIRMATION_MIN
