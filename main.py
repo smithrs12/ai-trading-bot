@@ -24,7 +24,7 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientB
 from sklearn.inspection import permutation_importance
 from typing import Dict, List, Optional, Tuple, Any, Union
 from flask import Flask
-from collections import defaultdict
+from collections import defaultdict, deque
 import logging
 from alpaca_trade_api.rest import REST
 from dataclasses import dataclass
