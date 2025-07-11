@@ -1205,7 +1205,6 @@ def home():
             '✅ Trade cooldown management',
             '✅ Kelly Criterion for position sizing',
             '✅ End-of-day liquidation',
-            '✅ Google Sheets logging',
             '✅ Discord alerts',
             '✅ PnL tracking and trade outcome logging',
             '✅ Dynamic stop-loss, profit targets, and profit decay exit logic',
@@ -1247,7 +1246,7 @@ def create_enhanced_directories():
         "logs", "performance", "backtests", "support_resistance",
         "volume_profiles", "sector_analysis", "sentiment_analysis",
         "feature_importance", "walk_forward", "attribution",
-        "config", "tests", "docs", "cache", "google_sheets",
+        "config", "tests", "docs", "cache",
         "watchlists", "trade_history", "model_accuracy",
         "heartbeats", "paper_trading", "risk_monitoring",
         "enterprise_features", "sqlite_db", "ticker_evaluations", "backups"
@@ -1370,10 +1369,6 @@ class UltraAdvancedTradingState:
         self.walk_forward_results = {}
         self.performance_attribution = {}
         
-        # Google Sheets integration
-        self.sheets_client = None
-        self.sheets_worksheet = None
-        
         # End-of-day liquidation tracking
         self.eod_liquidation_triggered = False
         self.positions_to_liquidate = []
@@ -1391,38 +1386,6 @@ class UltraAdvancedTradingState:
         self.models_trained = False
         self.training_in_progress = False
         self.last_training_time = None
-
-    def log_trade_to_sheet(self, ticker, action, confidence, price, outcome, signal_type, features):
-        """Logs trade features and outcome to Google Sheet for meta model training."""
-        try:
-            volatility = features.get("volatility", 0.0)
-            vwap_distance = features.get("vwap_distance", 0.0)
-            volume_spike = features.get("volume_spike", 0)
-            kelly_fraction = features.get("kelly_fraction", 0.0)
-            sector = features.get("sector", "Unknown")
-            regime = features.get("regime", "Unknown")
-            cooldown_status = features.get("cooldown_status", 0)
-            entry_hour = datetime.now().hour
-
-            self.sheets_worksheet.append_row([
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ticker,
-                action,
-                confidence,
-                price,
-                outcome,
-                signal_type,
-                volatility,
-                vwap_distance,
-                volume_spike,
-                kelly_fraction,
-                sector,
-                regime,
-                cooldown_status,
-                entry_hour
-            ])
-        except Exception as e:
-            logger.error(f"❌ Failed to log trade to sheet: {e}")
         
     def reset_daily(self):
         """Reset daily state variables"""
@@ -1851,62 +1814,6 @@ class EnhancedSentimentAnalyzer:
 
 # Initialize sentiment analyzer
 sentiment_analyzer = EnhancedSentimentAnalyzer()
-
-# === GOOGLE SHEETS INTEGRATION ===
-class GoogleSheetsLogger:
-    """Google Sheets integration for trade logging"""
-    def __init__(self):
-        self.client = None
-        self.worksheet = None
-        self.initialize_sheets()
-    
-    def initialize_sheets(self):
-        """Initialize Google Sheets client"""
-        try:
-            # Check if credentials file exists
-            
-        except Exception as e:
-            logger.error(f"❌ Google Sheets initialization failed: {e}")
-    
-    def log_trade(self, trade_data: Dict[str, Any]):
-        """Log trade to Google Sheets"""
-        try:
-            if not self.worksheet:
-                return False
-            
-            row_data = [
-                trade_data.get('timestamp', datetime.now().isoformat()),
-                trade_data.get('trade_id', ''),
-                trade_data.get('ticker', ''),
-                trade_data.get('action', ''),
-                trade_data.get('quantity', 0),
-                trade_data.get('entry_price', 0),
-                trade_data.get('exit_price', 0),
-                trade_data.get('pnl', 0),
-                trade_data.get('return_pct', 0),
-                trade_data.get('signal_strength', 0),
-                trade_data.get('model_used', ''),
-                trade_data.get('sentiment_score', 0),
-                trade_data.get('volume_spike', False),
-                trade_data.get('vwap_deviation', 0),
-                trade_data.get('sector', ''),
-                trade_data.get('market_regime', ''),
-                trade_data.get('stop_loss', 0),
-                trade_data.get('take_profit', 0),
-                trade_data.get('hold_duration', ''),
-                trade_data.get('notes', '')
-            ]
-            
-            self.worksheet.append_row(row_data)
-            logger.info(f"✅ Trade logged to Google Sheets: {trade_data.get('trade_id')}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to log trade to Google Sheets: {e}")
-            return False
-
-# Initialize Google Sheets logger
-sheets_logger = GoogleSheetsLogger()
 
 # === MARKET REGIME DETECTION ===
 class MarketRegimeDetector:
@@ -3240,9 +3147,6 @@ def execute_trade_with_ultra_advanced_logic(ticker: str, action: str, data: pd.D
                 
                 trading_state.trade_outcomes.append(trade_outcome)
                 
-                # Log to Google Sheets
-                sheets_logger.log_trade(trade_outcome)
-                
                 # Update risk metrics
                 trading_state.update_ultra_advanced_risk_metrics()
             
@@ -3356,9 +3260,6 @@ def perform_eod_liquidation():
                     
                     trading_state.trade_outcomes.append(trade_outcome)
                     trading_state.open_positions.pop(ticker)
-                    
-                    # Log to Google Sheets
-                    sheets_logger.log_trade(trade_outcome)
                     
                     logger.info(f"🌅 EOD liquidated {ticker}: P&L ${pnl:.2f} ({return_pct:.2%})")
                 
