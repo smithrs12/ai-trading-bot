@@ -26,6 +26,7 @@ from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Optional, Tuple, Any, Union
 from flask import Flask
 from collections import defaultdict, deque
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import logging
 from alpaca_trade_api.rest import REST
 from dataclasses import dataclass
