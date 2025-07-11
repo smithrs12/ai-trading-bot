@@ -27,8 +27,10 @@ from typing import Dict, List, Optional, Tuple, Any, Union
 from flask import Flask
 from collections import defaultdict, deque
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import logging
 from alpaca_trade_api.rest import REST
+from alpaca_trade_api.rest import TimeFrame
 from dataclasses import dataclass
 from enum import Enum
 import yaml
