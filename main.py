@@ -11,7 +11,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
-import datetime
 from ta.momentum import RSIIndicator, StochasticOscillator, WilliamsRIndicator
 from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
 from ta.volume import OnBalanceVolumeIndicator, MFIIndicator
@@ -21,27 +20,6 @@ from pytz import timezone
 from dotenv import load_dotenv
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientBoostingClassifier, IsolationForest
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-from alpaca_trade_api.rest import REST, TimeFrame
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from newsapi import NewsApiClient
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-import asyncio
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from collections import defaultdict, deque
-import json
-import warnings
-import sys
-import traceback
-import threading
-from scipy import stats
-from scipy.signal import find_peaks
-from flask import Flask, jsonify
-import shap
 from sklearn.inspection import permutation_importance
 from typing import Dict, List, Optional, Tuple, Any, Union
 import logging
@@ -133,7 +111,7 @@ status_cols = st.columns(4)
 status_cols[0].metric("Mode", mode)
 status_cols[1].metric("Trading Enabled", "✅" if trading_enabled else "❌")
 status_cols[2].metric("Refresh Rate", f"{refresh_interval}s")
-status_cols[3].metric("Timestamp", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+status_cols[3].metric("Timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 # === Ticker Watchlist ===
 st.subheader("📊 Watchlist Overview")
@@ -1886,41 +1864,6 @@ class GoogleSheetsLogger:
         """Initialize Google Sheets client"""
         try:
             # Check if credentials file exists
-            creds_file = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "google_sheets_credentials.json")
-            if not os.path.exists(creds_file):
-                logger.warning("⚠️ Google Sheets credentials file not found")
-                return
-            
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file, scope)
-            self.client = gspread.authorize(creds)
-            
-            # Open or create spreadsheet
-            sheet_name = os.getenv("GOOGLE_SHEETS_NAME", "Trading Bot Logs")
-            try:
-                spreadsheet = self.client.open(sheet_name)
-            except gspread.SpreadsheetNotFound:
-                spreadsheet = self.client.create(sheet_name)
-                logger.info(f"✅ Created new Google Sheet: {sheet_name}")
-            
-            # Get or create worksheet
-            try:
-                self.worksheet = spreadsheet.worksheet("Trades")
-            except gspread.WorksheetNotFound:
-                self.worksheet = spreadsheet.add_worksheet(title="Trades", rows="1000", cols="20")
-                # Add headers
-                headers = [
-                    "Timestamp", "Trade ID", "Ticker", "Action", "Quantity", "Entry Price",
-                    "Exit Price", "PnL", "Return %", "Signal Strength", "Model Used",
-                    "Sentiment Score", "Volume Spike", "VWAP Deviation", "Sector",
-                    "Market Regime", "Stop Loss", "Take Profit", "Hold Duration", "Notes"
-                ]
-                self.worksheet.append_row(headers)
-                logger.info("✅ Created trades worksheet with headers")
-            
-            trading_state.sheets_client = self.client
-            trading_state.sheets_worksheet = self.worksheet
-            logger.info("✅ Google Sheets integration initialized")
             
         except Exception as e:
             logger.error(f"❌ Google Sheets initialization failed: {e}")
