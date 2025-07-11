@@ -9,6 +9,8 @@ import random
 import requests
 import pandas as pd
 import numpy as np
+import streamlit as st
+import matplotlib.pyplot as plt
 from ta.momentum import RSIIndicator, StochasticOscillator, WilliamsRIndicator
 from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
 from ta.volume import OnBalanceVolumeIndicator, MFIIndicator
@@ -112,6 +114,75 @@ class RedisFeatureCache:
         except Exception as e:
             print(f"❌ Feature retrieval failed: {e}")
             return None
+
+# === App Title ===
+st.set_page_config(page_title="AI Trading Bot Dashboard", layout="wide")
+st.title("📈 AI Trading Bot Control Panel")
+
+# === Sidebar ===
+st.sidebar.header("🔧 Configuration")
+mode = st.sidebar.selectbox("Mode", ["Live", "Backtest", "Monitor"])
+trading_enabled = st.sidebar.checkbox("Enable Trading", value=True)
+refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 10, 300, 60)
+
+# === Live Metrics ===
+st.subheader("🚦 Bot Status")
+status_cols = st.columns(4)
+
+status_cols[0].metric("Mode", mode)
+status_cols[1].metric("Trading Enabled", "✅" if trading_enabled else "❌")
+status_cols[2].metric("Refresh Rate", f"{refresh_interval}s")
+status_cols[3].metric("Timestamp", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+# === Ticker Watchlist ===
+st.subheader("📊 Watchlist Overview")
+# Example data (should be live/tracked from the bot in actual deployment)
+watchlist_data = pd.DataFrame({
+    "Ticker": ["AAPL", "TSLA", "NVDA", "AMD"],
+    "Signal": ["BUY", "HOLD", "SELL", "BUY"],
+    "Confidence": [0.82, 0.65, 0.40, 0.76],
+    "Price": [195.5, 257.2, 127.6, 99.8]
+})
+st.dataframe(watchlist_data, use_container_width=True)
+
+# === Trade Logs ===
+st.subheader("📝 Recent Trades")
+# Example logs (replace with real-time logs)
+trade_logs = pd.DataFrame({
+    "Time": pd.date_range(end=datetime.datetime.now(), periods=5, freq='T'),
+    "Ticker": ["AAPL", "TSLA", "AMD", "NVDA", "AAPL"],
+    "Action": ["BUY", "SELL", "BUY", "HOLD", "SELL"],
+    "PnL %": [2.1, -1.3, 0.9, 0.0, 1.2]
+})
+st.dataframe(trade_logs, use_container_width=True)
+
+# === Performance Chart ===
+st.subheader("📈 Equity Curve")
+# Simulated chart (replace with your actual PnL data)
+pnl_data = pd.DataFrame({
+    "Date": pd.date_range(start="2024-01-01", periods=100),
+    "Equity": np.cumsum(np.random.randn(100) * 10 + 100)
+})
+fig, ax = plt.subplots()
+ax.plot(pnl_data['Date'], pnl_data['Equity'], label="Equity")
+ax.set_xlabel("Date")
+ax.set_ylabel("Equity ($)")
+ax.set_title("Performance Over Time")
+ax.legend()
+st.pyplot(fig)
+
+# === Controls for Live Trading ===
+st.sidebar.header("⚙️ Bot Controls")
+if st.sidebar.button("🔁 Restart Bot"):
+    st.success("Bot Restart Triggered (stub — connect to backend)")
+
+if st.sidebar.button("📤 Export Logs"):
+    csv = trade_logs.to_csv(index=False).encode('utf-8')
+    st.sidebar.download_button("Download CSV", csv, "trade_logs.csv", "text/csv")
+
+# === Footer ===
+st.markdown("---")
+st.markdown("Rain.AI Enterprise Day Trading AI")
 
 # === ENHANCED CONFIGURATION MANAGEMENT ===
 @dataclass
