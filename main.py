@@ -2081,6 +2081,18 @@ def add_ultra_advanced_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['volume_sma_10'] = df['volume'].rolling(10).mean()
         df['volume_sma_20'] = df['volume'].rolling(20).mean()
         df['volume_ratio'] = df['volume'] / df['volume_sma_20']
+
+
+# === Apply filters to clean data ===
+if 'volume_ratio' in df.columns:
+    df = df[df['volume_ratio'] > config.VOLUME_SPIKE_MIN]
+
+if 'price_momentum' in df.columns:
+    df = df[df['price_momentum'] > config.PRICE_MOMENTUM_MIN]
+
+if df.empty:
+    log(f"⚠️ Filtered DataFrame for {ticker} is empty after applying filters. Skipping.")
+    return None
         
         # Volume spike detection
         df['volume_spike'] = df['volume_ratio'] > config.VOLUME_SPIKE_MIN
