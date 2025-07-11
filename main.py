@@ -128,7 +128,7 @@ st.dataframe(watchlist_data, use_container_width=True)
 st.subheader("📝 Recent Trades")
 # Example logs (replace with real-time logs)
 trade_logs = pd.DataFrame({
-    "Time": pd.date_range(end=datetime.datetime.now(), periods=5, freq='T'),
+    "Time": pd.date_range(end=datetime.now(), periods=5, freq='T'),
     "Ticker": ["AAPL", "TSLA", "AMD", "NVDA", "AAPL"],
     "Action": ["BUY", "SELL", "BUY", "HOLD", "SELL"],
     "PnL %": [2.1, -1.3, 0.9, 0.0, 1.2]
