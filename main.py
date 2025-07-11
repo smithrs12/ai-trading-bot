@@ -22,7 +22,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientBoostingClassifier, IsolationForest
 from sklearn.inspection import permutation_importance
 from typing import Dict, List, Optional, Tuple, Any, Union
+from flask import Flask
 import logging
+from alpaca_trade_api.rest import REST
 from dataclasses import dataclass
 from enum import Enum
 import yaml
@@ -162,6 +164,23 @@ if st.sidebar.button("📤 Export Logs"):
 # === Footer ===
 st.markdown("---")
 st.markdown("Rain.AI Enterprise Day Trading AI")
+
+# === Health Check Server for Render/Monitoring ===
+from threading import Thread
+import os
+
+app = Flask(__name__)
+
+@app.route("/health")
+def health_check():
+    return "OK", 200
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
+
+# Run health check server in background
+Thread(target=run_health_server, daemon=True).start()
 
 # === ENHANCED CONFIGURATION MANAGEMENT ===
 @dataclass
