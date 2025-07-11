@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientBoostingClassifier, IsolationForest
 from sklearn.inspection import permutation_importance
+from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Optional, Tuple, Any, Union
 from flask import Flask
 from collections import defaultdict, deque
