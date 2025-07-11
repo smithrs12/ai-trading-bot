@@ -7,6 +7,7 @@ import torch.optim as optim
 import joblib
 import random
 import requests
+from newsapi import NewsApiClient
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -23,6 +24,7 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientB
 from sklearn.inspection import permutation_importance
 from typing import Dict, List, Optional, Tuple, Any, Union
 from flask import Flask
+from collections import defaultdict
 import logging
 from alpaca_trade_api.rest import REST
 from dataclasses import dataclass
