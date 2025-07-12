@@ -87,8 +87,10 @@ class RedisFeatureCache:
         if not self.enabled:
             return
         try:
+            # Ensure all keys are strings
+            safe_features = {str(k): v for k, v in features.items()}
             key = f"features:{ticker}"
-            self.redis_client.setex(key, ttl, json.dumps(features, default=str))
+            self.redis_client.setex(key, ttl, json.dumps(safe_features, default=str))
         except Exception as e:
             print(f"❌ Feature caching failed: {e}")
 
@@ -2244,7 +2246,7 @@ class DualHorizonEnsembleModel:
             self.save_models()
             
             # Update training status
-            trading_state.models_trained = True
+            _trained = True
             trading_state.last_training_time = datetime.now()
             
             logger.info("✅ Dual-horizon ensemble trained successfully")
@@ -2428,7 +2430,7 @@ class DualHorizonEnsembleModel:
             self.scaler_medium = ensemble_data.get('scaler_medium', StandardScaler())
             self.feature_importance = ensemble_data.get('feature_importance', {})
             
-            trading_state.models_trained = True
+            _trained = True
             logger.info("✅ Ensemble models loaded successfully")
             return True
             
@@ -3506,6 +3508,7 @@ def main_loop():
                 if training_success:
                     logger.info("✅ Initial training completed successfully")
                     send_discord_alert("✅ Initial model training completed successfully")
+                    trading_state.models_trained = True
                 else:
                     logger.error("❌ Initial training failed")
                     send_discord_alert("❌ Initial model training failed", urgent=True)
@@ -3582,6 +3585,7 @@ def main_loop():
                         logger.info("🔄 Periodic model retraining...")
                         qualified_tickers = trading_state.qualified_watchlist or trading_state.current_watchlist[:config.MIN_TICKERS_FOR_TRAINING]
                         ensemble_model.train_dual_horizon_ensemble(qualified_tickers)
+                        trading_state.models_trained = True
                         last_model_retrain = current_time
                 
                 else:
