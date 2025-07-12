@@ -1,55 +1,35 @@
+# === SaaS-Optimized AI Trading Bot ===
 import os
 import time
-import pytz
+import json
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import json
-import joblib
-import random
-import requests
-from newsapi import NewsApiClient
-import pandas as pd
-import numpy as np
-import streamlit as st
-import matplotlib.pyplot as plt
-from ta.momentum import RSIIndicator, StochasticOscillator, WilliamsRIndicator
-from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
-from ta.volume import OnBalanceVolumeIndicator, MFIIndicator
-from ta.volatility import BollingerBands, AverageTrueRange, KeltnerChannel
-from datetime import datetime, timedelta
-from pytz import timezone
-from dotenv import load_dotenv
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier, GradientBoostingClassifier, IsolationForest
-from sklearn.inspection import permutation_importance
-from sklearn.preprocessing import StandardScaler
-from typing import Dict, List, Optional, Tuple, Any, Union
-from flask import Flask
-from collections import defaultdict, deque
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-import logging
-from alpaca_trade_api.rest import REST
-from alpaca_trade_api.rest import TimeFrame
-from dataclasses import dataclass
-from enum import Enum
-import yaml
-import schedule
-from concurrent.futures import ThreadPoolExecutor
-import pickle
-import sqlite3
-import glob
-import gc
 
-# === REDIS INITIALIZATION FOR UPSTASH ===
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler
+
+from alpaca_trade_api.rest import REST, TimeFrame
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volume import OnBalanceVolumeIndicator
+from ta.volatility import AverageTrueRange
+
 import redis
 from urllib.parse import urlparse
 
-REDIS_AVAILABLE = False
-redis_client = None
+import logging
+from config import config
+from db import init_db, log_trade, log_model
 
-try:
+# === Initialize components ===
+init_db()
     redis_url = os.getenv("REDIS_URL")
     if redis_url:
         parsed_url = urlparse(redis_url)
@@ -90,7 +70,7 @@ class RedisFeatureCache:
             # Ensure all keys are strings
             safe_features = {str(k): v for k, v in features.items()}
             key = f"features:{ticker}"
-            self.redis_client.setex(key, ttl, json.dumps(str_keys_features, default=str))
+            self.redis_client.setex(key, ttl, json.dumps(safe_features, default=str))
         except Exception as e:
             print(f"❌ Feature caching failed: {e}")
 
@@ -175,24 +155,6 @@ st.markdown("---")
 st.markdown("Rain.AI Enterprise Day Trading AI")
 
 # === Health Check Server for Render/Monitoring ===
-from threading import Thread
-import os
-
-app = Flask(__name__)
-
-@app.route("/health")
-def health_check():
-    return "OK", 200
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
-
-# Run health check server in background
-Thread(target=run_health_server, daemon=True).start()
-
-# === ENHANCED CONFIGURATION MANAGEMENT ===
-@dataclass
 class TradingConfig:
     """Centralized configuration management"""
     # Market Hours & Timing
@@ -373,24 +335,6 @@ class APIManager:
             else:
                 logger.warning("⚠️ Missing Alpaca API credentials - running in demo mode")
             
-            # News API
-            news_api_key = os.getenv("NEWS_API_KEY")
-            if news_api_key:
-                self.news_api = NewsApiClient(api_key=news_api_key)
-                logger.info("✅ News API connected successfully")
-            else:
-                logger.warning("⚠️ Missing News API key")
-                
-        except Exception as e:
-            logger.error(f"❌ API initialization failed: {e}")
-    
-    def safe_api_call(self, func, *args, max_retries: int = 3, **kwargs):
-        """Enhanced API call wrapper with rate limiting and retry logic"""
-        func_name = func.__name__ if hasattr(func, '__name__') else str(func)
-        
-        # Rate limiting
-        current_time = time.time()
-        if func_name in self.last_request_time:
             time_since_last = current_time - self.last_request_time[func_name]
             if time_since_last < 1.0:  # 1 second rate limit
                 time.sleep(1.0 - time_since_last)
@@ -816,24 +760,6 @@ class RealTimeRiskMonitor:
             self.halt_trading()
     
     def halt_trading(self):
-        """Halt all trading due to excessive drawdown"""
-        self.trading_halted = True
-        logger.error(f"🚨 TRADING HALTED - Drawdown: {self.current_drawdown:.2%}")
-        send_discord_alert(f"🚨 TRADING HALTED - Drawdown: {self.current_drawdown:.2%}", urgent=True)
-
-# === PORTFOLIO VAR/CVAR CALCULATOR ===
-class PortfolioRiskCalculator:
-    """Calculate Value at Risk and Conditional Value at Risk"""
-    
-    def __init__(self):
-        self.confidence_level = 0.95
-        self.lookback_days = 252
-        
-    def calculate_var_cvar(self, returns: np.ndarray) -> Tuple[float, float]:
-        """Calculate VaR and CVaR"""
-        if len(returns) < 30:
-            return 0.0, 0.0
-        
         # Sort returns
         sorted_returns = np.sort(returns)
         
@@ -1097,9 +1023,6 @@ class HeartbeatMonitor:
                 'instance_id': self.instance_id,
                 'timestamp': datetime.now().isoformat(),
                 'status': 'alive',
-                'trades_today': len(trading_state.trade_outcomes) if 'trading_state' in globals() else 0,
-                'open_positions': len(trading_state.open_positions) if 'trading_state' in globals() else 0,
-                'current_equity': trading_state.starting_equity if 'trading_state' in globals() else 100000,
                 'market_open': market_status.is_market_open(),
                 'trading_window': market_status.is_in_trading_window()
             }
@@ -1122,7 +1045,6 @@ class HeartbeatMonitor:
         active_instances = []
         
         try:
-            heartbeat_files = glob.glob('heartbeats/heartbeat_*.json')
             
             for file_path in heartbeat_files:
                 try:
@@ -1139,63 +1061,14 @@ class HeartbeatMonitor:
         
         except Exception as e:
             logger.error(f"❌ Instance check failed: {e}")
-        
-        return active_instances
-
-# === FLASK APP WITH ENHANCED HEALTH CHECKS ===
-app = Flask(__name__)
-
-@app.route('/health')
-def health_check():
-    """Comprehensive health check endpoint"""
-    try:
-        health_status = {
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'market_status': {
-                'market_open': market_status.is_market_open(),
-                'trading_window': market_status.is_in_trading_window(),
-                'near_eod': market_status.is_near_eod(),
-                'time_until_open': str(market_status.get_time_until_market_open())
-            },
             'bot_running': True,
             'paper_trading': config.PAPER_TRADING_MODE,
-            'api_status': {
-                'alpaca': api_manager.api is not None,
-                'news': api_manager.news_api is not None,
-                'discord': os.getenv("DISCORD_WEBHOOK_URL") is not None,
-                'redis': feature_cache.enabled if 'feature_cache' in globals() else False
-            },
-            'enterprise_features': {
-                'real_time_risk_monitoring': config.REAL_TIME_RISK_MONITORING,
-                'anomaly_detection': config.ANOMALY_DETECTION_ENABLED,
-                'feature_caching': config.FEATURE_CACHING_ENABLED,
-                'multi_instance_monitoring': config.MULTI_INSTANCE_MONITORING,
-                'paper_trading': config.PAPER_TRADING_MODE,
-                'ticker_evaluation': config.TICKER_EVALUATION_ENABLED,
-                'hold_logic': config.HOLD_POSITION_ENABLED
-            },
-            'features_active': {
-                'dual_horizon': True,
-                'ensemble_models': len(ensemble_model.short_term_models) if 'ensemble_model' in globals() else 0,
-                'q_learning': len(trading_state.q_table) if 'trading_state' in globals() else 0,
-                'sector_rotation': len(trading_state.sector_performance) if 'trading_state' in globals() else 0,
-                'support_resistance': len(trading_state.support_resistance_cache) if 'trading_state' in globals() else 0,
-                'volume_profile': len(trading_state.volume_profile_cache) if 'trading_state' in globals() else 0,
                 'sentiment_analysis': True,
                 'meta_model_approval': True,
                 'dynamic_watchlist': True,
                 'eod_liquidation': config.EOD_LIQUIDATION_ENABLED,
-                'ticker_evaluation': len(ticker_evaluator.evaluated_tickers) if 'ticker_evaluator' in globals() else 0
             },
             'performance_metrics': {
-                'total_trades': len(trading_state.trade_outcomes) if 'trading_state' in globals() else 0,
-                'win_rate': trading_state.risk_metrics.get('win_rate', 0) if 'trading_state' in globals() else 0,
-                'sharpe_ratio': trading_state.risk_metrics.get('sharpe_ratio', 0) if 'trading_state' in globals() else 0,
-                'model_accuracy': trading_state.model_accuracy.get('current', 0) if 'trading_state' in globals() else 0,
-                'current_drawdown': risk_monitor.current_drawdown if 'risk_monitor' in globals() else 0,
-                'trading_halted': risk_monitor.trading_halted if 'risk_monitor' in globals() else False,
-                'qualified_tickers': len([t for t in ticker_evaluator.evaluated_tickers.values() if t['passes']]) if 'ticker_evaluator' in globals() else 0
             }
         }
         return jsonify(health_status)
@@ -1230,24 +1103,6 @@ def home():
             '✅ FinBERT + VADER sentiment scoring',
             '✅ Meta-model approval',
             '✅ Dynamic watchlist optimization',
-            '✅ Trade cooldown management',
-            '✅ Kelly Criterion for position sizing',
-            '✅ End-of-day liquidation',
-            '✅ Discord alerts',
-            '✅ PnL tracking and trade outcome logging',
-            '✅ Dynamic stop-loss, profit targets, and profit decay exit logic',
-            '✅ Sector diversification filter',
-            '✅ Volume spike confirmation',
-            '✅ Live model accuracy tracking',
-            '✅ Q-learning via PyTorch QNetwork fallback',
-            '✅ Regime-aware model logic',
-            '🚀 ENTERPRISE FEATURES:',
-            '✅ Real-time risk monitoring with auto-halt',
-            '✅ Portfolio VaR/CVaR calculation',
-            '✅ Multivariate anomaly detection',
-            '✅ Comprehensive backtesting framework',
-            '✅ Paper trading mode with detailed logs',
-            '✅ Redis-based feature caching',
             '✅ Multi-instance heartbeat monitoring',
             '✅ Fault tolerance with health checks'
         ]
@@ -2105,7 +1960,6 @@ class DualHorizonEnsembleModel:
             meta_model = XGBClassifier(n_estimators=50, max_depth=3, random_state=42)
             meta_model.fit(X, y)
 
-            joblib.dump(meta_model, "meta_model.pkl")
             self.meta_model = meta_model
 
             logger.info(f"✅ Meta model retrained on {len(data)} samples.")
@@ -2406,7 +2260,6 @@ class DualHorizonEnsembleModel:
             }
             
             with open('models/ensemble/dual_horizon_ensemble.pkl', 'wb') as f:
-                pickle.dump(ensemble_data, f)
             
             logger.info("💾 Ensemble models saved successfully")
             
@@ -2421,7 +2274,6 @@ class DualHorizonEnsembleModel:
                 return False
             
             with open(model_path, 'rb') as f:
-                ensemble_data = pickle.load(f)
             
             self.short_term_models = ensemble_data.get('short_term_models', {})
             self.medium_term_models = ensemble_data.get('medium_term_models', {})
@@ -2935,52 +2787,6 @@ def get_current_equity() -> float:
         return trading_state.starting_equity
         
     except Exception as e:
-        logger.error(f"❌ Equity calculation failed: {e}")
-        return trading_state.starting_equity
-
-# === DISCORD ALERTS ===
-def send_discord_alert(message: str, urgent: bool = False):
-    """Send alert to Discord webhook"""
-    try:
-        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-        if not webhook_url:
-            return
-        
-        # Add emoji based on urgency
-        if urgent:
-            message = f"🚨 **URGENT** 🚨\n{message}"
-        else:
-            message = f"📊 {message}"
-        
-        payload = {
-            "content": message,
-            "username": "Trading Bot",
-            "avatar_url": "https://cdn.discordapp.com/embed/avatars/0.png"
-        }
-        
-        response = requests.post(webhook_url, json=payload, timeout=10)
-        
-        if response.status_code == 204:
-            logger.info("✅ Discord alert sent successfully")
-        else:
-            logger.warning(f"⚠️ Discord alert failed: {response.status_code}")
-            
-    except Exception as e:
-        logger.error(f"❌ Discord alert failed: {e}")
-
-# === KELLY CRITERION POSITION SIZING ===
-def calculate_kelly_position_size(win_rate: float, avg_win: float, avg_loss: float, 
-                                 account_value: float) -> float:
-    """Calculate optimal position size using Kelly Criterion"""
-    try:
-        if win_rate <= 0 or avg_win <= 0 or avg_loss <= 0:
-            return account_value * config.KELLY_FRACTION_MIN
-        
-        # Kelly formula: f = (bp - q) / b
-        # where b = avg_win/avg_loss, p = win_rate, q = 1 - win_rate
-        b = avg_win / avg_loss
-        p = win_rate
-        q = 1 - win_rate
         
         kelly_fraction = (b * p - q) / b
         
@@ -3175,30 +2981,6 @@ def execute_trade_with_ultra_advanced_logic(ticker: str, action: str, data: pd.D
                 
                 trading_state.trade_outcomes.append(trade_outcome)
                 
-                # Update risk metrics
-                trading_state.update_ultra_advanced_risk_metrics()
-            
-            # Send Discord alert
-            alert_message = f"{'📈' if action.lower() == 'buy' else '📉'} {action.upper()} {quantity} {ticker} @ ${current_price:.2f}"
-            if action.lower() == 'sell' and ticker in trading_state.trade_outcomes:
-                last_trade = trading_state.trade_outcomes[-1]
-                alert_message += f" | P&L: ${last_trade['pnl']:.2f} ({last_trade['return']:.2%})"
-            
-            send_discord_alert(alert_message)
-            
-            logger.info(f"✅ Trade executed: {action.upper()} {quantity} {ticker} @ ${current_price:.2f}")
-            return True
-        
-        return False
-        
-    except Exception as e:
-        logger.error(f"❌ Trade execution failed for {ticker}: {e}")
-        return False
-
-def get_ticker_sector(ticker: str) -> str:
-    """Get sector for a ticker"""
-    for sector, tickers in EXPANDED_SECTOR_UNIVERSE.items():
-        if ticker in tickers:
             return sector
     return "Unknown"
 
@@ -3296,24 +3078,6 @@ def perform_eod_liquidation():
         
         # Send summary alert
         liquidated_count = len(positions_to_liquidate)
-        held_count = len(positions_to_hold)
-        
-        alert_message = f"🌅 EOD Summary: {liquidated_count} positions liquidated, {held_count} held overnight"
-        send_discord_alert(alert_message)
-        
-        trading_state.eod_liquidation_triggered = True
-        logger.info(f"✅ EOD liquidation complete: {liquidated_count} liquidated, {held_count} held")
-        
-    except Exception as e:
-        logger.error(f"❌ EOD liquidation failed: {e}")
-
-# === MAIN TRADING LOGIC ===
-def ultra_advanced_trading_logic(ticker: str) -> bool:
-    """Ultra-advanced trading logic with all features integrated"""
-    try:
-        logger.info(f"🔄 Analyzing {ticker}...")
-        
-        # Get dual-horizon data
         short_data = get_enhanced_data(ticker, limit=100, days_back=config.SHORT_TERM_DAYS)
         medium_data = get_enhanced_data(ticker, limit=50, timeframe=TimeFrame.Day, days_back=config.MEDIUM_TERM_DAYS)
         
@@ -3485,50 +3249,7 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
 # === MAIN LOOP WITH 24/7 OPERATION ===
 def main_loop():
     """Main 24/7 trading loop with market awareness"""
-    logger.info("🚀 Starting Ultra-Advanced AI Trading Bot v7.0 - 24/7 Day Trading Edition")
-    
-    # Send startup alert
-    send_discord_alert("🚀 Ultra-Advanced AI Trading Bot v7.0 Started - 24/7 Day Trading Edition")
-    
-    # Initialize models if needed
-    if config.INITIAL_TRAINING_ENABLED and not trading_state.models_trained:
-        logger.info("🔄 Initial model training required...")
-        
-        # Load existing models first
-        if not ensemble_model.load_models():
-            logger.info("🔄 No existing models found, starting fresh training...")
-            
-            # Optimize watchlist and evaluate tickers
-            optimized_watchlist = watchlist_optimizer.optimize_watchlist()
-            
-            if len(optimized_watchlist) >= config.MIN_TICKERS_FOR_TRAINING:
-                # Train models with qualified tickers
                 training_success = ensemble_model.train_dual_horizon_ensemble(optimized_watchlist)
-                
-                if training_success:
-                    logger.info("✅ Initial training completed successfully")
-                    send_discord_alert("✅ Initial model training completed successfully")
-                    trading_state.models_trained = True
-                else:
-                    logger.error("❌ Initial training failed")
-                    send_discord_alert("❌ Initial model training failed", urgent=True)
-            else:
-                logger.error(f"❌ Insufficient qualified tickers for training: {len(optimized_watchlist)}")
-                send_discord_alert(f"❌ Insufficient qualified tickers for training: {len(optimized_watchlist)}", urgent=True)
-    
-    # Main loop
-    loop_count = 0
-    last_heartbeat = datetime.now()
-    last_watchlist_optimization = datetime.now()
-    last_model_retrain = datetime.now()
-    last_eod_check = datetime.now().date()
-    
-    while True:
-        try:
-            loop_count += 1
-            current_time = datetime.now()
-            
-            logger.info(f"🔄 Loop {loop_count} - {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
             
             # Send heartbeat
             if (current_time - last_heartbeat).total_seconds() >= 60:  # Every minute
@@ -3670,24 +3391,17 @@ def main_loop():
 
         except Exception as e:
             logger.error(f"❌ Main loop error: {e}")
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
-            # Send error alert
-            send_discord_alert(f"❌ Main loop error: {str(e)[:200]}", urgent=True)
-
-            # Wait before retrying loop
-            time.sleep(60)
-
-if __name__ == "__main__":
+# === Entry Point for Streamlit UI ===
+def run_ai_trading_bot():
+    # Replace this block with your real trading logic call
     try:
-        logger.info("🚀 Starting AI Trading Bot...")
-        main_loop()
-        logger.warning("⚠️ main_loop exited unexpectedly. Holding to prevent crash loop...")
-        while True:
-            time.sleep(300)
+        print("🔁 Running AI trading logic...")
+        # Example: train models, scan tickers, execute trades
+        # You can import and call your main loop or orchestrator here
+        # e.g. self.train_dual_horizon_ensemble(...), self.execute_trades(), etc.
+        # For now this is a placeholder
+        pass
     except Exception as e:
-        logger.error(f"🔥 Fatal error at top level: {e}")
-        logger.error(traceback.format_exc())
-        send_discord_alert(f"🔥 Fatal error: {e}")
-        time.sleep(60)  # Prevent Render crash loop
-        logger.info("🚨 Reached end of main script — this should not happen!")
+        print(f"❌ Error running bot: {e}")
+        raise
