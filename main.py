@@ -90,7 +90,7 @@ class RedisFeatureCache:
             # Ensure all keys are strings
             safe_features = {str(k): v for k, v in features.items()}
             key = f"features:{ticker}"
-            self.redis_client.setex(key, ttl, json.dumps(safe_features, default=str))
+            self.redis_client.setex(key, ttl, json.dumps(str_keys_features, default=str))
         except Exception as e:
             print(f"❌ Feature caching failed: {e}")
 
