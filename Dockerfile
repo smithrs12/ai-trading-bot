@@ -1,11 +1,21 @@
-# Dockerfile
+# Use official Python image
+FROM python:3.10
 
-FROM python:3.10-slim
-
+# Set working directory
 WORKDIR /app
-COPY . .
 
+# Copy project files into the container
+COPY . /app
+
+# Make start.sh executable
+RUN chmod +x start.sh
+
+# Install Python dependencies
 RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --retries 10 --timeout 60 -r requirements.txt
 
-CMD ["streamlit", "run", "app.py"]
+# Environment variable to show logs in real time
+ENV PYTHONUNBUFFERED=1
+
+# Entry point
+CMD ["./start.sh"]
