@@ -10,12 +10,12 @@ from trading_state import trading_state
 from main_user_isolated import market_status, redis_cache
 from ensemble_model import ensemble_model
 from meta_approval_system import meta_approval_system
+from logger import deduped_log, logger
 import api_manager
 
 # These need to exist in your modules:
 from execution_manager import ultra_advanced_trading_logic, perform_eod_liquidation
 from watchlist_optimizer import optimize_watchlist  # If separate module
-import logger
 
 def main_loop(user_id):
     """Main 24/7 trading loop with market awareness"""
@@ -131,7 +131,8 @@ def main_loop(user_id):
                     time.sleep(300)
                     continue
 
-            time.sleep(30)
+            for _ in range(30):
+                time.sleep(1)
 
         except KeyboardInterrupt:
             logger.deduped_log("info", "🛑 Shutdown requested by user")
