@@ -10,6 +10,7 @@ from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
 from meta_approval_system import meta_approval_system
+from risk_management import risk_manager
 import api_manager
 import logger
 
@@ -37,12 +38,16 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
         if not passes_sector_allocation(ticker):
             return False
 
+        if risk_manager.block_trades_if_risky():
+            logger.logger.warning(f"🚫 Trade blocked due to risk controls for {ticker}")
+            return False
+
         if not is_meta_approved(ticker, confidence):
             return False
 
         if action == 'buy' and can_enter_position(ticker):
             size = calculate_kelly_position_size(ticker, confidence)
-            return execute_buy(ticker, features)
+            return execute_buy(ticker, features, size)
 
         elif action == 'sell' and has_open_position(ticker):
             if should_exit_due_to_profit_decay(ticker):
@@ -50,13 +55,15 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
 
         elif should_add_to_position(ticker, confidence):
             logger.deduped_log("info", f"➕ Adding to {ticker} position (pyramiding)")
-            return execute_buy(ticker, features)
+            size = calculate_kelly_position_size(ticker, confidence)
+            return execute_buy(ticker, features, size)
 
         return False
 
     except Exception as e:
         logger.error(f"❌ Trade logic error for {ticker}: {e}")
         return False
+        
 # === End of Day Liquidation ===
 def perform_eod_liquidation():
     """Sell all open positions before market close if EOD liquidation is enabled."""
@@ -104,12 +111,12 @@ def has_open_position(ticker: str) -> bool:
     return False
 
 # === Execution Logic ===
-def execute_buy(ticker: str, features=None) -> bool:
+def execute_buy(ticker: str, features=None, size: int = 1) -> bool:
     """Places a buy order for the ticker."""
     try:
         order = api_manager.safe_api_call(lambda: api_manager.api.submit_order(
             symbol=ticker,
-            qty=1,
+            qty=size,
             side='buy',
             type='market',
             time_in_force='day'
