@@ -8,7 +8,7 @@ from trading_state import trading_state
 from main_user_isolated import market_status
 from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
-from technical_indicators import extract_features
+from technical_indicators import passes_vwap, passes_volume_spike, extract_features
 import api_manager
 import logger
 
