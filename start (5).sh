@@ -1,2 +1,2 @@
 #!/bin/bash
-streamlit run app.py
+python main_user_isolated.py
