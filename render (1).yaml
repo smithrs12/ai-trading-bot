@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: ai-trading-ui
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT
+    plan: free
+    envVars:
+      - key: USER_SESSION_ID
+        value: web-ui
+      - key: REDIS_URL
+        value: your_redis_url
+      - key: ALPACA_API_KEY
+        value: your_key
+      - key: ALPACA_SECRET_KEY
+        value: your_secret
+      - key: ALPACA_BASE_URL
+        value: https://paper-api.alpaca.markets
+
+  - type: worker
+    name: ai-trading-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    startCommand: python trading_worker.py
+    plan: free
+    envVars:
+      - key: USER_SESSION_ID
+        value: background-worker
+      - key: REDIS_URL
+        value: your_redis_url
+      - key: ALPACA_API_KEY
+        value: your_key
+      - key: ALPACA_SECRET_KEY
+        value: your_secret
+      - key: ALPACA_BASE_URL
+        value: https://paper-api.alpaca.markets
