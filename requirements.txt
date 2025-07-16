@@ -16,3 +16,4 @@ transformers
 newsapi-python
 oauth2client
 streamlit-autorefresh
+yfinance
