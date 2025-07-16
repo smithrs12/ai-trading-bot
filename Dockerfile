@@ -12,7 +12,7 @@ RUN chmod +x start.sh
 
 # Install Python dependencies
 RUN pip install --upgrade pip
-RUN pip install --retries 10 --timeout 60 -r requirements.txt
+RUN pip install --timeout 60 -r requirements.txt
 
 # Environment variable to show logs in real time
 ENV PYTHONUNBUFFERED=1
