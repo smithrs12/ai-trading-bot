@@ -8,6 +8,7 @@ from trading_state import trading_state
 from main_user_isolated import market_status
 from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
+from technical_indicators import extract_features
 import api_manager
 import logger
 
@@ -56,13 +57,6 @@ def perform_eod_liquidation():
             except Exception as e:
                 logger.error(f"❌ Failed to liquidate {ticker}: {e}")
     trading_state.eod_liquidation_triggered = True
-
-# === Helper: Feature Engineering ===
-def extract_features(ticker: str):
-    """Extracts normalized features for RL model input (stub)."""
-    # You should replace this with your real indicators
-    # Shape must match q_agent.state_size
-    return [0.1] * q_agent.state_size
 
 # === Helper: Filter Logic ===
 def passes_all_filters(ticker: str) -> bool:
