@@ -9,6 +9,7 @@ from main_user_isolated import market_status
 from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
+from meta_approval_system import meta_approval_system
 import api_manager
 import logger
 
@@ -25,22 +26,37 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
         if not passes_all_filters(ticker):
             return False
 
+        # Get features + confidence from ensemble
         features = extract_features(ticker)
+        confidence = ensemble_model.predict_weighted_proba(ticker)
         action_index = q_agent.act(features)
         action = ACTION_MAP[action_index]
 
-        logger.deduped_log("debug", f"📊 {ticker} - RL Decision: {action}")
+        logger.deduped_log("debug", f"📊 {ticker} - RL Decision: {action} | Confidence: {confidence:.2f}")
+
+        if not passes_sector_allocation(ticker):
+            return False
+
+        if not is_meta_approved(ticker, confidence):
+            return False
 
         if action == 'buy' and can_enter_position(ticker):
+            size = calculate_kelly_position_size(ticker, confidence)
             return execute_buy(ticker, features)
+
         elif action == 'sell' and has_open_position(ticker):
-            return execute_sell(ticker, features)
+            if should_exit_due_to_profit_decay(ticker):
+                return execute_sell(ticker, features)
+
+        elif should_add_to_position(ticker, confidence):
+            logger.deduped_log("info", f"➕ Adding to {ticker} position (pyramiding)")
+            return execute_buy(ticker, features)
 
         return False
+
     except Exception as e:
         logger.error(f"❌ Trade logic error for {ticker}: {e}")
         return False
-
 # === End of Day Liquidation ===
 def perform_eod_liquidation():
     """Sell all open positions before market close if EOD liquidation is enabled."""
@@ -141,3 +157,74 @@ def update_cooldown(ticker: str):
     if not hasattr(trading_state, "cooldown_map"):
         trading_state.cooldown_map = {}
     trading_state.cooldown_map[ticker] = datetime.now()
+
+def is_meta_approved(ticker: str, proba: float) -> bool:
+    """
+    Rejects trades unless the model meets accuracy and sample thresholds.
+    """
+    if not meta_approval_system.is_model_approved(ticker, proba):
+        logger.deduped_log("warn", f"⚠️ Trade rejected by meta model for {ticker}")
+        return False
+    return True
+
+def calculate_kelly_position_size(ticker: str, confidence: float) -> int:
+    """
+    Uses Kelly Criterion and account balance to size trades.
+    """
+    try:
+        if config.POSITION_SIZING_MODE.lower() == "fixed":
+            return config.FIXED_TRADE_AMOUNT
+
+        kelly_fraction = ((2 * confidence) - 1) * config.KELLY_MULTIPLIER
+        kelly_fraction = max(0.01, min(kelly_fraction, config.MAX_PORTFOLIO_RISK))
+
+        account = api_manager.safe_api_call(api_manager.api.get_account)
+        if account:
+            equity = float(account.cash)
+            return max(1, int(equity * kelly_fraction))
+
+    except Exception as e:
+        logger.error(f"❌ Kelly sizing failed for {ticker}: {e}")
+    return config.FIXED_TRADE_AMOUNT
+
+def log_trade_outcome(ticker: str, result: dict):
+    """
+    Save PnL, reward, model inputs for RL training.
+    """
+    outcome = {
+        "ticker": ticker,
+        "time": datetime.now().isoformat(),
+        **result
+    }
+    trading_state.trade_outcomes.append(outcome)
+
+def passes_sector_allocation(ticker: str) -> bool:
+    """
+    Ensures portfolio isn't over-concentrated in one sector.
+    Replace with real sector data lookup.
+    """
+    # Example: limit 2 tech stocks
+    tech_tickers = {"AAPL", "MSFT", "GOOGL", "NVDA", "META", "AMD"}
+    open_tech = [pos for pos in trading_state.open_positions if pos["ticker"] in tech_tickers]
+
+    if ticker in tech_tickers and len(open_tech) >= 2:
+        return False
+    return True
+
+def should_exit_due_to_profit_decay(ticker: str) -> bool:
+    """
+    Exit trade if price has stalled or regressed from peak.
+    Placeholder version — replace with trailing peak % logic.
+    """
+    return False  # Implement real trailing stop later
+
+def should_add_to_position(ticker: str, confidence: float) -> bool:
+    """
+    Allow scaling into position if it's moving in favor and confidence is high.
+    """
+    if not has_open_position(ticker):
+        return False
+    if confidence >= 0.9:
+        return True
+    return False
+
