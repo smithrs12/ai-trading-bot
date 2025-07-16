@@ -1,15 +1,25 @@
 # config.py
 import os
+import redis
+import json
+from urllib.parse import urlparse
 
 # Unique user identifier (used for Redis key namespacing)
-USER_ID = os.getenv("USER_ID", "default_user")
+USER_ID = os.getenv("USER_SESSION_ID", "default_user")
 
 class Config:
     def __init__(self):
-        self.PAPER_TRADING_MODE = os.getenv("PAPER_TRADING_MODE", "True").lower() == "true"
+        self.USER_ID = USER_ID
+        self.REDIS_URL = self._get("REDIS_URL", required=False)
+        self.PAPER_TRADING_MODE = True  # default
+
+        # Try Redis override
+        self._load_trading_mode_from_redis()
+
+        # Then load correct key set
         self._load_keys()
 
-        self.REDIS_URL = self._get("REDIS_URL", required=False)
+        # === Additional config values ===
         self.EOD_LIQUIDATION_ENABLED = self._get("EOD_LIQUIDATION_ENABLED", default="True").lower() == "true"
         self.MULTI_INSTANCE_MONITORING = self._get("MULTI_INSTANCE_MONITORING", default="False").lower() == "true"
         self.DEBUG = self._get("DEBUG", default="False").lower() == "true"
@@ -36,22 +46,50 @@ class Config:
         self.FIXED_TRADE_AMOUNT = int(self._get("FIXED_TRADE_AMOUNT", default="1000"))
         self.MAX_PORTFOLIO_RISK = float(self._get("MAX_PORTFOLIO_RISK", default="0.25"))
         self.KELLY_MULTIPLIER = float(self._get("KELLY_MULTIPLIER", default="0.5"))
-        self._load_keys()
 
-    def _load_keys(self):
-        """Reload API keys and base URL based on trading mode"""
-        mode = os.getenv("TRADING_MODE", "paper").lower()
+    def _load_trading_mode_from_redis(self):
+        """Attempt to load PAPER_TRADING_MODE from Redis if available"""
+        if not self.REDIS_URL:
+            self._fallback_trading_mode()
+            return
 
-        if mode == "live":
-            self.ALPACA_API_KEY = os.getenv("ALPACA_LIVE_API_KEY")
-            self.ALPACA_SECRET_KEY = os.getenv("ALPACA_LIVE_SECRET_KEY")
-            self.ALPACA_BASE_URL = os.getenv("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets")
+        try:
+            parsed = urlparse(self.REDIS_URL)
+            redis_client = redis.Redis(
+                host=parsed.hostname,
+                port=parsed.port,
+                password=parsed.password,
+                ssl=parsed.scheme == "rediss",
+                decode_responses=True
+            )
+            key = f"{self.USER_ID}:mode"
+            raw = redis_client.get(key)
+            if raw:
+                mode_data = json.loads(raw)
+                self.PAPER_TRADING_MODE = mode_data.get("paper", True)
+                return
+        except Exception as e:
+            print(f"⚠️ Redis mode load failed: {e}")
+        self._fallback_trading_mode()
+
+    def _fallback_trading_mode(self):
+        """Fallback if Redis fails"""
+        mode_env = os.getenv("TRADING_MODE", "paper").lower()
+        if mode_env == "live":
             self.PAPER_TRADING_MODE = False
         else:
+            self.PAPER_TRADING_MODE = os.getenv("PAPER_TRADING_MODE", "true").lower() == "true"
+
+    def _load_keys(self):
+        """Load correct key set depending on mode"""
+        if self.PAPER_TRADING_MODE:
             self.ALPACA_API_KEY = os.getenv("ALPACA_PAPER_API_KEY")
             self.ALPACA_SECRET_KEY = os.getenv("ALPACA_PAPER_SECRET_KEY")
             self.ALPACA_BASE_URL = os.getenv("ALPACA_PAPER_BASE_URL", "https://paper-api.alpaca.markets")
-            self.PAPER_TRADING_MODE = True    
+        else:
+            self.ALPACA_API_KEY = os.getenv("ALPACA_LIVE_API_KEY")
+            self.ALPACA_SECRET_KEY = os.getenv("ALPACA_LIVE_SECRET_KEY")
+            self.ALPACA_BASE_URL = os.getenv("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets")
 
     def _get(self, var, default=None, required=True):
         value = os.getenv(var, default)
