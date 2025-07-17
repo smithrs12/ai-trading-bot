@@ -12,6 +12,7 @@ from ensemble_model import ensemble_model
 from meta_approval_system import meta_approval_system
 from logger import deduped_log, logger
 from technical_indicators import get_indicator_snapshot, passes_all_filters
+from market_regime import regime_detector
 import api_manager
 
 # These need to exist in your modules:
@@ -31,14 +32,23 @@ def main_loop(user_id):
             current_time = datetime.now()
             loop_count += 1
 
-            # Optional heartbeat logic
-            if (current_time - last_heartbeat).total_seconds() >= 60:
-                # heartbeat_monitor.send_heartbeat()  # Optional module
-                last_heartbeat = current_time
-
+            # Always update status and regime
             market_open = market_status.is_market_open()
             trading_window = market_status.is_in_trading_window()
             near_eod = market_status.is_near_eod()
+
+            last_regime = getattr(trading_state, "market_regime", None)
+            current_regime = regime_detector.detect_market_regime()
+
+            if current_regime != last_regime:
+                logger.deduped_log("info", f"🔄 Market regime changed: {last_regime or 'unknown'} → {current_regime}")
+
+            trading_state.market_regime = current_regime
+
+            # Optional heartbeat
+            if (current_time - last_heartbeat).total_seconds() >= 60:
+                # heartbeat_monitor.send_heartbeat()  # Optional module
+                last_heartbeat = current_time
 
             logger.deduped_log("info", f"📊 Market Status: Open={market_open}, Trading Window={trading_window}, Near EOD={near_eod}")
 
