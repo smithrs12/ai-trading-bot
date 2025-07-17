@@ -4,12 +4,15 @@ import pandas as pd
 import ta
 from datetime import datetime, timedelta
 
+from main_user_isolated import redis_cache, redis_key
+from logger import logger
+
 from main_user_isolated import redis_cache, redis_key  # 👈 Required
 
 def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
     """
     Fetches 1-minute bars from Alpaca and computes technical indicators.
-    Caches result in Redis for efficiency.
+    Uses Redis to cache results for performance.
     """
     cache_key = redis_key("INDICATOR_SNAPSHOT", ticker)
     cached = redis_cache.get(cache_key)
@@ -47,7 +50,9 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
         df.sort_index(inplace=True)
 
         # === Technical Indicators ===
-        df["vwap"] = ta.volume.volume_weighted_average_price(df["high"], df["low"], df["close"], df["volume"])
+        df["vwap"] = ta.volume.VolumeWeightedAveragePrice(
+            high=df["high"], low=df["low"], close=df["close"], volume=df["volume"]
+        ).vwap()
         df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
         df["macd"] = ta.trend.MACD(df["close"]).macd_diff()
         df["roc"] = ta.momentum.ROCIndicator(df["close"]).roc()
@@ -60,8 +65,9 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
         return df
 
     except Exception as e:
-        from logger import logger
         logger.warning(f"⚠️ Alpaca snapshot failed for {ticker}: {e}")
+
+        return pd.DataFrame()
         return pd.DataFrame()
 
 def extract_features(ticker: str) -> list:
