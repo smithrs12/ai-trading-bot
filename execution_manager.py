@@ -141,16 +141,43 @@ def execute_sell(ticker: str, features=None) -> bool:
             time_in_force='day'
         ))
         if order:
-            trading_state.open_positions = [
-                pos for pos in trading_state.open_positions if pos["ticker"] != ticker
-            ]
+            # Find & remove position
+            matched_pos = None
+            updated_positions = []
+            for pos in trading_state.open_positions:
+                if pos["ticker"] == ticker:
+                    matched_pos = pos
+                else:
+                    updated_positions.append(pos)
+            trading_state.open_positions = updated_positions
+
             update_cooldown(ticker)
+
             logger.deduped_log("info", f"🔴 SELL {ticker}")
+
+            # === Log outcome for reinforcement learning
+            if matched_pos:
+                entry_price = matched_pos.get("entry_price", 0.0)
+                exit_price = get_price(ticker)
+                pnl = exit_price - entry_price
+                reward = 1 if pnl > 0 else -1
+
+                log_trade_outcome(ticker, {
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "pnl": pnl,
+                    "reward": reward,
+                    "features": matched_pos.get("features", features),
+                    "timestamp": datetime.now().isoformat()
+                })
+
             return True
+
     except Exception as e:
         logger.error(f"❌ Sell execution failed for {ticker}: {e}")
-    return False
 
+    return False
+    
 def get_price(ticker: str) -> float:
     """
     Fetch latest price using Alpaca, with Redis cache fallback.
