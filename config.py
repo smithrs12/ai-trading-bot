@@ -48,6 +48,7 @@ class Config:
         self.KELLY_MULTIPLIER = float(self._get("KELLY_MULTIPLIER", default="0.5"))
         self.RSI_MIN = int(self._get("RSI_MIN", default="30"))
         self.RSI_MAX = int(self._get("RSI_MAX", default="70"))
+        self.MAX_HOLD_DURATION_MINUTES = int(self._get("MAX_HOLD_DURATION_MINUTES", default="180"))
 
     def _load_trading_mode_from_redis(self):
         """Attempt to load PAPER_TRADING_MODE from Redis if available"""
