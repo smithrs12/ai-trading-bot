@@ -48,7 +48,10 @@ def passes_all_filters(ticker: str, data=None, regime: str = "neutral") -> bool:
 
     # === RSI filter ===
     rsi = latest.get("rsi", None)
-    if rsi is None or rsi > 70 or rsi < 30:
+    rsi_min = getattr(config, "RSI_MIN", 30)
+    rsi_max = getattr(config, "RSI_MAX", 70)
+
+    if rsi is None or rsi < rsi_min or rsi > rsi_max:
         return False
 
     # === ADX (trend strength) — optional, if you're calculating it
