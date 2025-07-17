@@ -4,6 +4,7 @@ from datetime import datetime
 import traceback
 from config import config
 from trading_state import trading_state
+from main_user_isolated import redis_cache, redis_key
 import logger
 import api_manager
 
@@ -52,23 +53,23 @@ def get_combined_sentiment(text: str) -> float:
 
 def get_sentiment(ticker: str) -> float:
     """
-    Cached combined sentiment score for a ticker.
+    Retrieves cached sentiment or performs a new analysis.
+    Uses Redis to cache sentiment per ticker.
     """
     try:
-        cache = trading_state.sentiment_cache.get(ticker)
-        now = datetime.now()
-
-        if cache and (now - cache["timestamp"]).total_seconds() < 1800:
-            return cache["score"]
+        cache_key = redis_key("SENTIMENT_SCORE", ticker)
+        cached = redis_cache.get(cache_key)
+        if cached:
+            return float(cached)
 
         text = fetch_reddit_and_news(ticker)
-        score = get_combined_sentiment(text)
+        score = analyze_news_sentiment(text)
 
+        redis_cache.set(cache_key, score, ttl_seconds=1800)  # Cache for 30 minutes
         trading_state.sentiment_cache[ticker] = {
             "score": score,
-            "timestamp": now
+            "timestamp": datetime.now()
         }
-
         return score
 
     except Exception:
