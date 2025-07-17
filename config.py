@@ -46,6 +46,8 @@ class Config:
         self.FIXED_TRADE_AMOUNT = int(self._get("FIXED_TRADE_AMOUNT", default="1000"))
         self.MAX_PORTFOLIO_RISK = float(self._get("MAX_PORTFOLIO_RISK", default="0.25"))
         self.KELLY_MULTIPLIER = float(self._get("KELLY_MULTIPLIER", default="0.5"))
+        self.RSI_MIN = int(self._get("RSI_MIN", default="30"))
+        self.RSI_MAX = int(self._get("RSI_MAX", default="70"))
 
     def _load_trading_mode_from_redis(self):
         """Attempt to load PAPER_TRADING_MODE from Redis if available"""
