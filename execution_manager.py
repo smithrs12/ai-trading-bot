@@ -12,6 +12,7 @@ from technical_indicators import passes_vwap, passes_volume_spike, extract_featu
 from meta_approval_system import meta_approval_system
 from risk_management import risk_manager
 from sentiment_analysis import get_sentiment
+from filter_logic import passes_all_filters
 import api_manager
 import logger
 
@@ -58,6 +59,11 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
             logger.deduped_log("info", f"➕ Adding to {ticker} position (pyramiding)")
             size = calculate_kelly_position_size(ticker, confidence)
             return execute_buy(ticker, features, size)
+
+        elif action == 'hold' and has_open_position(ticker):
+            if should_hold_position(ticker, confidence):
+                logger.deduped_log("info", f"🤝 HOLD {ticker}")
+                return False
 
         return False
 
@@ -116,16 +122,27 @@ def execute_buy(ticker: str, features=None, size: int = 1) -> bool:
             type='market',
             time_in_force='day'
         ))
+
         if order:
-            trading_state.open_positions.append({
+            entry_price = get_price(ticker)
+
+            # Log new position in both trackers
+            position = {
                 "ticker": ticker,
                 "entry_time": datetime.now(),
-                "entry_price": get_price(ticker),
-                "features": features
-            })
+                "entry_price": entry_price,
+                "features": features,
+                "size": size
+                "peak_price": entry_price,  # Track peak price
+            }
+            trading_state.open_positions.append(position)
+            trading_state.positions_by_ticker[ticker] = position
+
             update_cooldown(ticker)
-            logger.deduped_log("info", f"🟢 BUY {ticker}")
+
+            logger.deduped_log("info", f"🟢 BUY {ticker} @ ${entry_price:.2f} x{size}")
             return True
+
     except Exception as e:
         logger.error(f"❌ Buy execution failed for {ticker}: {e}")
     return False
@@ -140,42 +157,40 @@ def execute_sell(ticker: str, features=None) -> bool:
             type='market',
             time_in_force='day'
         ))
+
         if order:
-            # Find & remove position
-            matched_pos = None
-            updated_positions = []
-            for pos in trading_state.open_positions:
-                if pos["ticker"] == ticker:
-                    matched_pos = pos
-                else:
-                    updated_positions.append(pos)
-            trading_state.open_positions = updated_positions
+            entry = trading_state.positions_by_ticker.get(ticker)
+            exit_price = get_price(ticker)
+            pnl = None
 
-            update_cooldown(ticker)
+            if entry:
+                entry_price = entry.get("entry_price", 0)
+                size = entry.get("size", 1)
+                pnl = round((exit_price - entry_price) * size, 2)
 
-            logger.deduped_log("info", f"🔴 SELL {ticker}")
-
-            # === Log outcome for reinforcement learning
-            if matched_pos:
-                entry_price = matched_pos.get("entry_price", 0.0)
-                exit_price = get_price(ticker)
-                pnl = exit_price - entry_price
-                reward = 1 if pnl > 0 else -1
-
-                log_trade_outcome(ticker, {
+                outcome = {
+                    "ticker": ticker,
+                    "entry_time": entry.get("entry_time"),
+                    "exit_time": datetime.now(),
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "pnl": pnl,
-                    "reward": reward,
-                    "features": matched_pos.get("features", features),
-                    "timestamp": datetime.now().isoformat()
-                })
+                    "size": size
+                }
+                trading_state.trade_outcomes.append(outcome)
+                del trading_state.positions_by_ticker[ticker]
 
+            # Remove from open_positions
+            trading_state.open_positions = [
+                pos for pos in trading_state.open_positions if pos["ticker"] != ticker
+            ]
+
+            update_cooldown(ticker)
+            logger.deduped_log("info", f"🔴 SELL {ticker} @ ${exit_price:.2f} | PnL: ${pnl:.2f}")
             return True
 
     except Exception as e:
         logger.error(f"❌ Sell execution failed for {ticker}: {e}")
-
     return False
     
 def get_price(ticker: str) -> float:
@@ -257,12 +272,40 @@ def passes_sector_allocation(ticker: str) -> bool:
         return False
     return True
 
+def should_hold_position(ticker: str, confidence: float) -> bool:
+    """
+    Decides whether to hold a position based on sentiment or technicals.
+    Placeholder: hold if confidence is mid-range.
+    """
+    if 0.4 < confidence < 0.7:
+        return True
+    return False
+
 def should_exit_due_to_profit_decay(ticker: str) -> bool:
-    """
-    Exit trade if price has stalled or regressed from peak.
-    Placeholder version — replace with trailing peak % logic.
-    """
-    return False  # Implement real trailing stop later
+    position = trading_state.positions_by_ticker.get(ticker)
+    if not position:
+        return False
+
+    current_price = get_price(ticker)
+    peak_price = position.get("peak_price", current_price)
+    entry_price = position["entry_price"]
+
+    # Update peak if current is higher
+    if current_price > peak_price:
+        position["peak_price"] = current_price
+        return False
+
+    # Exit if drawdown from peak exceeds 1%
+    drawdown = (peak_price - current_price) / peak_price
+    gain = (current_price - entry_price) / entry_price
+
+    return gain > 0.03 and drawdown > 0.01
+
+    # Also exit if position is older than max age
+    max_hold_minutes = getattr(config, "MAX_HOLD_DURATION_MINUTES", 180)
+    age_minutes = (datetime.now() - position["entry_time"]).total_seconds() / 60
+    if age_minutes > max_hold_minutes:
+        return True
 
 def should_add_to_position(ticker: str, confidence: float) -> bool:
     """
