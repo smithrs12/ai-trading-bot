@@ -5,7 +5,7 @@ from datetime import datetime
 
 from config import config
 from trading_state import trading_state
-from main_user_isolated import market_status
+from main_user_isolated import market_status, redis_cache, redis_key
 from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
@@ -213,8 +213,25 @@ def execute_sell(ticker: str, features=None) -> bool:
     return False
 
 def get_price(ticker: str) -> float:
-    """Fetches latest price (stub)."""
-    return 100.0  # Stub — you may want to pull live price here
+    """
+    Fetch latest price using Alpaca, with Redis cache fallback.
+    """
+    try:
+        cache_key = redis_key("LAST_PRICE", ticker)
+        cached = redis_cache.get(cache_key)
+        if cached:
+            return cached
+
+        bars = api_manager.safe_api_call(
+            lambda: api_manager.api.get_latest_trade(ticker)
+        )
+        if bars and hasattr(bars, "price"):
+            price = float(bars.price)
+            redis_cache.set(cache_key, price, ttl_seconds=60)
+            return price
+    except Exception as e:
+        logger.logger.warning(f"⚠️ get_price failed for {ticker}: {e}")
+    return 100.0  # fallback
 
 def update_cooldown(ticker: str):
     if not hasattr(trading_state, "cooldown_map"):
