@@ -83,19 +83,63 @@ def perform_eod_liquidation():
     trading_state.eod_liquidation_triggered = True
 
 # === Helper: Filter Logic ===
-def passes_all_filters(ticker: str) -> bool:
-    """Combines all filter checks — sentiment, momentum, volume, etc."""
+def passes_all_filters(ticker: str, data=None, regime: str = "neutral") -> bool:
+    """
+    Combines all filter checks — sentiment, volume, price action, regime, technicals.
+    Optionally accepts `data` (pd.DataFrame) and `regime` string to prevent duplicate calculations.
+    """
     from sentiment_analysis import get_sentiment
-    from technical_indicators import passes_vwap, passes_volume_spike
+    from technical_indicators import (
+        passes_vwap,
+        passes_volume_spike,
+        calculate_price_momentum,
+        get_indicator_snapshot
+    )
+    from config import config
 
-    if get_sentiment(ticker) < 0:
+    # === Sentiment filter ===
+    sentiment_score = get_sentiment(ticker)
+    if sentiment_score < 0.1:
         return False
 
+    # === VWAP & volume ===
     if not passes_vwap(ticker):
         return False
-
     if not passes_volume_spike(ticker):
         return False
+
+    # === Load indicators if not passed
+    if data is None:
+        data = get_indicator_snapshot(ticker)  # Your own function that returns latest df row
+        if data is None or data.empty:
+            return False
+        latest = data.iloc[-1]
+    else:
+        latest = data.iloc[-1]
+
+    # === Price momentum ===
+    price_momentum = calculate_price_momentum(ticker)
+    if abs(price_momentum) < config.PRICE_MOMENTUM_MIN:
+        return False
+
+    # === RSI filter ===
+    rsi = latest.get("rsi_14", None)
+    if rsi is None or rsi > 70 or rsi < 30:
+        return False
+
+    # === ADX (trend strength) ===
+    adx = latest.get("adx", 0)
+    if adx < 20:
+        return False
+
+    # === Market regime logic ===
+    if config.ENFORCE_REGIME_FILTER and regime == "bearish":
+        return False
+
+    # === Optional: Bollinger position, MACD, etc. ===
+    # bb_pos = latest.get("bb_position", 0.5)
+    # if bb_pos > 0.9 or bb_pos < 0.1:
+    #     return False
 
     return True
 
