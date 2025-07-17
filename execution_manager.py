@@ -11,6 +11,7 @@ from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
 from meta_approval_system import meta_approval_system
 from risk_management import risk_manager
+from sentiment_analysis import get_sentiment
 import api_manager
 import logger
 
@@ -84,8 +85,19 @@ def perform_eod_liquidation():
 # === Helper: Filter Logic ===
 def passes_all_filters(ticker: str) -> bool:
     """Combines all filter checks — sentiment, momentum, volume, etc."""
-    # This is where you'd call: passes_vwap(), passes_volume_spike(), passes_sentiment(), etc.
-    return True  # Stub: allow all
+    from sentiment_analysis import get_sentiment
+    from technical_indicators import passes_vwap, passes_volume_spike
+
+    if get_sentiment(ticker) < 0:
+        return False
+
+    if not passes_vwap(ticker):
+        return False
+
+    if not passes_volume_spike(ticker):
+        return False
+
+    return True
 
 # === Helper: Buy Conditions ===
 def can_enter_position(ticker: str) -> bool:
