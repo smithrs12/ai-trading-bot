@@ -11,6 +11,7 @@ from main_user_isolated import market_status, redis_cache
 from ensemble_model import ensemble_model
 from meta_approval_system import meta_approval_system
 from logger import deduped_log, logger
+from technical_indicators import get_indicator_snapshot, passes_all_filters
 import api_manager
 
 # These need to exist in your modules:
@@ -60,9 +61,20 @@ def main_loop(user_id):
                     trades_executed = 0
                     for ticker in current_watchlist:
                         try:
+                            features_df = get_indicator_snapshot(ticker)
+                            if features_df is None or features_df.empty:
+                                continue
+
+                            current_regime = getattr(trading_state, "market_regime", "neutral")
+
+                            if not passes_all_filters(ticker, data=features_df, regime=current_regime):
+                                continue
+
                             if ultra_advanced_trading_logic(ticker):
                                 trades_executed += 1
-                            time.sleep(1)  # Delay between trades
+
+                            time.sleep(1)
+
                         except Exception as e:
                             logger.error(f"❌ Error processing {ticker}: {e}")
                             continue
