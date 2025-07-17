@@ -52,6 +52,7 @@ def passes_all_filters(ticker: str, data=None, regime: str = "neutral") -> bool:
     rsi_max = getattr(config, "RSI_MAX", 70)
 
     if rsi is None or rsi < rsi_min or rsi > rsi_max:
+        logger.logger.debug(f"⛔ {ticker} filtered out by RSI: {rsi:.2f} not in [{rsi_min}, {rsi_max}]")
         return False
 
     # === ADX (trend strength) — optional, if you're calculating it
