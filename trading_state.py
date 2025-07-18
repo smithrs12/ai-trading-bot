@@ -1,7 +1,6 @@
-# trading_state.py
-
 from config import config
 from datetime import datetime
+import api_manager
 
 class TradingState:
     def __init__(self):
@@ -25,6 +24,11 @@ class TradingState:
         self.sector_allocations = {}  # {ticker: sector}
         self.equity_curve = []
 
+        # 🔧 Added fields
+        self.market_regime = "neutral"  # Used on dashboard
+        self.daily_trade_count = 0  # Track # of trades per day
+        self.model_predictions = {}  # Optional: {ticker: proba}
+
     def reset_daily(self):
         print("🔁 Resetting daily state")
         self.open_positions = []
@@ -34,10 +38,22 @@ class TradingState:
         self.sentiment_cache = {}
         self.eod_liquidation_triggered = False
         self.models_trained = False
+        self.daily_trade_count = 0
         self.daily_reset_time = datetime.now().date()
 
     def update_ultra_advanced_risk_metrics(self):
         print("📊 Updating ultra advanced risk metrics (placeholder)")
         # Could add drawdown tracking, Sharpe ratio calc, etc.
+
+    def log_equity_curve(self):
+        try:
+            account = api_manager.safe_api_call(api_manager.api.get_account)
+            if account:
+                self.equity_curve.append({
+                    "time": datetime.now(),
+                    "equity": float(account.equity)
+                })
+        except Exception as e:
+            print(f"⚠️ Equity curve logging failed: {e}")
 
 trading_state = TradingState()
