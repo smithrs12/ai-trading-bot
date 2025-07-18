@@ -295,17 +295,22 @@ def should_exit_due_to_profit_decay(ticker: str) -> bool:
         position["peak_price"] = current_price
         return False
 
-    # Exit if drawdown from peak exceeds 1%
+    # Drawdown from peak
     drawdown = (peak_price - current_price) / peak_price
     gain = (current_price - entry_price) / entry_price
+    profit_decay_exit = gain > 0.03 and drawdown > 0.01
 
-    return gain > 0.03 and drawdown > 0.01
-
-    # Also exit if position is older than max age
+    # Aging out logic
     max_hold_minutes = getattr(config, "MAX_HOLD_DURATION_MINUTES", 180)
     age_minutes = (datetime.now() - position["entry_time"]).total_seconds() / 60
-    if age_minutes > max_hold_minutes:
-        return True
+    age_exit = age_minutes > max_hold_minutes
+
+    if age_exit:
+        logger.deduped_log("info", f"⏳ Exiting {ticker} due to max hold duration ({int(age_minutes)} min)")
+    if profit_decay_exit:
+        logger.deduped_log("info", f"📉 Exiting {ticker} due to profit decay (gain={gain:.2%}, drawdown={drawdown:.2%})")
+
+    return age_exit or profit_decay_exit
 
 def should_add_to_position(ticker: str, confidence: float) -> bool:
     """
