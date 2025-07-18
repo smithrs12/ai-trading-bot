@@ -1,5 +1,3 @@
-# ensemble_model.py
-
 import random
 from config import config
 from trading_state import trading_state
@@ -48,6 +46,13 @@ class EnsembleModel:
             # Simulated probabilities
             short_conf = round(random.uniform(0.5, 0.95), 4)
             medium_conf = round(random.uniform(0.5, 0.95), 4)
+
+            # Store for transparency
+            trading_state.model_confidence_snapshot[ticker] = {
+                "short_term": short_conf,
+                "medium_term": medium_conf,
+                "timestamp": config.get_now_str()
+            }
 
             weighted_conf = round((short_conf * 0.6 + medium_conf * 0.4), 4)
             redis_cache.set(cache_key, weighted_conf, ttl_seconds=300)
