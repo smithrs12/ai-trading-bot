@@ -289,10 +289,15 @@ def log_trade_outcome(ticker: str, result: dict):
         **result
     }
     trading_state.trade_outcomes.append(outcome)
-    
+
+    # Optionally update equity curve
     try:
-        if hasattr(trading_state, "log_equity_curve"):
-            trading_state.log_equity_curve()
+        account = api_manager.safe_api_call(api_manager.api.get_account)
+        if account:
+            trading_state.equity_curve.append({
+                "time": datetime.now(),
+                "equity": float(account.equity)
+            })
     except Exception as e:
         logger.warning(f"⚠️ Equity logging failed: {e}")
 
