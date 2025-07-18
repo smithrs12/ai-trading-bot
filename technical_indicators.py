@@ -1,3 +1,5 @@
+# technical_indicators.py
+
 from api_manager import api, safe_api_call
 import numpy as np
 import pandas as pd
@@ -6,8 +8,6 @@ from datetime import datetime, timedelta
 
 from main_user_isolated import redis_cache, redis_key
 from logger import logger
-
-from main_user_isolated import redis_cache, redis_key  # 👈 Required
 
 def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
     """
@@ -20,7 +20,7 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
         try:
             return pd.DataFrame(cached)
         except Exception:
-            pass  # Fallback to fresh fetch if cache is corrupted
+            logger.warning(f"⚠️ Failed to parse cached indicators for {ticker}, fetching fresh.")
 
     try:
         end = datetime.utcnow()
@@ -58,6 +58,12 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
         df["roc"] = ta.momentum.ROCIndicator(df["close"]).roc()
         df["volatility"] = df["close"].pct_change().rolling(window=10).std()
 
+        # Optional: trend strength
+        try:
+            df["adx"] = ta.trend.ADXIndicator(df["high"], df["low"], df["close"]).adx()
+        except Exception as e:
+            logger.debug(f"(Optional) ADX calc failed for {ticker}: {e}")
+
         df.dropna(inplace=True)
         if not df.empty:
             redis_cache.set(cache_key, df.tail(50).to_dict(orient="records"), ttl_seconds=300)
@@ -66,8 +72,6 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
 
     except Exception as e:
         logger.warning(f"⚠️ Alpaca snapshot failed for {ticker}: {e}")
-
-        return pd.DataFrame()
         return pd.DataFrame()
 
 def extract_features(ticker: str) -> list:
