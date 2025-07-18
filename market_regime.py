@@ -13,13 +13,15 @@ class MarketRegimeDetector:
         self.symbol = symbol
         self.short_window = short_window
         self.long_window = long_window
+        self.last_regime = "neutral"
+        self.last_timestamp = None
 
     def detect_market_regime(self) -> str:
         """Detects market regime using MA crossover on SPY."""
         cache_key = redis_key("MARKET_REGIME", self.symbol)
         cached = redis_cache.get(cache_key)
         if cached:
-            return cached.decode()
+            return cached
 
         try:
             end = datetime.utcnow()
@@ -35,7 +37,7 @@ class MarketRegimeDetector:
 
             if not bars or len(bars) < self.long_window:
                 logger.logger.warning("⚠️ Not enough data to detect market regime.")
-                return "neutral"
+                return self.last_regime
 
             df = pd.DataFrame([{
                 "timestamp": bar.t,
@@ -57,12 +59,21 @@ class MarketRegimeDetector:
                 regime = "bearish"
 
             redis_cache.set(cache_key, regime, ttl_seconds=3600)
+            self.last_regime = regime
+            self.last_timestamp = end
+
+            logger.deduped_log("info", f"📊 Market Regime Detected: {regime.upper()}")
             return regime
 
         except Exception as e:
             logger.logger.error(f"❌ Failed to detect market regime: {e}")
-            return "neutral"
+            return self.last_regime
 
+    def get_last_regime(self):
+        return self.last_regime
+
+    def get_last_detection_time(self):
+        return self.last_timestamp
 
 # === Singleton Instance ===
 regime_detector = MarketRegimeDetector()
