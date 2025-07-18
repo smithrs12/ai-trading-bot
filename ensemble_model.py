@@ -1,3 +1,5 @@
+# ensemble_model.py
+
 import random
 from config import config
 from trading_state import trading_state
@@ -69,5 +71,17 @@ class EnsembleModel:
         """
         print("🔄 Retraining meta model (placeholder)")
         logger.deduped_log("info", "🔁 Meta model retraining complete")
+
+    def get_model_snapshot(self):
+        """
+        Returns a copy of the ensemble model mapping.
+        """
+        return self.models.copy()
+
+    def get_confidence_details(self, ticker: str) -> dict:
+        """
+        Returns the short/medium confidence snapshot if available.
+        """
+        return trading_state.model_confidence_snapshot.get(ticker, {})
 
 ensemble_model = EnsembleModel()
