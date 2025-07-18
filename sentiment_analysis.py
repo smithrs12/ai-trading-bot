@@ -1,5 +1,3 @@
-# sentiment_analysis.py
-
 from datetime import datetime
 import traceback
 from config import config
@@ -23,20 +21,24 @@ except Exception as e:
 
 def get_finbert_sentiment(text: str) -> float:
     try:
-        if not finbert_pipeline:
+        if not finbert_pipeline or not text.strip():
             return 0.0
         result = finbert_pipeline(text)[0]
         label = result["label"]
-        return 1.0 if label == "positive" else -1.0 if label == "negative" else 0.0
+        score = 1.0 if label == "positive" else -1.0 if label == "negative" else 0.0
+        logger.deduped_log("debug", f"🧠 FinBERT: {label} → {score}")
+        return score
     except Exception as e:
         logger.logger.warning(f"⚠️ FinBERT failed: {e}")
         return 0.0
 
 def get_vader_sentiment(text: str) -> float:
     try:
-        if not vader:
+        if not vader or not text.strip():
             return 0.0
-        return vader.polarity_scores(text)["compound"]
+        score = vader.polarity_scores(text)["compound"]
+        logger.deduped_log("debug", f"🧠 VADER: {score:.2f}")
+        return score
     except Exception as e:
         logger.logger.warning(f"⚠️ VADER failed: {e}")
         return 0.0
@@ -63,13 +65,15 @@ def get_sentiment(ticker: str) -> float:
             return float(cached)
 
         text = fetch_reddit_and_news(ticker)
-        score = analyze_news_sentiment(text)
+        score = get_combined_sentiment(text)
 
-        redis_cache.set(cache_key, score, ttl_seconds=1800)  # Cache for 30 minutes
+        redis_cache.set(cache_key, score, ttl_seconds=1800)  # 30 minutes cache
         trading_state.sentiment_cache[ticker] = {
             "score": score,
-            "timestamp": datetime.now()
+            "timestamp": datetime.now(),
+            "headline_summary": text[:250]
         }
+        logger.deduped_log("info", f"📰 {ticker} Sentiment: {score:.2f}")
         return score
 
     except Exception:
@@ -92,14 +96,13 @@ def fetch_reddit_and_news(ticker: str) -> str:
                 )
             )
             if response and response.get("articles"):
-                headlines = [a["title"] for a in response["articles"] if a.get("title")]
+                headlines = [a["title"].strip() for a in response["articles"] if a.get("title")]
 
-        # Extend this later with Reddit fetching
-        reddit_stub = f"{ticker} is trending on Reddit! Bulls are excited."
+        # Simulated Reddit sentiment (placeholder)
+        reddit_stub = f"{ticker} is trending on Reddit. Some bullish chatter."
 
         combined_text = ". ".join(headlines) + ". " + reddit_stub
-        return combined_text if combined_text.strip() else f"{ticker} is in the news."
-
+        return combined_text if combined_text.strip() else f"{ticker} is active in financial news."
     except Exception as e:
         logger.logger.warning(f"⚠️ Failed to fetch news for {ticker}: {e}")
         return f"{ticker} is up today. Positive outlook."
