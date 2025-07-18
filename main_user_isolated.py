@@ -11,7 +11,6 @@ from config import config
 import api_manager
 import pytz
 from datetime import datetime, timedelta
-import execution_manager  # delay use until later in code
 from globals import market_status, redis_cache, redis_key
 from trading_state import trading_state
 from regime_detection import detect_market_regime
