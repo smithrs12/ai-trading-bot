@@ -9,18 +9,20 @@ from config import config
 import logger
 
 class MarketRegimeDetector:
-    def __init__(self, symbol="SPY", short_window=50, long_window=200):
+    def __init__(self, symbol="SPY", short_window=50, long_window=200, ma_type="sma"):
         self.symbol = symbol
         self.short_window = short_window
         self.long_window = long_window
+        self.ma_type = ma_type.lower()
         self.last_regime = "neutral"
         self.last_timestamp = None
 
-    def detect_market_regime(self) -> str:
+    def detect_market_regime(self, force_refresh: bool = False) -> str:
         """Detects market regime using MA crossover on SPY."""
         cache_key = redis_key("MARKET_REGIME", self.symbol)
         cached = redis_cache.get(cache_key)
-        if cached:
+        if cached and not force_refresh:
+            logger.deduped_log("debug", f"✅ Using cached regime: {cached}")
             return cached
 
         try:
@@ -47,8 +49,18 @@ class MarketRegimeDetector:
             df.set_index("timestamp", inplace=True)
             df.sort_index(inplace=True)
 
-            df["SMA_short"] = df["close"].rolling(window=self.short_window).mean()
-            df["SMA_long"] = df["close"].rolling(window=self.long_window).mean()
+            if self.ma_type == "ema":
+                df["SMA_short"] = df["close"].ewm(span=self.short_window).mean()
+                df["SMA_long"] = df["close"].ewm(span=self.long_window).mean()
+            else:
+                df["SMA_short"] = df["close"].rolling(window=self.short_window).mean()
+                df["SMA_long"] = df["close"].rolling(window=self.long_window).mean()
+
+            df.dropna(subset=["SMA_short", "SMA_long"], inplace=True)
+
+            if df.empty:
+                logger.logger.warning("⚠️ SMA columns contain insufficient data.")
+                return self.last_regime
 
             latest = df.iloc[-1]
             regime = "neutral"
@@ -58,6 +70,7 @@ class MarketRegimeDetector:
             elif latest["SMA_short"] < latest["SMA_long"]:
                 regime = "bearish"
 
+            regime = regime.lower()
             redis_cache.set(cache_key, regime, ttl_seconds=3600)
             self.last_regime = regime
             self.last_timestamp = end
@@ -74,6 +87,9 @@ class MarketRegimeDetector:
 
     def get_last_detection_time(self):
         return self.last_timestamp
+
+    def get_regime_label(self) -> str:
+        return f"📊 Market Regime: {self.last_regime.upper()} ({self.symbol})"
 
 # === Singleton Instance ===
 regime_detector = MarketRegimeDetector()
