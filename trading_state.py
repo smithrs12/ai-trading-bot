@@ -23,6 +23,7 @@ class TradingState:
         self.last_watchlist_optimization = datetime.min
         self.last_model_retrain = datetime.min
         self.sector_allocations = {}  # {ticker: sector}
+        self.equity_curve = []
 
     def reset_daily(self):
         print("🔁 Resetting daily state")
