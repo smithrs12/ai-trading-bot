@@ -56,7 +56,9 @@ class PyTorchQLearningAgent:
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
-    def act(self, state):
+    def act(self, state, confidence=None):
+        if confidence is not None and confidence >= 0.95:
+            return 0  # Force 'buy'
         if np.random.random() <= self.epsilon:
             return np.random.choice(self.action_size)
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
@@ -112,3 +114,14 @@ class PyTorchQLearningAgent:
             print("✅ PyTorch Q-Network loaded.")
         except Exception as e:
             print(f"❌ Failed to load model: {e}")
+
+    def reward_shaping(self, raw_pnl: float, drawdown: float = 0.0, regime: str = "neutral") -> float:
+        """
+        Custom reward function based on PnL, adjusted for risk and regime.
+        """
+        reward = raw_pnl
+        if drawdown > 0.02:
+            reward -= drawdown * 10  # Penalize excessive drawdown
+        if regime == "bearish":
+            reward *= 0.8  # Penalize aggressive trading in bear markets
+        return reward
