@@ -70,6 +70,32 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
     except Exception as e:
         logger.error(f"❌ Trade logic error for {ticker}: {e}")
         return False
+
+def get_sector_for_ticker(ticker: str) -> str:
+    """
+    Returns the sector for a given ticker. Replace with live data for production.
+    """
+    # Example static mapping — replace with API lookup or cached reference
+    sector_map = {
+        "AAPL": "Technology",
+        "MSFT": "Technology",
+        "GOOGL": "Technology",
+        "NVDA": "Technology",
+        "META": "Technology",
+        "AMD": "Technology",
+        "TSLA": "Consumer Discretionary",
+        "AMZN": "Consumer Discretionary",
+        "JPM": "Financials",
+        "BAC": "Financials",
+        "XOM": "Energy",
+        "CVX": "Energy",
+        "JNJ": "Healthcare",
+        "PFE": "Healthcare",
+        "WMT": "Consumer Staples",
+        "KO": "Consumer Staples"
+        # Add more as needed
+    }
+    return sector_map.get(ticker.upper(), "Other")
         
 # === End of Day Liquidation ===
 def perform_eod_liquidation():
@@ -132,9 +158,12 @@ def execute_buy(ticker: str, features=None, size: int = 1) -> bool:
                 "entry_time": datetime.now(),
                 "entry_price": entry_price,
                 "features": features,
-                "size": size
+                "size": size,
                 "peak_price": entry_price,  # Track peak price
             }
+            sector = get_sector_for_ticker(ticker)  # You may already have this
+            position["sector"] = sector
+            trading_state.sector_allocations[ticker] = sector
             trading_state.open_positions.append(position)
             trading_state.positions_by_ticker[ticker] = position
 
@@ -150,22 +179,23 @@ def execute_buy(ticker: str, features=None, size: int = 1) -> bool:
 def execute_sell(ticker: str, features=None) -> bool:
     """Closes a position in the ticker."""
     try:
+        entry = trading_state.positions_by_ticker.get(ticker)
+        size = entry.get("size", 1) if entry else 1
+
         order = api_manager.safe_api_call(lambda: api_manager.api.submit_order(
             symbol=ticker,
-            qty=1,
+            qty=size,
             side='sell',
             type='market',
             time_in_force='day'
         ))
 
         if order:
-            entry = trading_state.positions_by_ticker.get(ticker)
             exit_price = get_price(ticker)
             pnl = None
 
             if entry:
                 entry_price = entry.get("entry_price", 0)
-                size = entry.get("size", 1)
                 pnl = round((exit_price - entry_price) * size, 2)
 
                 outcome = {
@@ -175,18 +205,19 @@ def execute_sell(ticker: str, features=None) -> bool:
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "pnl": pnl,
-                    "size": size
+                    "size": size,
+                    "hold_duration": datetime.now() - entry.get("entry_time", datetime.now())
                 }
+
                 trading_state.trade_outcomes.append(outcome)
                 del trading_state.positions_by_ticker[ticker]
 
-            # Remove from open_positions
             trading_state.open_positions = [
                 pos for pos in trading_state.open_positions if pos["ticker"] != ticker
             ]
 
             update_cooldown(ticker)
-            logger.deduped_log("info", f"🔴 SELL {ticker} @ ${exit_price:.2f} | PnL: ${pnl:.2f}")
+            logger.deduped_log("info", f"🔴 SELL {ticker} @ ${exit_price:.2f} | PnL: ${pnl:.2f}" if pnl is not None else f"🔴 SELL {ticker}")
             return True
 
     except Exception as e:
@@ -258,17 +289,22 @@ def log_trade_outcome(ticker: str, result: dict):
         **result
     }
     trading_state.trade_outcomes.append(outcome)
+    
+    try:
+        if hasattr(trading_state, "log_equity_curve"):
+            trading_state.log_equity_curve()
+    except Exception as e:
+        logger.warning(f"⚠️ Equity logging failed: {e}")
 
 def passes_sector_allocation(ticker: str) -> bool:
     """
-    Ensures portfolio isn't over-concentrated in one sector.
-    Replace with real sector data lookup.
+    Ensure no overconcentration in any one sector.
     """
-    # Example: limit 2 tech stocks
-    tech_tickers = {"AAPL", "MSFT", "GOOGL", "NVDA", "META", "AMD"}
-    open_tech = [pos for pos in trading_state.open_positions if pos["ticker"] in tech_tickers]
-
-    if ticker in tech_tickers and len(open_tech) >= 2:
+    sector = get_sector_for_ticker(ticker)
+    current_allocations = list(trading_state.sector_allocations.values())
+    sector_count = current_allocations.count(sector)
+    if sector_count >= config.MAX_SECTOR_ALLOCATION:
+        logger.deduped_log("warn", f"⚠️ Sector cap reached for {sector}")
         return False
     return True
 
