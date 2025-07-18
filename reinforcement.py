@@ -5,6 +5,7 @@ import torch.optim as optim
 import random
 from collections import deque
 import numpy as np
+from config import config
 
 class QNetwork(nn.Module):
     def __init__(self, state_size: int, action_size: int, hidden_size: int = 128):
@@ -23,24 +24,28 @@ class QNetwork(nn.Module):
         return x
 
 class PyTorchQLearningAgent:
-    def __init__(self, state_size: int = 10, action_size: int = 3, lr: float = 0.001,
-                 epsilon=0.15, epsilon_decay=0.998, gamma=0.95):
+    def __init__(self, state_size: int = 10, action_size: int = 3, lr: float = None,
+                 epsilon=None, epsilon_decay=None, gamma=None):
         self.state_size = state_size
         self.action_size = action_size
         self.actions = ['buy', 'sell', 'hold']
 
         self.q_network = QNetwork(state_size, action_size)
         self.target_network = QNetwork(state_size, action_size)
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
-        self.criterion = nn.MSELoss()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.q_network.to(self.device)
         self.target_network.to(self.device)
 
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.gamma = gamma
+        # === Configurable Parameters ===
+        self.epsilon = epsilon if epsilon is not None else config.Q_LEARNING_EPSILON
+        self.epsilon_decay = epsilon_decay if epsilon_decay is not None else config.Q_LEARNING_EPSILON_DECAY
+        self.gamma = gamma if gamma is not None else config.Q_LEARNING_GAMMA
+        self.lr = lr if lr is not None else config.Q_LEARNING_LR
+
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.lr)
+        self.criterion = nn.MSELoss()
+
         self.batch_size = 32
         self.memory = deque(maxlen=10000)
         self.update_target_frequency = 100
@@ -77,7 +82,7 @@ class PyTorchQLearningAgent:
         loss.backward()
         self.optimizer.step()
 
-        if self.epsilon > 0.01:
+        if self.epsilon > config.Q_LEARNING_MIN_EPSILON:
             self.epsilon *= self.epsilon_decay
 
         self.step_count += 1
