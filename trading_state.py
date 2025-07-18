@@ -23,6 +23,7 @@ class TradingState:
         self.last_model_retrain = datetime.min
         self.sector_allocations = {}  # {ticker: sector}
         self.equity_curve = []
+        self.model_confidence_snapshot = {}  # {ticker: {"short_term": x, "medium_term": y, "timestamp": t}}
 
         # 🔧 Added fields
         self.market_regime = "neutral"  # Used on dashboard
