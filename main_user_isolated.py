@@ -1,7 +1,6 @@
 # main_user_isolated.py
 
 import os
-import redis
 import json
 import hashlib
 import uuid
@@ -13,7 +12,12 @@ import pytz
 from datetime import datetime, timedelta
 from globals import market_status, redis_cache, redis_key
 from trading_state import trading_state
-from regime_detection import detect_market_regime
+from market_regime import detect_market_regime
+import redis
+if redis_cache.enabled:
+    print("✅ Redis is active and ready.")
+else:
+    print("⚠️ Redis is not enabled.")
 
 dlogger = logging.getLogger("MarketStatus")
 
