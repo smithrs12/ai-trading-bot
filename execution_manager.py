@@ -5,7 +5,7 @@ from datetime import datetime
 
 from config import config
 from trading_state import trading_state
-from main_user_isolated import market_status, redis_cache, redis_key
+from globals import market_status, redis_cache, redis_key
 from ensemble_model import ensemble_model
 from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
@@ -362,4 +362,3 @@ def should_add_to_position(ticker: str, confidence: float) -> bool:
     if confidence >= 0.9:
         return True
     return False
-
