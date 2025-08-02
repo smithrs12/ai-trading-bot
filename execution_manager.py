@@ -5,8 +5,8 @@ from datetime import datetime
 
 from config import config
 from trading_state import trading_state
-from globals import market_status, redis_cache, redis_key
-from ensemble_model import ensemble_model
+from globals import market_status, redis_cache
+from model_training import ensemble_model
 from reinforcement import PyTorchQLearningAgent
 from technical_indicators import passes_vwap, passes_volume_spike, extract_features
 from meta_approval_system import meta_approval_system
@@ -15,6 +15,64 @@ from sentiment_analysis import get_sentiment
 from filter_logic import passes_all_filters
 import api_manager
 import logger
+import os
+import redis
+import streamlit as st
+from alpaca_trade_api.rest import REST
+
+api = st.session_state.get('alpaca_api')
+if not api:
+    # Don't stop the app, just disable trading
+    print("⚠️ No Alpaca API credentials provided. Trading will be disabled.")
+    trading_state.trading_disabled = True
+    trading_state.disabled_reason = "No API credentials provided"
+
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+
+def check_subscription(user_id):
+    active = redis_client.get(f"user:{user_id}:active")
+    return active == "true"
+
+def check_alpaca_subscription_status():
+    """Check if the current Alpaca account has the required subscription for SIP data"""
+    try:
+        if not api:
+            return False, "No API credentials"
+        
+        # Try to get account info
+        account = api.get_account()
+        
+        # Try to access SIP data
+        try:
+            api.get_latest_quote('AAPL')
+            return True, "SIP subscription active"
+        except Exception as e:
+            error_msg = str(e)
+            if "403" in error_msg or "permission" in error_msg.lower() or "subscription" in error_msg.lower():
+                return False, "SIP subscription required"
+            else:
+                return True, "API access available"
+                
+    except Exception as e:
+        return False, f"API connection error: {str(e)}"
+
+# Check both user subscription and Alpaca subscription
+user_subscribed = check_subscription(config.USER_ID)
+alpaca_subscribed, alpaca_msg = check_alpaca_subscription_status()
+
+if not user_subscribed:
+    print(f"🚫 User {config.USER_ID} is not subscribed. Trading disabled but bot remains active.")
+    trading_state.trading_disabled = True
+    trading_state.disabled_reason = "No active subscription"
+elif not alpaca_subscribed:
+    print(f"🚫 Alpaca subscription issue: {alpaca_msg}. Trading disabled but bot remains active.")
+    trading_state.trading_disabled = True
+    trading_state.disabled_reason = f"Alpaca subscription: {alpaca_msg}"
+else:
+    trading_state.trading_disabled = False
+    trading_state.disabled_reason = None
+    print(f"✅ All subscription checks passed for user {config.USER_ID}")
 
 # === Reinforcement Learning Agent ===
 q_agent = PyTorchQLearningAgent()
@@ -26,10 +84,23 @@ ACTION_MAP = {0: 'buy', 1: 'sell', 2: 'hold'}
 def ultra_advanced_trading_logic(ticker: str) -> bool:
     """Performs signal checks, model prediction, and executes a trade if approved."""
     try:
+        # ⬅️ PATCHED: Refresh user-specific config before each trade logic
+        config.reload_user_settings()
+        
+        # Check if trading is disabled
+        if trading_state.trading_disabled:
+            logger.deduped_log("info", f"🚫 Trading disabled: {trading_state.disabled_reason}")
+            return False
+            
+        # Check if API is available
+        if not api:
+            logger.deduped_log("warning", f"🚫 No API available for {ticker}")
+            return False
+            
         if not passes_all_filters(ticker):
             return False
 
-        # Get features + confidence from ensemble
+        # Get features  confidence from ensemble
         features = extract_features(ticker)
         confidence = ensemble_model.predict_weighted_proba(ticker)
         action_index = q_agent.act(features)
@@ -41,7 +112,7 @@ def ultra_advanced_trading_logic(ticker: str) -> bool:
             return False
 
         if risk_manager.block_trades_if_risky():
-            logger.logger.warning(f"🚫 Trade blocked due to risk controls for {ticker}")
+            logger.warning(f"🚫 Trade blocked due to risk controls for {ticker}")
             return False
 
         if not is_meta_approved(ticker, confidence):
@@ -124,10 +195,15 @@ def can_enter_position(ticker: str) -> bool:
     return True
 
 def is_on_cooldown(ticker: str) -> bool:
-    cooldowns = trading_state.cooldown_map if hasattr(trading_state, "cooldown_map") else {}
-    cooldown = cooldowns.get(ticker)
-    if cooldown and (datetime.now() - cooldown).total_seconds() < config.TRADE_COOLDOWN_MINUTES * 60:
-        return True
+    key = redis_key("COOLDOWN", ticker, user_id=config.USER_ID)
+    timestamp = redis_cache.get(key)
+    if timestamp:
+        try:
+            last_time = datetime.fromisoformat(timestamp)
+            if (datetime.now() - last_time).total_seconds() < config.TRADE_COOLDOWN_MINUTES * 60:
+                return True
+        except:
+            return False
     return False
 
 # === Helper: Sell Conditions ===
@@ -229,7 +305,7 @@ def get_price(ticker: str) -> float:
     Fetch latest price using Alpaca, with Redis cache fallback.
     """
     try:
-        cache_key = redis_key("LAST_PRICE", ticker)
+        cache_key = redis_key("LAST_PRICE", ticker, user_id=config.USER_ID)
         cached = redis_cache.get(cache_key)
         if cached:
             return cached
@@ -242,13 +318,12 @@ def get_price(ticker: str) -> float:
             redis_cache.set(cache_key, price, ttl_seconds=60)
             return price
     except Exception as e:
-        logger.logger.warning(f"⚠️ get_price failed for {ticker}: {e}")
+        logger.warning(f"⚠️ get_price failed for {ticker}: {e}")
     return 100.0  # fallback
 
 def update_cooldown(ticker: str):
-    if not hasattr(trading_state, "cooldown_map"):
-        trading_state.cooldown_map = {}
-    trading_state.cooldown_map[ticker] = datetime.now()
+    key = redis_key("COOLDOWN", ticker, user_id=config.USER_ID)
+    redis_cache.set(key, datetime.now().isoformat(), ttl_seconds=config.TRADE_COOLDOWN_MINUTES * 60)
 
 def is_meta_approved(ticker: str, proba: float) -> bool:
     """
@@ -261,23 +336,50 @@ def is_meta_approved(ticker: str, proba: float) -> bool:
 
 def calculate_kelly_position_size(ticker: str, confidence: float) -> int:
     """
-    Uses Kelly Criterion and account balance to size trades.
+    Position sizing with per-trade dollar cap.
+    - In 'fixed' mode, interpret FIXED_TRADE_AMOUNT as a *dollar budget*.
+    - In Kelly mode, cap the computed dollars by MAX_TRADE_AMOUNT.
+    Returns an integer share quantity (>= 1 when possible).
     """
     try:
-        if config.POSITION_SIZING_MODE.lower() == "fixed":
-            return config.FIXED_TRADE_AMOUNT
+        price = float(get_price(ticker) or 100.0)
+        # Safety for zero/negative prices
+        if price <= 0:
+            price = 100.0
 
-        kelly_fraction = ((2 * confidence) - 1) * config.KELLY_MULTIPLIER
-        kelly_fraction = max(0.01, min(kelly_fraction, config.MAX_PORTFOLIO_RISK))
+        # Guaranteed cap from settings (fallback to a sane default)
+        max_dollars = float(getattr(config, "MAX_TRADE_AMOUNT", 10000))
+
+        mode = str(getattr(config, "POSITION_SIZING_MODE", "Kelly Criterion")).lower()
+        if mode == "fixed":
+            # Interpret FIXED_TRADE_AMOUNT as dollars; enforce MAX_TRADE_AMOUNT; convert to shares
+            base_dollars = float(getattr(config, "FIXED_TRADE_AMOUNT", 1000))
+            dollars = min(base_dollars, max_dollars)
+            qty = max(1, int(dollars // price))
+            return qty
+
+        # Kelly sizing
+        kelly_fraction = ((2.0 * float(confidence)) - 1.0) * float(getattr(config, "KELLY_MULTIPLIER", 0.5))
+        kelly_fraction = max(0.01, min(kelly_fraction, float(getattr(config, "MAX_PORTFOLIO_RISK", 0.25))))
 
         account = api_manager.safe_api_call(api_manager.api.get_account)
         if account:
-            equity = float(account.cash)
-            return max(1, int(equity * kelly_fraction))
+            equity_cash = float(account.cash)
+            desired_dollars = equity_cash * kelly_fraction
+            dollars = min(desired_dollars, max_dollars)
+            qty = max(1, int(dollars // price))
+            return qty
 
     except Exception as e:
         logger.error(f"❌ Kelly sizing failed for {ticker}: {e}")
-    return config.FIXED_TRADE_AMOUNT
+
+    # Fallback: respect cap as best we can
+    try:
+        price = float(get_price(ticker) or 100.0)
+        max_dollars = float(getattr(config, "MAX_TRADE_AMOUNT", 10000))
+        return max(1, int(max_dollars // price))
+    except Exception:
+        return 1
 
 def log_trade_outcome(ticker: str, result: dict):
     """
@@ -362,3 +464,27 @@ def should_add_to_position(ticker: str, confidence: float) -> bool:
     if confidence >= 0.9:
         return True
     return False
+
+def update_subscription_status():
+    """Periodically check and update subscription status"""
+    try:
+        user_subscribed = check_subscription(config.USER_ID)
+        alpaca_subscribed, alpaca_msg = check_alpaca_subscription_status()
+        
+        if not user_subscribed:
+            trading_state.trading_disabled = True
+            trading_state.disabled_reason = "No active subscription"
+            return False
+        elif not alpaca_subscribed:
+            trading_state.trading_disabled = True
+            trading_state.disabled_reason = f"Alpaca subscription: {alpaca_msg}"
+            return False
+        else:
+            trading_state.trading_disabled = False
+            trading_state.disabled_reason = None
+            return True
+    except Exception as e:
+        logger.error(f"Error updating subscription status: {e}")
+        trading_state.trading_disabled = True
+        trading_state.disabled_reason = f"Subscription check error: {e}"
+        return False
