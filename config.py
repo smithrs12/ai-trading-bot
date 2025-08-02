@@ -3,11 +3,146 @@ import os
 import redis
 import json
 from urllib.parse import urlparse
+from key_utils import redis_key
 
 # Unique user identifier (used for Redis key namespacing)
 USER_ID = os.getenv("USER_SESSION_ID", "default_user")
 
 class Config:
+
+    def _get_redis_client(self):
+        """Return a Redis client or None (handles redis/rediss)."""
+        redis_url = self.REDIS_URL or os.getenv("REDIS_URL")
+        if not redis_url:
+            return None
+        try:
+            parsed = urlparse(redis_url)
+            return redis.Redis(
+                host=parsed.hostname,
+                port=parsed.port,
+                password=parsed.password,
+                ssl=(parsed.scheme == "rediss"),
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_int(v, default):
+        try:
+            return int(float(v))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _to_float(v, default):
+        try:
+            return float(v)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _to_bool(v, default):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in {"1", "true", "yes", "y"}:
+                return True
+            if s in {"0", "false", "no", "n"}:
+                return False
+        return default
+
+    def reload_user_settings(self) -> bool:
+        """
+        Reload settings from Redis and apply to config fields.
+        Returns True if any setting was applied.
+        """
+        r = self._get_redis_client()
+        if not r:
+            return False
+
+        try:
+            s = r.hgetall(f"user:{self.USER_ID}:settings") or {}
+        except Exception:
+            return False
+
+        if not s:
+            return False
+
+        # Optional: allow switching Paper/Live from settings (if you save it there)
+        mode_label = (s.get("trading_mode") or "").strip().lower()
+        if mode_label:
+            want_paper = mode_label in {"paper", "paper trading", "paper_trading", "paper-mode"}
+            if bool(want_paper) != bool(self.PAPER_TRADING_MODE):
+                self.PAPER_TRADING_MODE = want_paper
+                self._load_keys()  # refresh ALPACA_* creds for the new mode
+
+        # Coerce & apply when present
+        if "max_positions" in s:
+            self.MAX_POSITIONS = self._to_int(s["max_positions"], self.MAX_POSITIONS)
+
+        if "confidence_threshold" in s:
+            self.ENSEMBLE_CONFIDENCE_THRESHOLD = self._to_float(
+                s["confidence_threshold"], self.ENSEMBLE_CONFIDENCE_THRESHOLD
+            )
+
+        if "rsi_min" in s:
+            self.RSI_MIN = self._to_int(s["rsi_min"], self.RSI_MIN)
+
+        if "rsi_max" in s:
+            self.RSI_MAX = self._to_int(s["rsi_max"], self.RSI_MAX)
+
+        # Guard: keep RSI_MIN <= RSI_MAX
+        if self.RSI_MIN > self.RSI_MAX:
+            self.RSI_MIN, self.RSI_MAX = self.RSI_MAX, self.RSI_MIN
+
+        if "max_trade_amount" in s:
+            self.MAX_TRADE_AMOUNT = self._to_int(s["max_trade_amount"], self.MAX_TRADE_AMOUNT)
+
+        # Optional knobs used in other modules (add only if present in the hash)
+        if "sentiment_threshold" in s:
+            self.SENTIMENT_THRESHOLD = self._to_float(
+                s["sentiment_threshold"], getattr(self, "SENTIMENT_THRESHOLD", 0.10)
+            )
+
+        if "price_momentum_min" in s:
+            self.PRICE_MOMENTUM_MIN = self._to_float(
+                s["price_momentum_min"], getattr(self, "PRICE_MOMENTUM_MIN", 0.01)
+            )
+
+        if "adx_min_threshold" in s:
+            self.ADX_MIN_THRESHOLD = self._to_float(
+                s["adx_min_threshold"], getattr(self, "ADX_MIN_THRESHOLD", 25.0)
+            )
+
+        if "enforce_regime_filter" in s:
+            self.ENFORCE_REGIME_FILTER = self._to_bool(
+                s["enforce_regime_filter"], getattr(self, "ENFORCE_REGIME_FILTER", False)
+            )
+
+        if "position_sizing_mode" in s:
+            self.POSITION_SIZING_MODE = s["position_sizing_mode"] or self.POSITION_SIZING_MODE
+
+        if "fixed_trade_amount" in s:
+            self.FIXED_TRADE_AMOUNT = self._to_int(
+                s["fixed_trade_amount"], self.FIXED_TRADE_AMOUNT
+            )
+
+        if "max_portfolio_risk" in s:
+            self.MAX_PORTFOLIO_RISK = self._to_float(
+                s["max_portfolio_risk"], self.MAX_PORTFOLIO_RISK
+            )
+
+        if "kelly_multiplier" in s:
+            self.KELLY_MULTIPLIER = self._to_float(
+                s["kelly_multiplier"], self.KELLY_MULTIPLIER
+            )
+
+        return True
+            
     def __init__(self):
         self.USER_ID = USER_ID
         self.REDIS_URL = self._get("REDIS_URL", required=False)
@@ -50,6 +185,12 @@ class Config:
         self.RSI_MAX = int(self._get("RSI_MAX", default="70"))
         self.MAX_HOLD_DURATION_MINUTES = int(self._get("MAX_HOLD_DURATION_MINUTES", default="180"))
         self.MAX_SECTOR_ALLOCATION = int(self._get("MAX_SECTOR_ALLOCATION", default="2"))
+        self.MIN_PRICE = float(self._get("MIN_PRICE", default="1"))
+        self.MAX_PRICE = float(self._get("MAX_PRICE", default="1000"))
+        self.MIN_AVG_VOLUME = float(self._get("MIN_AVG_VOLUME", default="100000"))
+        self.MAX_SPREAD = float(self._get("MAX_SPREAD", default="0.03"))
+        self.MAX_TRADE_AMOUNT = int(self._get("MAX_TRADE_AMOUNT", default="10000"))
+        self._load_user_settings_from_redis()
 
     def _load_trading_mode_from_redis(self):
         """Attempt to load PAPER_TRADING_MODE from Redis if available"""
@@ -66,7 +207,7 @@ class Config:
                 ssl=parsed.scheme == "rediss",
                 decode_responses=True
             )
-            key = f"{self.USER_ID}:mode"
+            key = redis_key("mode")
             raw = redis_client.get(key)
             if raw:
                 mode_data = json.loads(raw)
@@ -75,6 +216,42 @@ class Config:
         except Exception as e:
             print(f"⚠️ Redis mode load failed: {e}")
         self._fallback_trading_mode()
+
+    def _load_user_settings_from_redis(self):
+        """
+        Pull user-adjustable settings (saved by the Settings page) from Redis and
+        apply them to this Config instance. Safe to call repeatedly.
+        """
+        if not self.REDIS_URL or not getattr(self, "USER_ID", None):
+            return
+
+        try:
+            parsed = urlparse(self.REDIS_URL)
+            r = redis.Redis(
+                host=parsed.hostname,
+                port=parsed.port,
+                password=parsed.password,
+                ssl=(parsed.scheme == "rediss"),
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
+            s = r.hgetall(f"user:{self.USER_ID}:settings") or {}
+
+            # Coerce and apply if present
+            if "max_positions" in s:
+                self.MAX_POSITIONS = int(s["max_positions"])
+            if "confidence_threshold" in s:
+                self.ENSEMBLE_CONFIDENCE_THRESHOLD = float(s["confidence_threshold"])
+            if "rsi_min" in s:
+                self.RSI_MIN = int(s["rsi_min"])
+            if "rsi_max" in s:
+                self.RSI_MAX = int(s["rsi_max"])
+            if "max_trade_amount" in s:
+                self.MAX_TRADE_AMOUNT = int(s["max_trade_amount"])
+
+        except Exception as e:
+            print(f"⚠️ Redis settings load failed: {e}")
 
     def _fallback_trading_mode(self):
         """Fallback if Redis fails"""
@@ -100,11 +277,5 @@ class Config:
         if required and value is None:
             raise EnvironmentError(f"Missing required environment variable: {var}")
         return value
-
-class TradingConfig:
-    PAPER_TRADING_MODE = True
-    MAX_POSITIONS = 10
-    TRADE_COOLDOWN_MINUTES = 30
-    ENSEMBLE_CONFIDENCE_THRESHOLD = 0.65
 
 config = Config()
