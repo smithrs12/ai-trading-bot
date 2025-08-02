@@ -1,12 +1,72 @@
-# market_regime.py
-
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from api_manager import safe_api_call, api
-from redis_cache import redis_cache, redis_key
+import redis
+import os
+from urllib.parse import urlparse
 from config import config
-import logger
+from logger import logger
+from trading_state import trading_state
+import json
+import hashlib
+
+# Redis setup
+def get_redis_client():
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        return None
+    try:
+        parsed_url = urlparse(redis_url)
+        client = redis.Redis(
+            host=parsed_url.hostname,
+            port=parsed_url.port,
+            password=parsed_url.password,
+            ssl=parsed_url.scheme == 'rediss',
+            decode_responses=True
+        )
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+client = get_redis_client()
+
+# === RedisCache ===
+class RedisCache:
+    def __init__(self, redis_client):
+        self.client = redis_client
+        self.enabled = redis_client is not None
+
+    def make_key(self, prefix, payload, user_id=None):
+        raw = json.dumps(payload, sort_keys=True)
+        uid = user_id or getattr(config, "USER_ID", "global")
+        return f"{uid}:{prefix}:{hashlib.sha256(raw.encode()).hexdigest()}"
+
+    def get(self, key):
+        if not self.enabled:
+            return None
+        try:
+            value = self.client.get(key)
+            if value:
+                print(f"📥 Redis HIT: {key}")
+            else:
+                print(f"📭 Redis MISS: {key}")
+            return json.loads(value) if value else None
+        except Exception as e:
+            print(f"❌ Redis get failed: {e}")
+            return None
+
+    def set(self, key, value, ttl_seconds=3600):
+        if not self.enabled:
+            return
+        try:
+            self.client.setex(key, ttl_seconds, json.dumps(value))
+            print(f"📤 Redis SET: {key} (TTL: {ttl_seconds}s)")
+        except Exception as e:
+            print(f"❌ Redis set failed: {e}")
+
+redis_cache = RedisCache(client)
 
 class MarketRegimeDetector:
     def __init__(self, symbol="SPY", short_window=50, long_window=200, ma_type="sma"):
@@ -17,12 +77,11 @@ class MarketRegimeDetector:
         self.last_regime = "neutral"
         self.last_timestamp = None
 
-    def detect_market_regime(self, force_refresh: bool = False) -> str:
+    def detect_market_regime(self, user_id=None, force_refresh: bool = False):
         """Detects market regime using MA crossover on SPY."""
-        cache_key = redis_key("MARKET_REGIME", self.symbol)
+        cache_key = f"MARKET_REGIME:{self.symbol}"
         cached = redis_cache.get(cache_key)
         if cached and not force_refresh:
-            logger.deduped_log("debug", f"✅ Using cached regime: {cached}")
             return cached
 
         try:
@@ -37,8 +96,16 @@ class MarketRegimeDetector:
                 adjustment='raw'
             ))
 
-            if not bars or len(bars) < self.long_window:
-                logger.logger.warning("⚠️ Not enough data to detect market regime.")
+            # Handle explicit SIP subscription failure
+            if bars == "SIP_SUBSCRIPTION_ERROR":
+                logger.warning("⚠️ SIP subscription error detected. Regime detection skipped.")
+                trading_state.trading_disabled = True
+                trading_state.disabled_reason = "SIP subscription required"
+                return self.last_regime
+
+            # Handle None or too-short response
+            if not bars or isinstance(bars, str) or len(bars) < self.long_window:
+                logger.warning("⚠️ Not enough data or invalid format for regime detection.")
                 return self.last_regime
 
             df = pd.DataFrame([{
@@ -57,9 +124,8 @@ class MarketRegimeDetector:
                 df["SMA_long"] = df["close"].rolling(window=self.long_window).mean()
 
             df.dropna(subset=["SMA_short", "SMA_long"], inplace=True)
-
             if df.empty:
-                logger.logger.warning("⚠️ SMA columns contain insufficient data.")
+                logger.warning("⚠️ SMA values missing; skipping regime detection.")
                 return self.last_regime
 
             latest = df.iloc[-1]
@@ -79,7 +145,12 @@ class MarketRegimeDetector:
             return regime
 
         except Exception as e:
-            logger.logger.error(f"❌ Failed to detect market regime: {e}")
+            if "subscription" in str(e).lower():
+                logger.warning("⚠️ Exception indicates SIP subscription missing. Disabling trading.")
+                trading_state.trading_disabled = True
+                trading_state.disabled_reason = "SIP subscription required"
+            else:
+                logger.error(f"❌ Exception in regime detection: {e}")
             return self.last_regime
 
     def get_last_regime(self):
