@@ -1,20 +1,20 @@
-# technical_indicators.py
-
 from api_manager import api, safe_api_call
 import numpy as np
 import pandas as pd
 import ta
 from datetime import datetime, timedelta
 
-from main_user_isolated import redis_cache, redis_key
+from redis_cache import redis_cache
+from key_utils import redis_key
 from logger import logger
+from config import config  # 🔥 Needed to access USER_ID namespace
 
 def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
     """
     Fetches 1-minute bars from Alpaca and computes technical indicators.
     Uses Redis to cache results for performance.
     """
-    cache_key = redis_key("INDICATOR_SNAPSHOT", ticker)
+    cache_key = redis_key("INDICATOR_SNAPSHOT", ticker, user=config.USER_ID)
     cached = redis_cache.get(cache_key)
     if cached:
         try:
@@ -58,7 +58,6 @@ def get_indicator_snapshot(ticker: str, minutes: int = 120) -> pd.DataFrame:
         df["roc"] = ta.momentum.ROCIndicator(df["close"]).roc()
         df["volatility"] = df["close"].pct_change().rolling(window=10).std()
 
-        # Optional: trend strength
         try:
             df["adx"] = ta.trend.ADXIndicator(df["high"], df["low"], df["close"]).adx()
         except Exception as e:
