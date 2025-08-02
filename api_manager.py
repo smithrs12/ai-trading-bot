@@ -28,9 +28,14 @@ def reinitialize_api():
     initialize_api()
 
 def safe_api_call(func, *args, **kwargs):
-    """Wrapper to safely call Alpaca API methods without crashing"""
+    """Wrapper to safely call Alpaca API methods without crashing, and detect SIP subscription errors"""
     try:
         return func(*args, **kwargs)
     except Exception as e:
+        error_msg = str(e)
+        # Detect SIP subscription error (Alpaca returns 403 or specific error message)
+        if ("sip" in error_msg.lower() and ("permission" in error_msg.lower() or "access" in error_msg.lower() or "403" in error_msg)) or ("403" in error_msg and "subscription" in error_msg.lower()):
+            print("❌ SIP subscription error detected.")
+            return "SIP_SUBSCRIPTION_ERROR"
         print(f"❌ API call failed: {e}")
         return None
