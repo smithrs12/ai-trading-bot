@@ -1,13 +1,11 @@
-# Use slim Python base with build tools
+# === Base Python Image with Slim Footprint ===
 FROM python:3.10-slim
 
-# Set working directory
+# === Set Working Directory ===
 WORKDIR /app
 
-# Copy requirements separately for caching
-COPY requirements.txt .
-
-# Install system dependencies (needed for ta-lib, transformers, matplotlib, etc.)
+# === System-Level Dependencies ===
+# These are essential for ta-lib, matplotlib, transformers, etc.
 RUN apt-get update && apt-get install -y \
     build-essential \
     libglib2.0-0 \
@@ -18,18 +16,19 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# === Python Dependencies ===
+COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --timeout 60 -r requirements.txt
+    pip install --no-cache-dir --timeout 60 -r requirements.txt
 
-# Copy full project
+# === Copy Application Code ===
 COPY . .
 
-# Make shell script executable
+# === Executable Entrypoint ===
 RUN chmod +x start.sh
 
-# Prevents output buffering
+# === Prevent Output Buffering for Logs ===
 ENV PYTHONUNBUFFERED=1
 
-# Entrypoint
+# === Default Entrypoint ===
 CMD ["./start.sh"]
